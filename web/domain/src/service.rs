@@ -7,7 +7,15 @@
 //! [`Actor`] — and then call in here. A transport that reaches past this module to a
 //! model has skipped every access check with it.
 
+#[cfg(test)]
+mod authorization_tests;
+
+pub mod items;
+pub mod lists;
 pub mod notes;
+pub mod tags;
+pub mod units;
+pub mod users;
 
 use crate::models::{self, user};
 
