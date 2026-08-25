@@ -45,15 +45,20 @@ button.danger:hover { opacity: 1; }
 button.chip { cursor: pointer; margin: 0; }
 button.chip.removable:hover { opacity: 1; border-color: currentColor; }
 
-/* One disclosure per item holds everything that changes it. */
-details.panel { margin-left: auto; }
-details.panel > summary { cursor: pointer; list-style: none; opacity: .45;
-                          padding: 0 .3rem; font-size: 1rem; line-height: 1; }
-details.panel > summary::-webkit-details-marker { display: none; }
-details.panel[open] > summary, details.panel > summary:hover { opacity: 1; }
-.panel-body { flex-basis: 100%; margin: .6rem 0 .2rem; padding: .7rem .8rem;
-              border: 1px solid var(--line); border-radius: 6px;
-              display: flex; flex-direction: column; gap: .6rem; }
+/* One toggle per item reveals everything that changes it.
+   The panel is a sibling of the row rather than a child of the toggle, so it can span
+   the full width; a <details> could only hold it inside itself, which trapped it in a
+   narrow right-aligned box along with the control meant to close it. */
+.panel-toggle { margin-left: auto; cursor: pointer; opacity: .45; user-select: none;
+                padding: 0 .35rem; line-height: 1; font-size: 1rem; }
+.panel-toggle:hover { opacity: 1; }
+.panel-switch:checked ~ .panel-toggle { opacity: 1; }
+.panel-body { display: none; }
+.panel-switch:checked ~ .panel-body {
+    display: flex; flex-direction: column; gap: .6rem;
+    flex-basis: 100%; margin: .6rem 0 .2rem; padding: .7rem .8rem;
+    border: 1px solid var(--line); border-radius: 6px;
+}
 .panel-body form.add { margin: 0; }
 .tag-edit { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
 .tag-edit select { font-size: .8rem; padding: .2rem .35rem; }

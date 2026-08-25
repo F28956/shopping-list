@@ -110,6 +110,17 @@ async fn post(app: &axum::Router, uri: &str, cookie: &str, form: &str) -> Status
     res.status()
 }
 
+/// Whether any item's edit panel came back expanded.
+///
+/// Checks the switch's own tag rather than the page for the word "checked", which
+/// would match anything else on it.
+fn panel_is_open(html: &str) -> bool {
+    html.match_indices("class=\"panel-switch\"").any(|(at, _)| {
+        let tag_end = html[at..].find('>').map(|e| at + e).unwrap_or(html.len());
+        html[at..tag_end].contains("checked")
+    })
+}
+
 /// The first tag the picker actually offers, skipping the placeholder option.
 fn first_tag_option(html: &str) -> Option<i64> {
     let select = html.find("name=\"tag_id\"")?;
@@ -766,10 +777,7 @@ async fn the_panel_stays_open_while_you_work_in_it(
         .collect::<String>()
         .parse()
         .unwrap();
-    assert!(
-        !body.contains("<details class=\"panel\" open>"),
-        "the panel starts closed"
-    );
+    assert!(!panel_is_open(&body), "the panel starts closed");
 
     // editing from inside the panel
     let (_, body) = post_htmx(
@@ -781,7 +789,7 @@ async fn the_panel_stays_open_while_you_work_in_it(
     .await;
     assert!(body.contains("Sourdough"));
     assert!(
-        body.contains("<details class=\"panel\" open>"),
+        panel_is_open(&body),
         "the panel closed under the edit: {body}"
     );
 
@@ -795,7 +803,7 @@ async fn the_panel_stays_open_while_you_work_in_it(
     )
     .await;
     assert!(
-        body.contains("<details class=\"panel\" open>"),
+        panel_is_open(&body),
         "the panel closed under the tag add: {body}"
     );
 
@@ -808,7 +816,7 @@ async fn the_panel_stays_open_while_you_work_in_it(
     )
     .await;
     assert!(
-        !body.contains("<details class=\"panel\" open>"),
+        !panel_is_open(&body),
         "ticking an item opened its panel: {body}"
     );
 }

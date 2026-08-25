@@ -121,9 +121,18 @@ fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
                                 }
                             }
 
-                            details class="panel" open[open == Some(i.id.0)] {
-                                summary title="Edit" { "⋯" }
-                                div class="panel-body" {
+                            // A checkbox rather than <details>: the panel has to be a
+                            // full-width sibling of the row, and a <details> can only
+                            // hold its content *inside* itself — which put the panel
+                            // in a narrow right-aligned box and pushed the toggle out
+                            // of reach. The checkbox stays in the row and the panel
+                            // sits beside it, shown by a CSS sibling selector.
+                            input type="checkbox" class="panel-switch" hidden
+                                  id=(format!("panel-{}", i.id.0))
+                                  checked[open == Some(i.id.0)];
+                            label class="panel-toggle" for=(format!("panel-{}", i.id.0))
+                                  title="Edit" { "⋯" }
+                            div class="panel-body" {
                                     form class="add" method="post" action={ (item) "/edit" }
                                          hx-post={ (item) "/edit" }
                                          hx-target="#items" hx-swap="outerHTML" {
@@ -176,12 +185,11 @@ fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
                                         }
                                     }
 
-                                    form class="inline" method="post" action={ (item) "/delete" }
-                                         hx-post={ (item) "/delete" }
-                                         hx-target="#items" hx-swap="outerHTML"
-                                         hx-confirm={ "Remove " (i.name.0) "?" } {
-                                        button class="danger" { "Remove item" }
-                                    }
+                                form class="inline" method="post" action={ (item) "/delete" }
+                                     hx-post={ (item) "/delete" }
+                                     hx-target="#items" hx-swap="outerHTML"
+                                     hx-confirm={ "Remove " (i.name.0) "?" } {
+                                    button class="danger" { "Remove item" }
                                 }
                             }
                         }
