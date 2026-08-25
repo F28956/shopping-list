@@ -22,5 +22,11 @@ use crate::state::AppState;
 /// origin the browser will attach its session cookie to these paths too — see
 /// [`auth::CurrentUser`].
 pub fn router() -> Router<AppState> {
-    Router::new().nest("/notes", routes::notes::router())
+    Router::new()
+        .nest("/lists", routes::lists::router())
+        // Items are nested under their list because the list is what authorises them
+        .nest("/lists/{list_id}/items", routes::items::router())
+        .nest("/notes", routes::notes::router())
+        .nest("/units", routes::reference::units_router())
+        .nest("/tags", routes::reference::tags_router())
 }

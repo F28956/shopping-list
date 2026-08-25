@@ -2,7 +2,13 @@
 //! service result into JSON. No route makes an access decision of its own — that
 //! belongs to `domain::service`, so the browser and MCP get the same answers.
 
+#[cfg(test)]
+mod tests;
+
+pub mod items;
+pub mod lists;
 pub mod notes;
+pub mod reference;
 
 use domain::models::{Direction, OrderBy, Paging};
 
