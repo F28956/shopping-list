@@ -45,21 +45,24 @@ button.danger:hover { opacity: 1; }
 button.chip { cursor: pointer; margin: 0; }
 button.chip.removable:hover { opacity: 1; border-color: currentColor; }
 
-/* One toggle per item reveals everything that changes it.
-   The panel is a sibling of the row rather than a child of the toggle, so it can span
-   the full width; a <details> could only hold it inside itself, which trapped it in a
-   narrow right-aligned box along with the control meant to close it. */
+/* Editing replaces the item rather than appearing under it. The switch, the row and
+   the editor are siblings so CSS can show exactly one of the latter two: an item being
+   edited is one thing in one position, not a row with a drawer hanging off it. */
+ul.rows li.item { display: block; }
+.view { display: flex; align-items: center; gap: .5rem; }
+.panel-switch:checked ~ .view { display: none; }
 .panel-toggle { margin-left: auto; cursor: pointer; opacity: .45; user-select: none;
                 padding: 0 .35rem; line-height: 1; font-size: 1rem; }
 .panel-toggle:hover { opacity: 1; }
-.panel-switch:checked ~ .panel-toggle { opacity: 1; }
+
 .panel-body { display: none; }
 .panel-switch:checked ~ .panel-body {
-    display: flex; flex-direction: column; gap: .6rem;
-    flex-basis: 100%; margin: .6rem 0 .2rem; padding: .7rem .8rem;
-    border: 1px solid var(--line); border-radius: 6px;
+    display: flex; flex-direction: column; gap: .6rem; padding: .15rem 0 .35rem;
 }
 .panel-body form.add { margin: 0; }
+.cancel { cursor: pointer; opacity: .6; padding: .4rem .5rem; user-select: none;
+          border-radius: 4px; }
+.cancel:hover { opacity: 1; }
 .tag-edit { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
 .tag-edit select { font-size: .8rem; padding: .2rem .35rem; }
 .tag-edit button { font-size: .8rem; padding: .2rem .45rem; }

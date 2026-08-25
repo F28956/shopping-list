@@ -832,3 +832,64 @@ async fn the_panel_opens_and_closes_with_the_work(
         "ticking an item opened its panel: {body}"
     );
 }
+
+/// Editing replaces the item rather than appearing beneath it, and there is a way
+/// back that is not "save" or "delete".
+///
+/// What CSS does with these cannot be asserted from here — no layout runs — but their
+/// presence and wiring can: the row, the editor and the switch that chooses between
+/// them all have to be siblings, and Cancel has to point at that switch.
+#[rstest]
+#[tokio::test]
+async fn an_item_being_edited_offers_a_way_out(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|cancel").await;
+    post(&app, "/lists", &cookie, "name=Bakery").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &cookie,
+        "name=Bagels&amount=1&unit_id=",
+    )
+    .await;
+
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    let item_id: i64 = body[body.find("/items/").unwrap() + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap();
+    let switch = format!("panel-{item_id}");
+
+    // the switch, the row and the editor are siblings, in that order
+    let at_switch = body
+        .find(&format!("id=\"{switch}\""))
+        .expect("no panel switch");
+    let at_view = body.find("class=\"view\"").expect("no item row");
+    let at_editor = body.find("class=\"panel-body\"").expect("no editor");
+    assert!(
+        at_switch < at_view && at_view < at_editor,
+        "the switch must precede both for the sibling selectors to reach them"
+    );
+
+    // the toggle and Cancel both point at that switch, so either can flip it
+    assert!(
+        body.contains(&format!("class=\"panel-toggle\" for=\"{switch}\"")),
+        "no edit toggle wired to the switch: {body}"
+    );
+    assert!(
+        body.contains(&format!("class=\"cancel\" for=\"{switch}\"")),
+        "no Cancel wired to the switch: {body}"
+    );
+
+    // Cancel is a label, not a submit -- it must not be able to save anything
+    let cancel_at = body.find("class=\"cancel\"").unwrap();
+    let tag_start = body[..cancel_at].rfind('<').unwrap();
+    assert!(
+        body[tag_start..cancel_at].starts_with("<label"),
+        "Cancel is not a label, so it would submit the form: {}",
+        &body[tag_start..cancel_at + 40]
+    );
+}

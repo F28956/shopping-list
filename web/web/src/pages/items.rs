@@ -94,97 +94,104 @@ fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
                         @let on_item = b.tags_by_item.get(&i.id.0);
                         @let item = format!("{base}/items/{}", i.id.0);
                         li class=@if i.done_at.is_some() { "item done" } @else { "item" } {
-                            form class="inline" method="post" action={ (item) "/toggle" }
-                                 hx-post={ (item) "/toggle" }
-                                 hx-target="#items" hx-swap="outerHTML" {
-                                button class="tick" title="Tick off" {
-                                    @if i.done_at.is_some() { "☑" } @else { "☐" }
-                                }
-                            }
-
-                            span class="grow" {
-                                (i.name.0)
-                                // Tags are shown, not operated, out here: what an item
-                                // is tagged is worth knowing at a glance; changing it
-                                // is not worth a control on every row.
-                                @for t in on_item.into_iter().flatten() {
-                                    span class="chip" {
-                                        @if let Some(e) = &t.emoji { (e.0) " " }
-                                        (t.name.0)
-                                    }
-                                }
-                            }
-
-                            span class="amount" {
-                                (trim_amount(i.amount))
-                                @if let Some(u) = i.unit_id.and_then(|u| b.unit_names.get(&u.0)) {
-                                    " " (u)
-                                }
-                            }
-
-                            // A checkbox rather than <details>: the panel has to be a
-                            // full-width sibling of the row, and a <details> can only
-                            // hold its content *inside* itself — which put the panel
-                            // in a narrow right-aligned box and pushed the toggle out
-                            // of reach. The checkbox stays in the row and the panel
-                            // sits beside it, shown by a CSS sibling selector.
+                            // The switch sits first so CSS can hide the row and show
+                            // the editor in its place: an item being edited is one
+                            // thing in one position, not a row with a drawer under it.
                             input type="checkbox" class="panel-switch" hidden
                                   id=(format!("panel-{}", i.id.0))
                                   checked[open == Some(i.id.0)];
-                            label class="panel-toggle" for=(format!("panel-{}", i.id.0))
-                                  title="Edit" { "⋯" }
-                            div class="panel-body" {
-                                    form class="add" method="post" action={ (item) "/edit" }
-                                         hx-post={ (item) "/edit" }
-                                         hx-target="#items" hx-swap="outerHTML" {
-                                        input type="text" name="name" value=(i.name.0)
-                                              required maxlength="128" aria-label="Item name";
-                                        input type="number" name="amount"
-                                              value=(trim_amount(i.amount))
-                                              min="0" step="any" style="width:5rem"
-                                              aria-label="Amount";
-                                        select name="unit_id" aria-label="Unit" {
-                                            option value="" selected[i.unit_id.is_none()] { "unit" }
-                                            @for (uid, uname) in &unit_names_sorted(&b.unit_names) {
-                                                option value=(uid)
-                                                       selected[i.unit_id.map(|u| u.0) == Some(*uid)] {
-                                                    (uname)
-                                                }
-                                            }
-                                        }
-                                        button { "Save" }
-                                    }
 
-                                    div class="tag-edit" {
-                                        @for t in on_item.into_iter().flatten() {
-                                            form class="inline" method="post"
-                                                 action={ (item) "/tags/" (t.id.0) "/delete" }
-                                                 hx-post={ (item) "/tags/" (t.id.0) "/delete" }
-                                                 hx-target="#items" hx-swap="outerHTML" {
-                                                button class="chip removable" title="Remove tag" {
-                                                    @if let Some(e) = &t.emoji { (e.0) " " }
-                                                    (t.name.0) " ×"
-                                                }
+                            div class="view" {
+                                form class="inline" method="post" action={ (item) "/toggle" }
+                                     hx-post={ (item) "/toggle" }
+                                     hx-target="#items" hx-swap="outerHTML" {
+                                    button class="tick" title="Tick off" {
+                                        @if i.done_at.is_some() { "☑" } @else { "☐" }
+                                    }
+                                }
+
+                                span class="grow" {
+                                    (i.name.0)
+                                    // Tags are shown, not operated, out here: what an
+                                    // item is tagged is worth knowing at a glance;
+                                    // changing it is not worth a control on every row.
+                                    @for t in on_item.into_iter().flatten() {
+                                        span class="chip" {
+                                            @if let Some(e) = &t.emoji { (e.0) " " }
+                                            (t.name.0)
+                                        }
+                                    }
+                                }
+
+                                span class="amount" {
+                                    (trim_amount(i.amount))
+                                    @if let Some(u) = i.unit_id.and_then(|u| b.unit_names.get(&u.0)) {
+                                        " " (u)
+                                    }
+                                }
+
+                                label class="panel-toggle" for=(format!("panel-{}", i.id.0))
+                                      title="Edit" { "⋯" }
+                            }
+
+                            div class="panel-body" {
+                                form class="add" method="post" action={ (item) "/edit" }
+                                     hx-post={ (item) "/edit" }
+                                     hx-target="#items" hx-swap="outerHTML" {
+                                    input type="text" name="name" value=(i.name.0)
+                                          required maxlength="128" aria-label="Item name";
+                                    input type="number" name="amount"
+                                          value=(trim_amount(i.amount))
+                                          min="0" step="any" style="width:5rem"
+                                          aria-label="Amount";
+                                    select name="unit_id" aria-label="Unit" {
+                                        option value="" selected[i.unit_id.is_none()] { "unit" }
+                                        @for (uid, uname) in &unit_names_sorted(&b.unit_names) {
+                                            option value=(uid)
+                                                   selected[i.unit_id.map(|u| u.0) == Some(*uid)] {
+                                                (uname)
                                             }
                                         }
-                                        form class="inline" method="post" action={ (item) "/tags" }
-                                             hx-post={ (item) "/tags" }
+                                    }
+                                    button class="primary" { "Save" }
+                                    // A label, not a button: it unticks the switch and
+                                    // so puts the row back, with no JavaScript needed.
+                                    // The hx-on is only there to drop unsaved typing,
+                                    // and its absence degrades to leaving it in place.
+                                    label class="cancel" for=(format!("panel-{}", i.id.0))
+                                          hx-on:click="this.closest('form').reset()" { "Cancel" }
+                                }
+
+                                div class="tag-edit" {
+                                    @for t in on_item.into_iter().flatten() {
+                                        form class="inline" method="post"
+                                             action={ (item) "/tags/" (t.id.0) "/delete" }
+                                             hx-post={ (item) "/tags/" (t.id.0) "/delete" }
                                              hx-target="#items" hx-swap="outerHTML" {
-                                            select name="tag_id" aria-label="Tag" required {
-                                                option value="" disabled selected { "+ tag" }
-                                                @for t in &b.all_tags {
-                                                    // only what is not already on it
-                                                    @if !on_item.is_some_and(|ts| ts.iter().any(|x| x.id == t.id)) {
-                                                        option value=(t.id.0) {
-                                                            @if let Some(e) = &t.emoji { (e.0) " " }
-                                                            (t.name.0)
-                                                        }
+                                            button class="chip removable" title="Remove tag" {
+                                                @if let Some(e) = &t.emoji { (e.0) " " }
+                                                (t.name.0) " ×"
+                                            }
+                                        }
+                                    }
+                                    form class="inline" method="post" action={ (item) "/tags" }
+                                         hx-post={ (item) "/tags" }
+                                         hx-target="#items" hx-swap="outerHTML" {
+                                        select name="tag_id" aria-label="Tag" required {
+                                            option value="" disabled selected { "+ tag" }
+                                            @for t in &b.all_tags {
+                                                // only what is not already on it
+                                                @if !on_item.is_some_and(|ts| ts.iter().any(|x| x.id == t.id)) {
+                                                    option value=(t.id.0) {
+                                                        @if let Some(e) = &t.emoji { (e.0) " " }
+                                                        (t.name.0)
                                                     }
                                                 }
                                             }
-                                            button { "Add" }
                                         }
+                                        button { "Add" }
                                     }
+                                }
 
                                 form class="inline" method="post" action={ (item) "/delete" }
                                      hx-post={ (item) "/delete" }
