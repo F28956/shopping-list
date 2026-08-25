@@ -99,7 +99,7 @@ async fn a_stranger_cannot_touch_a_list(#[future(awt)] pool: SqlitePool) {
 async fn a_strangers_list_is_not_in_my_list(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
 
-    let page = lists::list(&s.ctx, &s.theirs, all(), order(list::Field::Id))
+    let page = lists::for_user(&s.ctx, &s.theirs, all(), order(list::Field::Id))
         .await
         .unwrap();
 
@@ -331,7 +331,7 @@ async fn the_system_owns_nothing(#[future(awt)] pool: SqlitePool) {
         Some(ServiceError::Unauthenticated)
     );
     assert_eq!(
-        lists::list(&ctx, &sys, all(), order(list::Field::Id))
+        lists::for_user(&ctx, &sys, all(), order(list::Field::Id))
             .await
             .err(),
         Some(ServiceError::Unauthenticated)

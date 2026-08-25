@@ -72,11 +72,18 @@ impl Ctx {
 
 pub type Result<T, E = ServiceError> = std::result::Result<T, E>;
 
-/// Everything, for the reference tables that are small by construction.
-pub(crate) fn everything() -> crate::models::Paging {
+/// The most rows any one request will return.
+///
+/// One definition, because four of them drifting apart is how a caller ends up
+/// truncating at a number nobody chose. A transport may ask for less; it cannot ask
+/// for more, since `Paging` reaches SQLite as a LIMIT.
+pub const PAGE_MAX: i64 = 500;
+
+/// A single page of everything, up to [`PAGE_MAX`].
+pub fn everything() -> crate::models::Paging {
     crate::models::Paging {
         number: 1,
-        size: 500,
+        size: PAGE_MAX,
     }
 }
 

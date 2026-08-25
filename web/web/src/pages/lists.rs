@@ -20,10 +20,7 @@ pub struct NewList {
 }
 
 fn everything() -> Paging {
-    Paging {
-        number: 1,
-        size: 200,
-    }
+    domain::service::everything()
 }
 
 /// Most recently touched first: the list you edited last is the one you are on.
@@ -41,12 +38,15 @@ fn newest_first() -> OrderBy<list::Field> {
 /// The add form deliberately sits *outside* it: htmx replaces this element, and a
 /// form that is replaced loses the cursor. Leaving it in place means you can add three
 /// lists without touching the mouse.
-fn fragment(lists: &[List]) -> Markup {
+fn fragment(lists: &[List], total: i64, truncated: bool) -> Markup {
     html! {
         div id="lists" {
             @if lists.is_empty() {
                 p class="empty" { "No lists yet. Start one below." }
             } @else {
+                @if truncated {
+                    p class="truncated" { "Showing " (lists.len()) " of " (total) "." }
+                }
                 ul class="rows" {
                     @for l in lists {
                         li {
@@ -77,10 +77,10 @@ fn fragment(lists: &[List]) -> Markup {
     }
 }
 
-async fn current(s: &AppState, actor: &Actor) -> Result<Vec<List>, AppError> {
-    Ok(lists::list(&s.ctx, actor, everything(), newest_first())
-        .await?
-        .items)
+/// The lists, and whether there were more than one page of them.
+async fn current(s: &AppState, actor: &Actor) -> Result<(Vec<List>, i64, bool), AppError> {
+    let page = lists::for_user(&s.ctx, actor, everything(), newest_first()).await?;
+    Ok((page.items, page.total, page.has_more))
 }
 
 pub async fn index(session: Session, State(s): State<AppState>) -> Result<Markup, AppError> {
@@ -88,13 +88,13 @@ pub async fn index(session: Session, State(s): State<AppState>) -> Result<Markup
         return Ok(view::sign_in());
     };
     let user = actor.person()?.clone();
-    let lists = current(&s, &actor).await?;
+    let (lists, total, truncated) = current(&s, &actor).await?;
 
     Ok(view::page(
         "Lists",
         Some(&crate::pages::who(&user)),
         html! {
-            (fragment(&lists))
+            (fragment(&lists, total, truncated))
 
             form class="add" method="post" action="/lists"
                  hx-post="/lists" hx-target="#lists" hx-swap="outerHTML" {
@@ -115,7 +115,7 @@ pub async fn create(
     lists::create(&s.ctx, &actor, Name(form.name)).await?;
     Ok(swap_or_redirect(
         &headers,
-        fragment(&current(&s, &actor).await?),
+        fragment_of(current(&s, &actor).await?),
         "/",
     ))
 }
@@ -133,7 +133,7 @@ pub async fn rename(
     lists::update(&s.ctx, &actor, list::Id(id), Name(form.name)).await?;
     Ok(swap_or_redirect(
         &headers,
-        fragment(&current(&s, &actor).await?),
+        fragment_of(current(&s, &actor).await?),
         "/",
     ))
 }
@@ -148,7 +148,12 @@ pub async fn delete(
     lists::delete(&s.ctx, &actor, list::Id(id)).await?;
     Ok(swap_or_redirect(
         &headers,
-        fragment(&current(&s, &actor).await?),
+        fragment_of(current(&s, &actor).await?),
         "/",
     ))
+}
+
+/// Renders what [`current`] returned.
+fn fragment_of((lists, total, truncated): (Vec<List>, i64, bool)) -> Markup {
+    fragment(&lists, total, truncated)
 }

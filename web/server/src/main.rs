@@ -14,6 +14,7 @@ use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode},
 };
+use tower::layer::util::Stack;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::{catch_panic::CatchPanicLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -86,16 +87,10 @@ fn app(api_state: ApiState, web_state: web::AppState, sessions: SqliteSessions) 
 /// `hx-on` attributes moved into served files, so `script-src` and `style-src` can
 /// both say `self` and nothing else. A CSP that has to allow `unsafe-inline` is
 /// mostly decoration.
-fn security_headers() -> tower::layer::util::Stack<
-    SetResponseHeaderLayer<HeaderValue>,
-    tower::layer::util::Stack<
-        SetResponseHeaderLayer<HeaderValue>,
-        tower::layer::util::Stack<
-            SetResponseHeaderLayer<HeaderValue>,
-            SetResponseHeaderLayer<HeaderValue>,
-        >,
-    >,
-> {
+type Header = SetResponseHeaderLayer<HeaderValue>;
+type Headers = Stack<Header, Stack<Header, Stack<Header, Header>>>;
+
+fn security_headers() -> Headers {
     const CSP: &str = "default-src 'self'; \
                        script-src 'self'; \
                        style-src 'self'; \
@@ -104,17 +99,17 @@ fn security_headers() -> tower::layer::util::Stack<
                        base-uri 'none'; \
                        frame-ancestors 'none'";
 
-    tower::layer::util::Stack::new(
+    Stack::new(
         SetResponseHeaderLayer::overriding(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(CSP),
         ),
-        tower::layer::util::Stack::new(
+        Stack::new(
             SetResponseHeaderLayer::overriding(
                 HeaderName::from_static("x-content-type-options"),
                 HeaderValue::from_static("nosniff"),
             ),
-            tower::layer::util::Stack::new(
+            Stack::new(
                 SetResponseHeaderLayer::overriding(
                     header::REFERRER_POLICY,
                     HeaderValue::from_static("same-origin"),

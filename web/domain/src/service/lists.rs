@@ -29,7 +29,7 @@ pub async fn create(ctx: &Ctx, actor: &Actor, name: Name) -> Result<List> {
 
 /// One page of the actor's own lists. The owner comes from the actor, so a caller
 /// cannot ask for anybody else's.
-pub async fn list(
+pub async fn for_user(
     ctx: &Ctx,
     actor: &Actor,
     page: Paging,

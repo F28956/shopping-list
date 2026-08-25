@@ -4,7 +4,7 @@ use axum::extract::{Form, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use domain::models::note::{self, Body};
-use domain::models::{Direction, OrderBy, Paging};
+use domain::models::{Direction, OrderBy};
 use domain::service::{Actor, notes};
 use maud::{Markup, html};
 use tower_sessions::Session;
@@ -20,12 +20,15 @@ pub struct NoteForm {
     pub body: String,
 }
 
-fn fragment(notes: &[note::Note]) -> Markup {
+fn fragment(notes: &[note::Note], total: i64, truncated: bool) -> Markup {
     html! {
         div id="notes" {
             @if notes.is_empty() {
                 p class="empty" { "No notes yet." }
             } @else {
+                @if truncated {
+                    p class="truncated" { "Showing " (notes.len()) " of " (total) "." }
+                }
                 ul class="rows" {
                     @for n in notes {
                         li {
@@ -44,33 +47,31 @@ fn fragment(notes: &[note::Note]) -> Markup {
     }
 }
 
-async fn current(s: &AppState, actor: &Actor) -> Result<Vec<note::Note>, AppError> {
-    Ok(notes::list(
+/// The notes, and whether there were more than one page of them.
+async fn current(s: &AppState, actor: &Actor) -> Result<(Vec<note::Note>, i64, bool), AppError> {
+    let page = notes::for_user(
         &s.ctx,
         actor,
-        Paging {
-            number: 1,
-            size: 100,
-        },
+        domain::service::everything(),
         OrderBy {
             field: note::Field::CreatedAt,
             direction: Direction::Descending,
         },
     )
-    .await?
-    .items)
+    .await?;
+    Ok((page.items, page.total, page.has_more))
 }
 
 pub async fn index(session: Session, State(s): State<AppState>) -> Result<Markup, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     let user = actor.person()?.clone();
-    let notes = current(&s, &actor).await?;
+    let (notes, total, truncated) = current(&s, &actor).await?;
 
     Ok(view::page(
         "Notes",
         Some(&crate::pages::who(&user)),
         html! {
-            (fragment(&notes))
+            (fragment(&notes, total, truncated))
 
             form class="add" method="post" action="/notes"
                  hx-post="/notes" hx-target="#notes" hx-swap="outerHTML" {
@@ -91,7 +92,7 @@ pub async fn create(
     notes::create(&s.ctx, &actor, Body(form.body)).await?;
     Ok(swap_or_redirect(
         &headers,
-        fragment(&current(&s, &actor).await?),
+        fragment_of(current(&s, &actor).await?),
         "/notes",
     ))
 }
@@ -106,7 +107,12 @@ pub async fn delete(
     notes::delete(&s.ctx, &actor, note::Id(id)).await?;
     Ok(swap_or_redirect(
         &headers,
-        fragment(&current(&s, &actor).await?),
+        fragment_of(current(&s, &actor).await?),
         "/notes",
     ))
+}
+
+/// Renders what [`current`] returned.
+fn fragment_of((notes, total, truncated): (Vec<note::Note>, i64, bool)) -> Markup {
+    fragment(&notes, total, truncated)
 }

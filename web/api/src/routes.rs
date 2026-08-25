@@ -5,6 +5,7 @@
 #[cfg(test)]
 mod tests;
 
+pub mod history;
 pub mod items;
 pub mod lists;
 pub mod me;
@@ -39,7 +40,9 @@ fn default_size() -> i64 {
     20
 }
 
-const MAX_SIZE: i64 = 100;
+/// The same ceiling the service layer uses, so a client cannot discover a different
+/// one by asking. The default page is smaller; this is only the limit.
+const MAX_SIZE: i64 = domain::service::PAGE_MAX;
 
 fn ascending() -> Direction {
     Direction::Ascending

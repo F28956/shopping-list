@@ -8,18 +8,19 @@ use crate::models::{OffsetPage, OrderBy, Paging, item, list};
 
 use super::{Actor, Ctx, Result, ServiceError, items, lists};
 
+/// Readable by any actor: there is no owner to check against, and a unit or a tag
+/// tells you nothing about anybody. The `actor` argument stays for the signature all
+/// service calls share, and because a future rule would land here.
 pub async fn list(
     ctx: &Ctx,
-    actor: &Actor,
+    _actor: &Actor,
     page: Paging,
     order_by: OrderBy<tag::Field>,
 ) -> Result<OffsetPage<Tag>> {
-    readable(actor)?;
     Ok(Tag::list(&ctx.db, page, order_by).await?)
 }
 
-pub async fn get(ctx: &Ctx, actor: &Actor, by: tag::Lookup) -> Result<Tag> {
-    readable(actor)?;
+pub async fn get(ctx: &Ctx, _actor: &Actor, by: tag::Lookup) -> Result<Tag> {
     Ok(Tag::get(&ctx.db, by).await?)
 }
 
@@ -61,7 +62,7 @@ pub async fn for_item(ctx: &Ctx, actor: &Actor, item_id: item::Id) -> Result<Vec
 ///
 /// The list is checked once and the tags fetched in one query, so rendering a list
 /// page costs two round trips rather than one per item.
-pub async fn on_list(
+pub async fn for_list(
     ctx: &Ctx,
     actor: &Actor,
     list_id: list::Id,
@@ -101,10 +102,6 @@ pub async fn detach(ctx: &Ctx, actor: &Actor, item_id: item::Id, tag_id: tag::Id
         let _ = Entry::remember_tag(&ctx.db, owner.id, &item.name, None).await;
     }
 
-    Ok(())
-}
-
-fn readable(_actor: &Actor) -> Result<()> {
     Ok(())
 }
 

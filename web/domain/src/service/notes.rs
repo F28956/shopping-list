@@ -19,7 +19,7 @@ pub async fn create(ctx: &Ctx, actor: &Actor, body: Body) -> Result<Note> {
 ///
 /// There is no way to ask for anybody else's: the author is taken from the actor
 /// rather than from an argument, so a caller cannot pass the wrong one.
-pub async fn list(
+pub async fn for_user(
     ctx: &Ctx,
     actor: &Actor,
     page: Paging,
@@ -118,7 +118,7 @@ mod tests {
         let ctx = Ctx::new(pool.clone());
         create(&ctx, &theirs, Body("not mine".into())).await?;
 
-        let page = list(&ctx, &mine, all(), by_id()).await?;
+        let page = for_user(&ctx, &mine, all(), by_id()).await?;
 
         assert_eq!(page.total, 1, "the other person's note is not counted");
         assert_eq!(page.items[0].id, note.id);
@@ -219,7 +219,7 @@ mod tests {
             ServiceError::Unauthenticated
         );
         assert_eq!(
-            list(&ctx, &sys, all(), by_id()).await.unwrap_err(),
+            for_user(&ctx, &sys, all(), by_id()).await.unwrap_err(),
             ServiceError::Unauthenticated
         );
         assert_eq!(

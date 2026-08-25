@@ -32,7 +32,7 @@ async fn list(
     user: CurrentUser,
     Query(q): Query<PageQuery<note::Field>>,
 ) -> Result<Json<OffsetPage<Note>>, AppError> {
-    let page = notes::list(&state.ctx, &user.actor(), q.paging(), q.order_by()).await?;
+    let page = notes::for_user(&state.ctx, &user.actor(), q.paging(), q.order_by()).await?;
     Ok(Json(page))
 }
 

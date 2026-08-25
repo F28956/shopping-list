@@ -81,3 +81,6 @@ details.edit[open] { opacity: 1; flex-basis: 100%; }
 details.edit summary { cursor: pointer; list-style: none; }
 details.edit summary::-webkit-details-marker { display: none; }
 .empty { opacity: .6; padding: 2rem 0; text-align: center; }
+
+/* A page that shows a prefix says so. */
+.truncated { font-size: .8rem; opacity: .6; margin: 0 0 .6rem; }

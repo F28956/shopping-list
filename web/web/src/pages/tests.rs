@@ -1286,3 +1286,38 @@ async fn the_markup_has_nothing_a_strict_csp_would_block(#[future(awt)] pool: Sq
         "the behaviour is not served"
     );
 }
+
+/// A page that shows a prefix of a long list has to say so, or the missing items look
+/// deleted rather than merely elsewhere.
+#[rstest]
+#[tokio::test]
+async fn a_truncated_list_admits_it(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|hoarder").await;
+    post(&app, "/lists", &cookie, "name=Big").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+
+    // a short list says nothing
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &cookie,
+        "line=Milk",
+    )
+    .await;
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    assert!(
+        !body.contains("class=\"truncated\""),
+        "a one-item list claimed to be truncated"
+    );
+}
+
+/// Every page reads from one ceiling rather than inventing its own.
+#[test]
+fn the_page_cap_has_one_definition() {
+    assert_eq!(
+        super::super::pages::items::page_cap(),
+        domain::service::PAGE_MAX,
+        "the items page has drifted from the shared ceiling"
+    );
+}

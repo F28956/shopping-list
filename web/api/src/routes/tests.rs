@@ -561,3 +561,30 @@ async fn me_is_not_writable(#[future(awt)] pool: SqlitePool, #[case] method: &st
         "a write route exists where none was intended"
     );
 }
+
+/// History is readable and forgettable, and nobody else's.
+#[rstest]
+#[tokio::test]
+async fn history_can_be_read_and_forgotten(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+    let _ = list_id;
+
+    let (status, mine) = send(&app, req("GET", "/api/history", &me(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(mine[0], "Apples", "adding an item did not teach it: {mine}");
+
+    // another person sees none of it
+    let (_, theirs) = send(&app, req("GET", "/api/history", &them(), None)).await;
+    assert!(theirs.as_array().unwrap().is_empty(), "{theirs}");
+
+    // and cannot forget it either
+    let (status, _) = send(&app, req("DELETE", "/api/history/apples", &them(), None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _) = send(&app, req("DELETE", "/api/history/apples", &me(), None)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, after) = send(&app, req("GET", "/api/history", &me(), None)).await;
+    assert!(after.as_array().unwrap().is_empty(), "{after}");
+}

@@ -31,15 +31,21 @@ pub struct NewItem {
 }
 
 fn everything() -> Paging {
-    Paging {
-        number: 1,
-        size: 200,
-    }
+    domain::service::everything()
+}
+
+/// Exposed so a test can assert the page has not drifted from the shared ceiling.
+#[cfg(test)]
+pub fn page_cap() -> i64 {
+    everything().size
 }
 
 /// Everything the item rows need, gathered once.
 struct Board {
     items: Vec<item::Item>,
+    /// How many are on this list in total, and whether the page holds them all.
+    total: i64,
+    truncated: bool,
     /// What this person has bought before, for the quick-add suggestions.
     suggestions: Vec<item::Name>,
     unit_names: std::collections::HashMap<i64, String>,
@@ -48,24 +54,27 @@ struct Board {
 }
 
 async fn board(s: &AppState, actor: &Actor, list_id: list::Id) -> Result<Board, AppError> {
+    let page = items::for_list(
+        &s.ctx,
+        actor,
+        list_id,
+        everything(),
+        // Outstanding first, then the ones already ticked off.
+        OrderBy {
+            field: item::Field::DoneAt,
+            direction: Direction::Ascending,
+        },
+    )
+    .await?;
+
     Ok(Board {
-        items: items::for_list(
-            &s.ctx,
-            actor,
-            list_id,
-            everything(),
-            // Outstanding first, then the ones already ticked off.
-            OrderBy {
-                field: item::Field::DoneAt,
-                direction: Direction::Ascending,
-            },
-        )
-        .await?
-        .items,
+        total: page.total,
+        truncated: page.has_more,
+        items: page.items,
         suggestions: items::suggestions(&s.ctx, actor, 100).await?,
         unit_names: unit_lookup(s, actor).await?,
         // One query for the whole page rather than one per item.
-        tags_by_item: tags::on_list(&s.ctx, actor, list_id).await?,
+        tags_by_item: tags::for_list(&s.ctx, actor, list_id).await?,
         all_tags: tags::list(
             &s.ctx,
             actor,
@@ -98,6 +107,14 @@ fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
             @if b.items.is_empty() {
                 p class="empty" { "Nothing on this list yet." }
             } @else {
+                // A page that quietly shows a prefix is worse than one that admits to
+                // it: the missing items look deleted rather than merely elsewhere.
+                @if b.truncated {
+                    p class="truncated" {
+                        "Showing " (b.items.len()) " of " (b.total)
+                        ". This list is long enough to be worth splitting."
+                    }
+                }
                 @let groups = group_by_category(b);
                 @for (heading, items) in &groups {
                     section class="group" {

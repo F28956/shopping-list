@@ -32,7 +32,7 @@ async fn list(
     Query(q): Query<PageQuery<list::Field>>,
 ) -> Result<Json<OffsetPage<List>>, AppError> {
     Ok(Json(
-        lists::list(&state.ctx, &user.actor(), q.paging(), q.order_by()).await?,
+        lists::for_user(&state.ctx, &user.actor(), q.paging(), q.order_by()).await?,
     ))
 }
 

@@ -11,18 +11,19 @@ use crate::models::{OffsetPage, OrderBy, Paging};
 use super::{Actor, Ctx, Result, ServiceError};
 
 /// Anyone signed in may read the unit list.
+/// Readable by any actor: there is no owner to check against, and a unit or a tag
+/// tells you nothing about anybody. The `actor` argument stays for the signature all
+/// service calls share, and because a future rule would land here.
 pub async fn list(
     ctx: &Ctx,
-    actor: &Actor,
+    _actor: &Actor,
     page: Paging,
     order_by: OrderBy<unit::Field>,
 ) -> Result<OffsetPage<Unit>> {
-    readable(actor)?;
     Ok(Unit::list(&ctx.db, page, order_by).await?)
 }
 
-pub async fn get(ctx: &Ctx, actor: &Actor, by: unit::Lookup) -> Result<Unit> {
-    readable(actor)?;
+pub async fn get(ctx: &Ctx, _actor: &Actor, by: unit::Lookup) -> Result<Unit> {
     Ok(Unit::get(&ctx.db, by).await?)
 }
 
@@ -41,11 +42,6 @@ pub async fn update(ctx: &Ctx, actor: &Actor, id: unit::Id, name: Name) -> Resul
 pub async fn delete(ctx: &Ctx, actor: &Actor, id: unit::Id) -> Result<()> {
     writable(actor)?;
     Ok(Unit::delete(&ctx.db, id).await?)
-}
-
-/// Any actor at all — a person or the system.
-fn readable(_actor: &Actor) -> Result<()> {
-    Ok(())
 }
 
 /// The system only. A person gets `NotFound` rather than a distinct refusal, for the
