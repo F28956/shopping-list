@@ -30,9 +30,18 @@
     // Not while somebody is typing in the list. A swap replaces the field under the
     // cursor, which loses the edit and the caret with it -- so the refresh waits for
     // the focus to leave, which is also when it stops being disruptive.
+    //
+    // Typing, specifically. Any focused element used to count, and a button keeps
+    // the focus after it is clicked: ticking one item off parked the focus inside
+    // #items and deferred every refresh from then on, so a page stopped updating as
+    // soon as it was used. What needs protecting is unsaved text, and only a field
+    // holds any.
     function busy() {
       var focused = document.activeElement;
-      return !!focused && focused.closest("#items") !== null;
+      if (!focused || !focused.closest("#items")) return false;
+
+      var tag = focused.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
     }
 
     function refresh() {

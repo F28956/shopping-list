@@ -526,6 +526,67 @@ async fn a_change_reaches_a_browser_watcher(#[future(awt)] pool: SqlitePool) {
     assert!(frame.contains(&format!("data: {list_id}")), "got: {frame:?}");
 }
 
+/// Filing an item is a change to the list like any other.
+///
+/// Worth its own test because tags are attached by a different service than the one
+/// that edits an item, and a notifier wired into only some of the mutations looks
+/// exactly like a working one until you use the mutation it missed.
+#[rstest]
+#[tokio::test]
+async fn a_tag_change_reaches_a_watcher(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    use futures::StreamExt;
+
+    let (app, cookie) = signed_in(&pool, "google-oauth2|filer").await;
+    post(&app, "/lists", &cookie, "name=Groceries").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+    post(&app, &format!("/lists/{list_id}/items"), &cookie, "line=Apples").await;
+
+    let (_, page) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    let item_id: i64 = page[page.find("/items/").expect("no item on the page") + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .expect("item link had no id");
+    let tag_id = first_tag_option(&page).expect("no tag options");
+
+    let watching = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/lists/{list_id}/events"))
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut stream = watching.into_body().into_data_stream();
+
+    post(
+        &app,
+        &format!("/lists/{list_id}/items/{item_id}/tags"),
+        &cookie,
+        &format!("tag_id={tag_id}"),
+    )
+    .await;
+
+    let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+        .await
+        .expect("filing an item told nobody")
+        .expect("the stream ended instead of sending")
+        .expect("the body errored");
+    assert!(
+        String::from_utf8_lossy(&chunk).contains(&format!("data: {list_id}")),
+        "wrong list"
+    );
+}
+
 /// Watching is a read, so it is authorised like one -- and the page that a watcher
 /// re-reads is too.
 #[rstest]

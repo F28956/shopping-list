@@ -71,22 +71,53 @@ impl ItemInput {
     }
 }
 
+/// An item, plus what it is filed under.
+///
+/// The ids only: a client that groups by category already has the tags themselves,
+/// and repeating a name, an emoji and a sort order on every row would be most of the
+/// payload. Flattened, so this is the item's own shape with one field added and an
+/// older client reading it sees no difference.
+#[derive(Debug, serde::Serialize)]
+pub struct TaggedItem {
+    #[serde(flatten)]
+    pub item: Item,
+    pub tag_ids: Vec<i64>,
+}
+
+/// One page of a list's items, each with the tags it carries.
+///
+/// The tags come from one query for the whole page, not one per row -- the same call
+/// the browser makes, for the same reason.
 async fn list(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(list_id): Path<i64>,
     Query(q): Query<PageQuery<item::Field>>,
-) -> Result<Json<OffsetPage<Item>>, AppError> {
-    Ok(Json(
-        items::for_list(
-            &state.ctx,
-            &user.actor(),
-            list::Id(list_id),
-            q.paging(),
-            q.order_by(),
-        )
-        .await?,
-    ))
+) -> Result<Json<OffsetPage<TaggedItem>>, AppError> {
+    let list_id = list::Id(list_id);
+    let actor = user.actor();
+
+    let page = items::for_list(&state.ctx, &actor, list_id, q.paging(), q.order_by()).await?;
+    let by_item = tags::for_list(&state.ctx, &actor, list_id).await?;
+
+    Ok(Json(OffsetPage {
+        items: page
+            .items
+            .into_iter()
+            .map(|item| TaggedItem {
+                // Ordered by `sort_order` already, which is what makes "the first
+                // tag" mean the same thing here as on the page.
+                tag_ids: by_item
+                    .get(&item.id.0)
+                    .map(|ts| ts.iter().map(|t| t.id.0).collect())
+                    .unwrap_or_default(),
+                item,
+            })
+            .collect(),
+        total: page.total,
+        total_pages: page.total_pages,
+        has_more: page.has_more,
+    }))
 }
 
 async fn create(

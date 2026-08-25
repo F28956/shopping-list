@@ -24,6 +24,10 @@ struct Item: Identifiable, Decodable, Hashable {
     /// When it was ticked off, or nil while it is still needed. There is no separate
     /// flag, so the two cannot disagree.
     let doneAt: Date?
+    /// What this is filed under, in the order the shop is walked. Empty on the
+    /// routes that answer with one item: only the list route joins them, because
+    /// only a list needs grouping.
+    let tagIDs: [Int64]
 
     var isDone: Bool { doneAt != nil }
 
@@ -31,6 +35,20 @@ struct Item: Identifiable, Decodable, Hashable {
         case id, name, amount
         case unitID = "unit_id"
         case doneAt = "done_at"
+        case tagIDs = "tag_ids"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int64.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        amount = try c.decode(Double.self, forKey: .amount)
+        unitID = try c.decodeIfPresent(Int64.self, forKey: .unitID)
+        doneAt = try c.decodeIfPresent(Date.self, forKey: .doneAt)
+        // Absent rather than empty on the single-item routes, and absent is not a
+        // decoding failure: an item that does not say what it is filed under is not
+        // a broken item.
+        tagIDs = try c.decodeIfPresent([Int64].self, forKey: .tagIDs) ?? []
     }
 }
 

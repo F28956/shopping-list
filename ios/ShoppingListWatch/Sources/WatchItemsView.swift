@@ -13,6 +13,7 @@ struct WatchItemsView: View {
 
     @State private var items: [Item] = []
     @State private var units: [Int64: String] = [:]
+    @State private var tags: [Tag] = []
     @State private var problem: Problem?
     @State private var loaded = false
     /// Rows waiting for the server. Kept so a tap looks instant on a wrist, where the
@@ -20,6 +21,7 @@ struct WatchItemsView: View {
     @State private var inFlight: Set<Int64> = []
 
     private var outstanding: [Item] { items.filter { !$0.isDone } }
+    private var categories: [ItemGroup] { grouped(outstanding, by: tags) }
     private var done: [Item] { items.filter(\.isDone) }
 
     var body: some View {
@@ -36,7 +38,23 @@ struct WatchItemsView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    ForEach(outstanding) { row($0) }
+                    ForEach(categories) { category in
+                        // Headings only when they separate something. On 208 points
+                        // a heading costs most of a row, and one that stands over the
+                        // whole list has bought nothing with it.
+                        if categories.count > 1 {
+                            Section {
+                                ForEach(category.items) { row($0) }
+                            } header: {
+                                Text(category.heading)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .textCase(nil)
+                            }
+                        } else {
+                            ForEach(category.items) { row($0) }
+                        }
+                    }
 
                     if !done.isEmpty {
                         Section {
@@ -163,9 +181,11 @@ struct WatchItemsView: View {
         do {
             async let items = api.items(on: list)
             async let units = api.units()
-            let (loadedItems, loadedUnits) = try await (items, units)
+            async let tags = api.tags()
+            let (loadedItems, loadedUnits, loadedTags) = try await (items, units, tags)
             self.items = loadedItems
             self.units = Dictionary(uniqueKeysWithValues: loadedUnits.map { ($0.id, $0.name) })
+            self.tags = loadedTags
             problem = nil
         } catch {
             problem = Problem(error, identity: identity)

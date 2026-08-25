@@ -36,6 +36,10 @@ struct ItemsView: View {
     }
 
     private var outstanding: [Item] { items.filter { !$0.isDone } }
+    /// Outstanding items under their category heading, in the order the shop is laid
+    /// out. The rule is shared with the watch and matches the browser's — see
+    /// `grouped(_:by:)`.
+    private var categories: [ItemGroup] { grouped(outstanding, by: tags) }
     private var done: [Item] { items.filter(\.isDone) }
 
     /// Rows print a unit, the editor picks one. Built here rather than fetched twice.
@@ -92,9 +96,17 @@ struct ItemsView: View {
                 }
             }
 
-            Section {
-                ForEach(outstanding) { item in
-                    row(item)
+            ForEach(categories) { category in
+                Section {
+                    ForEach(category.items) { item in
+                        row(item)
+                    }
+                } header: {
+                    // Only worth a heading when there is more than one: a single
+                    // "Other" above every item on the list says nothing.
+                    if categories.count > 1 {
+                        Text(category.heading)
+                    }
                 }
             }
 

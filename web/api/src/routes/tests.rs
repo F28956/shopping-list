@@ -723,6 +723,48 @@ async fn an_add_must_say_which_it_means(
     assert_eq!(page["total"], 0, "nothing was added on a refused request");
 }
 
+/// The item list carries each row's tags, so a client can group by category the way
+/// the browser does without a request per row.
+#[rstest]
+#[tokio::test]
+async fn items_come_with_their_tags(
+    #[future(awt)]
+    #[with(fixtures::TAGS)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+    let (list_id, item_id) = a_list_with_an_item(&app).await;
+    let items = format!("/api/lists/{list_id}/items");
+
+    let (_, page) = send(&app, req("GET", &format!("{items}?order_by=id"), &me(), None)).await;
+    assert_eq!(
+        page["items"][0]["tag_ids"].as_array().unwrap().len(),
+        0,
+        "an unfiled item has none"
+    );
+
+    let (_, tags) = send(&app, req("GET", "/api/tags?order_by=name", &me(), None)).await;
+    let tag_id = tags["items"][0]["id"].as_i64().unwrap();
+    let (status, _) = send(
+        &app,
+        req(
+            "POST",
+            &format!("{items}/{item_id}/tags"),
+            &me(),
+            Some(json!({"tag_id": tag_id})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, page) = send(&app, req("GET", &format!("{items}?order_by=id"), &me(), None)).await;
+    let row = &page["items"][0];
+    assert_eq!(row["tag_ids"], json!([tag_id]));
+    // Flattened, so the item's own fields are still where they were.
+    assert_eq!(row["id"], item_id);
+    assert_eq!(row["name"], "Apples");
+}
+
 /// Clearing takes the ticked-off rows and nothing else.
 #[rstest]
 #[tokio::test]
