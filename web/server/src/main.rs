@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
         ctx: Ctx::new(db.clone()),
         auth: AuthMode::Google {
             jwks: Arc::new(Jwks::new(reqwest::Client::new())),
-            client_id: std::env::var("GOOGLE_CLIENT_ID")?,
+            client_ids: google_client_ids()?,
         },
     };
     let web_ctx = Ctx::new(db.clone());
@@ -122,6 +122,25 @@ fn security_headers() -> Headers {
             ),
         ),
     )
+}
+
+/// Every client id this application answers to.
+///
+/// One identity provider issues a different client id per platform, so the browser
+/// and the phone present tokens with different audiences. `GOOGLE_CLIENT_ID` is
+/// required — without it the web half cannot sign anybody in — and
+/// `GOOGLE_IOS_CLIENT_ID` is added when the phone app has been set up.
+fn google_client_ids() -> anyhow::Result<Vec<String>> {
+    let mut ids = vec![std::env::var("GOOGLE_CLIENT_ID")?];
+
+    if let Ok(ios) = std::env::var("GOOGLE_IOS_CLIENT_ID")
+        && !ios.trim().is_empty()
+    {
+        ids.push(ios);
+    }
+
+    tracing::info!(audiences = ids.len(), "accepting Google tokens");
+    Ok(ids)
 }
 
 /// Opens the database, deliberately refusing to create it.

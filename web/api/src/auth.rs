@@ -54,12 +54,12 @@ impl FromRequestParts<AppState> for CurrentUser {
             .ok_or(AppError::Unauthorized)?;
 
         let claims = match &state.auth {
-            AuthMode::Google { jwks, client_id } => {
+            AuthMode::Google { jwks, client_ids } => {
                 let kid = decode_header(token)?.kid.ok_or(AppError::Unauthorized)?;
                 let jwk = jwks.key(&kid).await?;
 
                 let mut v = Validation::new(Algorithm::RS256);
-                v.set_audience(&[client_id]);
+                v.set_audience(client_ids);
                 v.set_issuer(&["https://accounts.google.com", "accounts.google.com"]);
 
                 decode::<Claims>(token, &DecodingKey::from_jwk(&jwk)?, &v)?.claims

@@ -14,7 +14,14 @@ use crate::jwks::Jwks;
 pub enum AuthMode {
     /// Verify the token's signature, issuer, audience and expiry against Google's
     /// published keys.
-    Google { jwks: Arc<Jwks>, client_id: String },
+    /// Several audiences, because one identity provider issues a different client id
+    /// per platform: the browser's tokens carry the web client id and the phone's
+    /// carry the iOS one. Both are this application, and a token minted for neither
+    /// is rejected — the list is what makes that check mean anything.
+    Google {
+        jwks: Arc<Jwks>,
+        client_ids: Vec<String>,
+    },
     /// Tests only: the bearer token is taken to be the subject, unverified.
     ///
     /// Behind a feature rather than `#[cfg(test)]` so that other crates can drive
