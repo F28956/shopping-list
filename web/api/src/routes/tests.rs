@@ -7,7 +7,7 @@
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use domain::models::pool;
+use domain::models::{fixtures, pool};
 use domain::service::Ctx;
 use http_body_util::BodyExt;
 use rstest::rstest;
@@ -311,6 +311,111 @@ async fn an_unknown_unit_is_a_client_error(#[future(awt)] pool: SqlitePool) {
             &format!("/api/lists/{list_id}/items"),
             &me(),
             Some(json!({"name": "Apples", "unit_id": 9999})),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// Tags reach an item through its list, so the same 404 rule applies: a tag id and an
+/// item id together buy nothing if the list is not yours.
+#[rstest]
+#[tokio::test]
+async fn tagging_an_item(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+    let (list_id, item_id) = a_list_with_an_item(&app).await;
+    let base = format!("/api/lists/{list_id}/items/{item_id}/tags");
+
+    // pick a real tag from the seeded reference data
+    let (_, tags) = send(&app, req("GET", "/api/tags?order_by=name", &me(), None)).await;
+    let tag_id = tags["items"][0]["id"].as_i64().expect("no seeded tags");
+
+    let (status, _) = send(&app, req("GET", &base, &me(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = send(
+        &app,
+        req("POST", &base, &me(), Some(json!({"tag_id": tag_id}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, on_item) = send(&app, req("GET", &base, &me(), None)).await;
+    assert_eq!(on_item.as_array().unwrap().len(), 1);
+    assert_eq!(on_item[0]["id"], tag_id);
+
+    // attaching the same one twice is a conflict, not a silent second row
+    let (status, _) = send(
+        &app,
+        req("POST", &base, &me(), Some(json!({"tag_id": tag_id}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let (status, _) = send(
+        &app,
+        req("DELETE", &format!("{base}/{tag_id}"), &me(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, on_item) = send(&app, req("GET", &base, &me(), None)).await;
+    assert!(on_item.as_array().unwrap().is_empty());
+
+    // detaching one that is not attached is a miss
+    let (status, _) = send(
+        &app,
+        req("DELETE", &format!("{base}/{tag_id}"), &me(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[rstest]
+#[tokio::test]
+async fn a_stranger_cannot_tag_my_item(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+    let (list_id, item_id) = a_list_with_an_item(&app).await;
+    let base = format!("/api/lists/{list_id}/items/{item_id}/tags");
+    let (_, tags) = send(&app, req("GET", "/api/tags?order_by=name", &me(), None)).await;
+    let tag_id = tags["items"][0]["id"].as_i64().unwrap();
+
+    for (method, uri, body) in [
+        ("GET", base.clone(), None),
+        ("POST", base.clone(), Some(json!({"tag_id": tag_id}))),
+        ("DELETE", format!("{base}/{tag_id}"), None),
+    ] {
+        let (status, _) = send(&app, req(method, &uri, &them(), body)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri} leaked");
+    }
+}
+
+/// A tag that does not exist is the caller's mistake, not a server fault.
+#[rstest]
+#[tokio::test]
+async fn attaching_an_unknown_tag_is_a_client_error(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+    let (list_id, item_id) = a_list_with_an_item(&app).await;
+
+    let (status, _) = send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{list_id}/items/{item_id}/tags"),
+            &me(),
+            Some(json!({"tag_id": 9999})),
         ),
     )
     .await;

@@ -9,8 +9,9 @@ use axum::{
 };
 use domain::models::OffsetPage;
 use domain::models::item::{self, Amount, Item, Name};
+use domain::models::tag;
 use domain::models::{list, unit};
-use domain::service::items;
+use domain::service::{items, tags};
 
 use crate::auth::CurrentUser;
 use crate::error::AppError;
@@ -22,6 +23,11 @@ pub fn router() -> Router<AppState> {
         .route("/", get(list).post(create))
         .route("/{item_id}", get(read).put(update).delete(delete))
         .route("/{item_id}/done", post(tick).delete(untick))
+        .route("/{item_id}/tags", get(item_tags).post(attach_tag))
+        .route(
+            "/{item_id}/tags/{tag_id}",
+            axum::routing::delete(detach_tag),
+        )
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -142,5 +148,54 @@ async fn delete(
     Path((_list_id, item_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, AppError> {
     items::delete(&state.ctx, &user.actor(), item::Id(item_id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// What is on this item.
+#[derive(Debug, serde::Deserialize)]
+pub struct TagRef {
+    pub tag_id: i64,
+}
+
+async fn item_tags(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((_list_id, item_id)): Path<(i64, i64)>,
+) -> Result<Json<Vec<tag::Tag>>, AppError> {
+    Ok(Json(
+        tags::for_item(&state.ctx, &user.actor(), item::Id(item_id)).await?,
+    ))
+}
+
+/// Attaching is an edit to the item, so it is authorised by the item's list -- which
+/// is why this lives under the item rather than under the tag.
+async fn attach_tag(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((_list_id, item_id)): Path<(i64, i64)>,
+    Json(input): Json<TagRef>,
+) -> Result<StatusCode, AppError> {
+    tags::attach(
+        &state.ctx,
+        &user.actor(),
+        item::Id(item_id),
+        tag::Id(input.tag_id),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn detach_tag(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((_list_id, item_id, tag_id)): Path<(i64, i64, i64)>,
+) -> Result<StatusCode, AppError> {
+    tags::detach(
+        &state.ctx,
+        &user.actor(),
+        item::Id(item_id),
+        tag::Id(tag_id),
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -6,8 +6,8 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use domain::models::pool;
 use domain::models::user::{Name, Sub, User};
+use domain::models::{fixtures, pool};
 use domain::service::Ctx;
 use http_body_util::BodyExt;
 use rstest::rstest;
@@ -279,4 +279,123 @@ async fn acting_while_signed_out_redirects_to_login(
     let (status, _) = get(&app, uri, "").await;
 
     assert_eq!(status, StatusCode::SEE_OTHER);
+}
+
+/// Tagging, from the browser: the chip appears, the picker stops offering what is
+/// already on the item, and removing it takes the chip away.
+#[rstest]
+#[tokio::test]
+async fn tagging_an_item_from_the_page(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|tagger").await;
+    post(&app, "/lists", &cookie, "name=Bakery").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &cookie,
+        "name=Bagels&amount=1&unit_id=",
+    )
+    .await;
+
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    let item_id: i64 = body[body.find("/items/").unwrap() + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap();
+    assert!(body.contains("+ tag"), "no tag picker on the page: {body}");
+
+    // pick whatever the first option offers
+    let opt = body.find("name=\"tag_id\"").expect("no tag select");
+    let tag_id: i64 = body[body[opt..].find("value=\"").unwrap() + opt + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .expect("no tag options -- are tags seeded?");
+
+    assert_eq!(
+        post(
+            &app,
+            &format!("/lists/{list_id}/items/{item_id}/tags"),
+            &cookie,
+            &format!("tag_id={tag_id}")
+        )
+        .await,
+        StatusCode::SEE_OTHER
+    );
+
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    assert!(
+        body.contains("class=\"chip\""),
+        "the tag chip did not render: {body}"
+    );
+    let offered = body.matches(&format!("value=\"{tag_id}\"")).count();
+    assert_eq!(
+        offered, 0,
+        "the picker still offers a tag already on the item"
+    );
+
+    assert_eq!(
+        post(
+            &app,
+            &format!("/lists/{list_id}/items/{item_id}/tags/{tag_id}/delete"),
+            &cookie,
+            ""
+        )
+        .await,
+        StatusCode::SEE_OTHER
+    );
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    assert!(
+        !body.contains("class=\"chip\""),
+        "the chip survived removal"
+    );
+}
+
+/// Another person's item cannot be tagged, even knowing both ids.
+#[rstest]
+#[tokio::test]
+async fn a_stranger_cannot_tag_my_item_from_the_page(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|owner").await;
+    post(&app, "/lists", &mine, "name=Private").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &mine,
+        "name=Secret&amount=1&unit_id=",
+    )
+    .await;
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &mine).await;
+    let item_id: i64 = body[body.find("/items/").unwrap() + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap();
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|stranger").await;
+
+    assert_eq!(
+        post(
+            &app2,
+            &format!("/lists/{list_id}/items/{item_id}/tags"),
+            &theirs,
+            "tag_id=1"
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
 }

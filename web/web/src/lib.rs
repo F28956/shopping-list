@@ -194,6 +194,14 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
             post(pages::items::delete),
         )
         .route(
+            "/lists/{id}/items/{item_id}/tags",
+            post(pages::items::attach_tag),
+        )
+        .route(
+            "/lists/{id}/items/{item_id}/tags/{tag_id}/delete",
+            post(pages::items::detach_tag),
+        )
+        .route(
             "/notes",
             get(pages::notes::index).post(pages::notes::create),
         )

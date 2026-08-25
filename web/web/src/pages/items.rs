@@ -3,8 +3,8 @@
 use axum::extract::{Form, Path, State};
 use axum::response::Redirect;
 use domain::models::item::{self, Amount, Name};
-use domain::models::{Direction, OrderBy, Paging, list, unit};
-use domain::service::{items, lists, units};
+use domain::models::{Direction, OrderBy, Paging, list, tag, unit};
+use domain::service::{items, lists, tags, units};
 use maud::{Markup, html};
 use tower_sessions::Session;
 
@@ -55,6 +55,19 @@ pub async fn show(
     .await?;
 
     let unit_names = unit_lookup(&s, &actor).await?;
+    // One query for the whole page rather than one per item.
+    let tags_by_item = tags::on_list(&s.ctx, &actor, list.id).await?;
+    let all_tags = tags::list(
+        &s.ctx,
+        &actor,
+        everything(),
+        OrderBy {
+            field: tag::Field::Name,
+            direction: Direction::Ascending,
+        },
+    )
+    .await?
+    .items;
 
     Ok(view::page(
         &list.name.0,
@@ -85,6 +98,37 @@ pub async fn show(
                             form class="inline" method="post"
                                  action={ "/lists/" (list.id.0) "/items/" (i.id.0) "/delete" } {
                                 button class="quiet" title="Remove" { "×" }
+                            }
+                        }
+                        li class="tagrow" {
+                            @let on_item = tags_by_item.get(&i.id.0);
+                            @for t in on_item.into_iter().flatten() {
+                                form class="inline" method="post"
+                                     action={ "/lists/" (list.id.0) "/items/" (i.id.0)
+                                              "/tags/" (t.id.0) "/delete" } {
+                                    button class="chip" title="Remove tag" {
+                                        @if let Some(e) = &t.emoji { (e.0) " " }
+                                        (t.name.0) " ×"
+                                    }
+                                }
+                            }
+                            details {
+                                summary { "+ tag" }
+                                form class="add" method="post"
+                                     action={ "/lists/" (list.id.0) "/items/" (i.id.0) "/tags" } {
+                                    select name="tag_id" aria-label="Tag" required {
+                                        @for t in &all_tags {
+                                            // only what is not already on it
+                                            @if !on_item.is_some_and(|ts| ts.iter().any(|x| x.id == t.id)) {
+                                                option value=(t.id.0) {
+                                                    @if let Some(e) = &t.emoji { (e.0) " " }
+                                                    (t.name.0)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    button { "Add" }
+                                }
                             }
                         }
                     }
@@ -193,5 +237,33 @@ pub async fn delete(
 ) -> Result<Redirect, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     items::delete(&s.ctx, &actor, item::Id(item_id)).await?;
+    Ok(Redirect::to(&format!("/lists/{list_id}")))
+}
+
+#[derive(serde::Deserialize)]
+pub struct TagChoice {
+    pub tag_id: i64,
+}
+
+/// Tagging is an edit to the item, so the route sits under the item and the service
+/// checks the item's list — the tag itself grants nothing.
+pub async fn attach_tag(
+    session: Session,
+    State(s): State<AppState>,
+    Path((list_id, item_id)): Path<(i64, i64)>,
+    Form(form): Form<TagChoice>,
+) -> Result<Redirect, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+    tags::attach(&s.ctx, &actor, item::Id(item_id), tag::Id(form.tag_id)).await?;
+    Ok(Redirect::to(&format!("/lists/{list_id}")))
+}
+
+pub async fn detach_tag(
+    session: Session,
+    State(s): State<AppState>,
+    Path((list_id, item_id, tag_id)): Path<(i64, i64, i64)>,
+) -> Result<Redirect, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+    tags::detach(&s.ctx, &actor, item::Id(item_id), tag::Id(tag_id)).await?;
     Ok(Redirect::to(&format!("/lists/{list_id}")))
 }

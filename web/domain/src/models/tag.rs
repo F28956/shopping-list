@@ -1,8 +1,8 @@
 use time::OffsetDateTime;
 
-use super::item;
 use super::{Error, Result};
 use super::{OffsetPage, OrderBy, Paging};
+use super::{item, list};
 
 // Scaffold Id, Name, Colour, Emoji and CreatedAt
 i64!(Id);
@@ -330,6 +330,52 @@ impl Tag {
     /// tag that does not exist is [`Error::InvalidInput`]: the row named a parent that
     /// is not there, which is the caller's mistake, not a delete held back by
     /// dependants ([`Error::InUse`]).
+    /// Every tag on every item of one list, as `(item_id, tag)` pairs.
+    ///
+    /// One query rather than one per item: a list page needs the tags for everything
+    /// on it, and asking per item turns a twenty-line list into twenty-one round
+    /// trips. Ordered by item then tag name so the caller can group without sorting.
+    pub async fn for_list(
+        pool: &sqlx::SqlitePool,
+        list_id: list::Id,
+    ) -> Result<Vec<(item::Id, Tag)>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                it.item_id  as "item_id: item::Id",
+                t.id        as "id: Id",
+                t.name      as "name: Name",
+                t.colour    as "colour?: Colour",
+                t.emoji     as "emoji?: Emoji",
+                t.created_at as "created_at: CreatedAt"
+            FROM item_tags it
+            JOIN tags t  ON t.id = it.tag_id
+            JOIN items i ON i.id = it.item_id
+            WHERE i.list_id = ?1
+            ORDER BY it.item_id, t.name
+            "#,
+            list_id
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.item_id,
+                    Tag {
+                        id: r.id,
+                        name: r.name,
+                        colour: r.colour,
+                        emoji: r.emoji,
+                        created_at: r.created_at,
+                    },
+                )
+            })
+            .collect())
+    }
+
     pub async fn attach(pool: &sqlx::SqlitePool, item_id: item::Id, tag_id: Id) -> Result<()> {
         sqlx::query!(
             r#"
@@ -940,6 +986,128 @@ mod tests {
             items_before,
             "the items it was on must survive it"
         );
+        Ok(())
+    }
+
+    /// One query for a whole list's tags, so a page does not make one round trip per
+    /// item. The pairs must cover every tagged item on the list and nothing else.
+    #[rstest]
+    #[tokio::test]
+    async fn for_list_covers_the_whole_list(
+        #[with(seeds!(
+            "fixtures/users.sql",
+            "fixtures/lists.sql",
+            "fixtures/units.sql",
+            "fixtures/items.sql",
+            "fixtures/tags.sql",
+        ))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) -> Result<()> {
+        let list_id = sqlx::query_scalar!(
+            r#"SELECT id as "id!: list::Id" FROM lists WHERE name = 'Fruit & veg'"#
+        )
+        .fetch_one(&pool)
+        .await?;
+
+        let pairs = Tag::for_list(&pool, list_id).await?;
+
+        // every pair belongs to an item on this list
+        let on_list = sqlx::query_scalar!(
+            r#"SELECT count(*) as "n!: i64" FROM items WHERE list_id = ?1"#,
+            list_id
+        )
+        .fetch_one(&pool)
+        .await?;
+        let items: std::collections::HashSet<_> = pairs.iter().map(|(i, _)| i.0).collect();
+        assert!(!items.is_empty(), "the fixture list has tagged items");
+        assert!(items.len() <= on_list as usize);
+
+        // and it agrees with asking item by item
+        for item_id in &items {
+            let one = Tag::for_item(&pool, item::Id(*item_id)).await?;
+            let batched: Vec<_> = pairs
+                .iter()
+                .filter(|(i, _)| i.0 == *item_id)
+                .map(|(_, t)| t.clone())
+                .collect();
+            assert_eq!(batched, one, "batched and per-item disagree for {item_id}");
+        }
+
+        // the fixture leaves one item on this list untagged, and it must not appear
+        let untagged = sqlx::query_scalar!(
+            r#"SELECT count(*) as "n!: i64" FROM items
+               WHERE list_id = ?1 AND id NOT IN (SELECT item_id FROM item_tags)"#,
+            list_id
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert!(
+            untagged > 0,
+            "the fixture should have an untagged item here"
+        );
+        assert_eq!(items.len(), (on_list - untagged) as usize);
+
+        Ok(())
+    }
+
+    /// Another list's tags must not leak in.
+    #[rstest]
+    #[tokio::test]
+    async fn for_list_is_scoped(
+        #[with(seeds!(
+            "fixtures/users.sql",
+            "fixtures/lists.sql",
+            "fixtures/units.sql",
+            "fixtures/items.sql",
+            "fixtures/tags.sql",
+        ))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) -> Result<()> {
+        let a = sqlx::query_scalar!(
+            r#"SELECT id as "id!: list::Id" FROM lists WHERE name = 'Fruit & veg'"#
+        )
+        .fetch_one(&pool)
+        .await?;
+        let b =
+            sqlx::query_scalar!(r#"SELECT id as "id!: list::Id" FROM lists WHERE name = 'Dairy'"#)
+                .fetch_one(&pool)
+                .await?;
+
+        let from_a: std::collections::HashSet<_> = Tag::for_list(&pool, a)
+            .await?
+            .into_iter()
+            .map(|(i, _)| i.0)
+            .collect();
+        let from_b: std::collections::HashSet<_> = Tag::for_list(&pool, b)
+            .await?
+            .into_iter()
+            .map(|(i, _)| i.0)
+            .collect();
+
+        assert!(!from_a.is_empty() && !from_b.is_empty());
+        assert!(
+            from_a.is_disjoint(&from_b),
+            "one list's items appeared in another's"
+        );
+        Ok(())
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn for_list_of_nothing_is_empty(
+        #[with(seeds!("fixtures/users.sql", "fixtures/lists.sql"))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) -> Result<()> {
+        let empty = sqlx::query_scalar!(
+            r#"SELECT id as "id!: list::Id" FROM lists WHERE name = 'Chemist'"#
+        )
+        .fetch_one(&pool)
+        .await?;
+
+        assert!(Tag::for_list(&pool, empty).await?.is_empty());
         Ok(())
     }
 

@@ -16,3 +16,18 @@ pub(in crate::models) use error::Result;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use common::tests::pool;
+
+/// The seed data, for transports that want to drive their routers against something
+/// realistic.
+///
+/// Exposed as constants rather than through `seeds!`, which is a `macro_rules!`
+/// internal to this crate. Order matters — see `models/fixtures/README.md`.
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixtures {
+    pub const USERS: &str = include_str!("models/fixtures/users.sql");
+    pub const LISTS: &str = include_str!("models/fixtures/lists.sql");
+    pub const UNITS: &str = include_str!("models/fixtures/units.sql");
+    pub const ITEMS: &str = include_str!("models/fixtures/items.sql");
+    pub const TAGS: &str = include_str!("models/fixtures/tags.sql");
+    pub const NOTES: &str = include_str!("models/fixtures/notes.sql");
+}

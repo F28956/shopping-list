@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id as \"id!: list::Id\" FROM lists WHERE name = 'Fruit & veg'",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: list::Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cf4759d29beeba8b5996d94579c850d3fd7c9ecfd8e669632ed77aac7c87d3df"
+}
