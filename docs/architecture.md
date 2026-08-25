@@ -4,7 +4,7 @@ One executable serves the browser, the HTTP API and — later — MCP, over a se
 layer that owns authorization. The browser reaches the database without HTTP; iOS
 keeps it.
 
-**Status:** built and in use. 438 tests. The credential for non-browser clients is the
+**Status:** built and in use. 515 tests. The credential for non-browser clients is the
 one open decision, and it blocks MCP.
 
 ```
@@ -18,7 +18,7 @@ one open decision, and it blocks MCP.
 
 | Crate | Contains |
 |---|---|
-| `domain` | Models, service layer, `Actor`, `Ctx`, migrations, fixtures |
+| `domain` | Models, service layer, `Actor`, `Ctx`, migrations, fixtures, quick-add parsing, suggestion ranking |
 | `api` | Bearer auth, JWKS, JSON routes, `ServiceError` → status mapping |
 | `web` | OIDC login, sessions, maud pages |
 | `server` | Config, pool, migrations, tracing, one listener, router composition |
@@ -174,6 +174,51 @@ The test `pool` fixture clears both tables after migrating: tests need control o
 own baseline, and the fixtures stamp `created_at` with staggered offsets that
 production has no reason to carry.
 
+## The features that shape the data
+
+**Quick add** (`domain::quick_add`). One typed line becomes name, amount and unit —
+leading number, then a unit if what follows names one, then the rest. Pure: it takes
+the known unit names rather than a database, so its rules test without one. It lives
+in the service layer rather than a transport so the browser and the API cannot drift
+on what `2 kg apples` means.
+
+**History** (`item_history`, `domain::history_rank`). What a person buys, keyed on
+(user, normalised name), kept apart from the lists it was gathered on — deriving it
+from live rows meant clearing a list erased it. It remembers the unit and the
+category too, so a re-added item arrives measured and filed. Ranking is `uses` decayed
+by a thirty-day half-life, computed in Rust: the obvious formula wants `exp()`, which
+a bundled SQLite may not carry, and policy deserves tests that need no database.
+Capped at 500 entries and forgettable one at a time.
+
+**Category grouping.** `tags.sort_order` carries the order of a shop rather than the
+alphabet — perimeter first, frozen late, shop names after everything describing a
+department. Aisle numbers would be more precise and are deliberately not used: they
+differ by branch and change without warning, while categories travel to any shop.
+
+**htmx, without giving up plain HTML.** Every form keeps its `method` and `action`;
+handlers branch on `HX-Request` and return either a fragment or the redirect they
+always returned. The no-JavaScript path is not a claim — the page tests never send
+that header, so they exercise it on every run.
+
+## Security posture
+
+- **Session cookie** is `HttpOnly`, `SameSite=Lax`, and `Secure` unless
+  `SESSION_INSECURE` says otherwise. The safe answer is the one you get by not
+  thinking about it.
+- **Cross-site writes are refused.** `SameSite=Lax` withholds the cookie from
+  cross-site POSTs, but it was the only defence and it stops applying the day someone
+  sets `SameSite=None` or adds permissive CORS. Unsafe methods on the browser router
+  must also say they came from here — `Sec-Fetch-Site`, or an `Origin` matching
+  `PUBLIC_ORIGIN`. A request that says nothing is allowed: `curl` sends no `Origin`,
+  and nothing that lacks a browser can be tricked into carrying someone else's cookie.
+- **Content-Security-Policy forbids inline script and style outright**, plus nosniff,
+  a referrer policy and frame refusal. The application was changed to fit: the
+  stylesheet and the two `hx-on` handlers moved into served files, because a policy
+  that has to allow `unsafe-inline` is decoration. A test asserts the markup contains
+  nothing the policy would block.
+- **The test-only auth mode cannot ship.** Verified by planting a `compile_error!`
+  behind its feature: the release build compiles, the test build does not.
+
 ## Testing
 
 Mutation testing, not just green ticks. Each rule was broken to confirm the suite
@@ -208,6 +253,13 @@ equivalent problem for ordering, but there is no such trick for routes.
 - **`ON DELETE RESTRICT` surfaces as SQLITE_CONSTRAINT_TRIGGER (1811)**, not the
   foreign-key code sqlx maps. A blocked delete and a dangling reference are different
   failures and must not collapse into one error.
+- **A page that shows a prefix must say so.** Every list view reads `has_more` and
+  admits to holding back; silently truncating makes missing rows look deleted. There
+  is one `PAGE_MAX` and every caller reads it, because four caps drifting apart is how
+  a list ends up cut at a number nobody chose.
+- **A guard that never refuses is not a guard.** Units and tags are readable by any
+  actor; that is written down rather than expressed as a function returning `Ok(())`,
+  which reads like a check that exists.
 
 ## Open
 
@@ -227,7 +279,9 @@ asserts exactly that, so deciding which side wins will break something loud.
 An irreversible `DELETE` deserves a confirmation flow designed on purpose.
 
 **Sharing.** `list_members` and `Role` map the schema; nothing operates on them.
-Answering it means deciding what a `viewer` may do.
+Answering it means deciding what a `viewer` may do — and, separately, whose history a
+shared list draws on. History is per-user by design: what you buy is yours, and
+merging two people's habits would make both sets of suggestions worse.
 
 ## Recorded, not taken
 
