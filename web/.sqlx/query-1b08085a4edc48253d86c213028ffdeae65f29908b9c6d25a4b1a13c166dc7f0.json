@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO tags (name, colour, emoji)\n            VALUES (?1, ?2, ?3)\n            RETURNING\n                id          as \"id: Id\",\n                name        as \"name: Name\",\n                colour      as \"colour?: Colour\",\n                emoji       as \"emoji?: Emoji\",\n                created_at  as \"created_at!: CreatedAt\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name: Name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "colour?: Colour",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "colour"
+          }
+        }
+      },
+      {
+        "name": "emoji?: Emoji",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "emoji"
+          }
+        }
+      },
+      {
+        "name": "created_at!: CreatedAt",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1b08085a4edc48253d86c213028ffdeae65f29908b9c6d25a4b1a13c166dc7f0"
+}

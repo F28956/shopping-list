@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO notes (user_id, body)\n            VALUES (?1, ?2)\n            RETURNING\n                id          as \"id!: Id\",\n                user_id     as \"user_id: user::Id\",\n                body        as \"body: Body\",\n                created_at  as \"created_at!: CreatedAt\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "notes",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "user_id: user::Id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "notes",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "name": "body: Body",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "notes",
+            "name": "body"
+          }
+        }
+      },
+      {
+        "name": "created_at!: CreatedAt",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "notes",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0342ecd1e10ffda187bd311240cd9bfd5b618742a5d02f2d5fbdd55ebbcb9366"
+}

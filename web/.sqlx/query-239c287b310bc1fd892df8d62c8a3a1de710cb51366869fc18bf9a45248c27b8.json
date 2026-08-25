@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id as \"id!: unit::Id\" FROM units WHERE name = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: unit::Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "units",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "239c287b310bc1fd892df8d62c8a3a1de710cb51366869fc18bf9a45248c27b8"
+}

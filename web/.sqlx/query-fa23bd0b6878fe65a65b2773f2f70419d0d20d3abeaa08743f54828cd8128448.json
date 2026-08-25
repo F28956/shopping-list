@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO users (sub, email, name)\n            VALUES (?1, ?2, ?3)\n            RETURNING\n                id          as \"id: Id\",\n                sub         as \"sub: Sub\",\n                email       as \"email?: Email\",\n                name        as \"name?: Name\",\n                created_at  as \"created_at!: CreatedAt\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "sub: Sub",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "sub"
+          }
+        }
+      },
+      {
+        "name": "email?: Email",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "name": "name?: Name",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "created_at!: CreatedAt",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fa23bd0b6878fe65a65b2773f2f70419d0d20d3abeaa08743f54828cd8128448"
+}

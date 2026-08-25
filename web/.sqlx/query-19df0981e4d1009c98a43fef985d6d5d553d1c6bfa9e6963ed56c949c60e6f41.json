@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id as \"id!: item::Id\" FROM items WHERE name = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: item::Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "19df0981e4d1009c98a43fef985d6d5d553d1c6bfa9e6963ed56c949c60e6f41"
+}

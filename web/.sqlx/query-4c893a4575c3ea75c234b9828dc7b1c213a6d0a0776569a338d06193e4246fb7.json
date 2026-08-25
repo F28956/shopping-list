@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "\n                SELECT\n                    id,\n                    list_id,\n                    name,\n                    amount,\n                    unit_id,\n                    done_at,\n                    created_at\n                FROM items\n                WHERE list_id = ? AND id > ?\n                ORDER BY id LIMIT ?\n            ",
+  "query": "\n            UPDATE items SET name = ?1, amount = ?2, unit_id = ?3 WHERE id = ?4\n            RETURNING\n                id          as \"id!: Id\",\n                list_id     as \"list_id: list::Id\",\n                name        as \"name: Name\",\n                amount      as \"amount: Amount\",\n                unit_id     as \"unit_id?: unit::Id\",\n                done_at     as \"done_at?: DoneAt\",\n                created_at  as \"created_at: CreatedAt\"\n            ",
   "describe": {
     "columns": [
       {
-        "name": "id",
+        "name": "id!: Id",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": {
@@ -15,7 +15,7 @@
         }
       },
       {
-        "name": "list_id",
+        "name": "list_id: list::Id",
         "ordinal": 1,
         "type_info": "Integer",
         "origin": {
@@ -26,7 +26,7 @@
         }
       },
       {
-        "name": "name",
+        "name": "name: Name",
         "ordinal": 2,
         "type_info": "Text",
         "origin": {
@@ -37,7 +37,7 @@
         }
       },
       {
-        "name": "amount",
+        "name": "amount: Amount",
         "ordinal": 3,
         "type_info": "Float",
         "origin": {
@@ -48,7 +48,7 @@
         }
       },
       {
-        "name": "unit_id",
+        "name": "unit_id?: unit::Id",
         "ordinal": 4,
         "type_info": "Integer",
         "origin": {
@@ -59,7 +59,7 @@
         }
       },
       {
-        "name": "done_at",
+        "name": "done_at?: DoneAt",
         "ordinal": 5,
         "type_info": "Integer",
         "origin": {
@@ -70,7 +70,7 @@
         }
       },
       {
-        "name": "created_at",
+        "name": "created_at: CreatedAt",
         "ordinal": 6,
         "type_info": "Integer",
         "origin": {
@@ -82,17 +82,17 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 4
     },
     "nullable": [
       false,
       false,
       false,
       false,
-      true,
+      false,
       true,
       false
     ]
   },
-  "hash": "2c122e6fd3f2db9c1843353055a398d6dd46961595a3e26e5672c859873a05c4"
+  "hash": "4c893a4575c3ea75c234b9828dc7b1c213a6d0a0776569a338d06193e4246fb7"
 }

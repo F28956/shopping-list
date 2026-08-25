@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE users SET name = ?1, email = ?2 WHERE id = ?3\n            RETURNING\n                id          as \"id: Id\",\n                sub         as \"sub: Sub\",\n                email       as \"email?: Email\",\n                name        as \"name?: Name\",\n                created_at  as \"created_at: CreatedAt\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "sub: Sub",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "sub"
+          }
+        }
+      },
+      {
+        "name": "email?: Email",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "name": "name?: Name",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "created_at: CreatedAt",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "bc6ebf4a18333ac6645cb51fb405013c8e6b2f73c5c631e59653ddc62482ee73"
+}

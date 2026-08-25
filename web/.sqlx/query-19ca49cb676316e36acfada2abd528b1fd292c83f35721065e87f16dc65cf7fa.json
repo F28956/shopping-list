@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE units SET name = ?1 WHERE id = ?2\n            RETURNING\n                id          as \"id: Id\",\n                name        as \"name: Name\",\n                created_at  as \"created_at: CreatedAt\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "units",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name: Name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "units",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "created_at: CreatedAt",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "units",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "19ca49cb676316e36acfada2abd528b1fd292c83f35721065e87f16dc65cf7fa"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT owner_id as \"id!: Id\" FROM lists GROUP BY owner_id ORDER BY count(*) DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "owner_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4124c60a53d2c6d36264952f0062a5d8cb6c16f2a2179f277804c60d79bb2ec0"
+}

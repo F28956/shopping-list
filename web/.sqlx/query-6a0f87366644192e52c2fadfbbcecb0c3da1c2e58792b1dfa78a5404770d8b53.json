@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO lists (name, owner_id)\n            VALUES (?1, ?2)\n            RETURNING\n                id          as \"id!: Id\",\n                name        as \"name: Name\",\n                owner_id    as \"owner_id: user::Id\",\n                created_at  as \"created_at!: CreatedAt\",\n                updated_at  as \"updated_at!: UpdatedAt\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name: Name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "owner_id: user::Id",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "owner_id"
+          }
+        }
+      },
+      {
+        "name": "created_at!: CreatedAt",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "updated_at!: UpdatedAt",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "6a0f87366644192e52c2fadfbbcecb0c3da1c2e58792b1dfa78a5404770d8b53"
+}

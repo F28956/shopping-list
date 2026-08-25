@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                t.id          as \"id: Id\",\n                t.name        as \"name: Name\",\n                t.colour      as \"colour?: Colour\",\n                t.emoji       as \"emoji?: Emoji\",\n                t.created_at  as \"created_at: CreatedAt\"\n            FROM tags t\n            JOIN item_tags it ON it.tag_id = t.id\n            WHERE it.item_id = ?1\n            ORDER BY t.name COLLATE NOCASE, t.id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name: Name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "colour?: Colour",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "colour"
+          }
+        }
+      },
+      {
+        "name": "emoji?: Emoji",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "emoji"
+          }
+        }
+      },
+      {
+        "name": "created_at: CreatedAt",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "1ea5cd9b4bd7aab671f3d03bb18dfa5c235a55983f040bbcd329aa812a1955d9"
+}

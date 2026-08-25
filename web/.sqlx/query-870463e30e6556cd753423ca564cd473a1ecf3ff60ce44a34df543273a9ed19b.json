@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT list_id as \"id!: Id\" FROM items GROUP BY list_id ORDER BY count(*) DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "list_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "870463e30e6556cd753423ca564cd473a1ecf3ff60ce44a34df543273a9ed19b"
+}

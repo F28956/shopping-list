@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id as \"id!: user::Id\" FROM users WHERE name = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: user::Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "23f1d6521e99fd9663105d982035d7571620e3e9394507b464c766ba8624118a"
+}

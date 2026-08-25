@@ -40,6 +40,6 @@ rstest = "0.26.1"
 domain = { path = "../domain", features = ["test-support"] }
 
 [lints.rust]
+# `unused = "allow"` used to be here. It hid a dozen genuinely dead imports that only
+# turned up when the models moved out, and it hides unused Results too.
 dead_code = "allow"
-unused_variables = "allow"
-unused = "allow"
