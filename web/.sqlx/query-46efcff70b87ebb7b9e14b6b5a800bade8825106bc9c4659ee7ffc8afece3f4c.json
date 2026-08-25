@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                name         as \"name: item::Name\",\n                display      as \"display: Display\",\n                unit_id      as \"unit_id?: unit::Id\",\n                tag_id       as \"tag_id?: tag::Id\",\n                uses         as \"uses: Uses\",\n                last_used_at as \"last_used_at: LastUsedAt\"\n            FROM item_history\n            WHERE user_id = ?1\n            ORDER BY last_used_at DESC\n            LIMIT ?2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "name: item::Name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "item_history",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "display: Display",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "item_history",
+            "name": "display"
+          }
+        }
+      },
+      {
+        "name": "unit_id?: unit::Id",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "item_history",
+            "name": "unit_id"
+          }
+        }
+      },
+      {
+        "name": "tag_id?: tag::Id",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "item_history",
+            "name": "tag_id"
+          }
+        }
+      },
+      {
+        "name": "uses: Uses",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "item_history",
+            "name": "uses"
+          }
+        }
+      },
+      {
+        "name": "last_used_at: LastUsedAt",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "item_history",
+            "name": "last_used_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "46efcff70b87ebb7b9e14b6b5a800bade8825106bc9c4659ee7ffc8afece3f4c"
+}

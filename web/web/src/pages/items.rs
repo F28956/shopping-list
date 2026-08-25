@@ -382,33 +382,9 @@ pub async fn create(
 ) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
 
-    // The parser needs to know what counts as a unit, and that is the units table.
-    let units = units::list(
-        &s.ctx,
-        &actor,
-        everything(),
-        OrderBy {
-            field: unit::Field::Name,
-            direction: Direction::Ascending,
-        },
-    )
-    .await?;
-    let names: Vec<String> = units.items.iter().map(|u| u.name.0.clone()).collect();
-
-    let parsed = domain::quick_add::parse(&form.line, &names);
-    let unit_id = parsed
-        .unit
-        .and_then(|u| units.items.iter().find(|x| x.name.0 == u).map(|x| x.id));
-
-    items::create(
-        &s.ctx,
-        &actor,
-        list::Id(id),
-        Name(parsed.name),
-        Amount(parsed.amount),
-        unit_id,
-    )
-    .await?;
+    // Parsing, the remembered unit and the remembered category all live in the
+    // service, so the browser and the API cannot disagree about what a line means.
+    items::quick_add(&s.ctx, &actor, list::Id(id), &form.line).await?;
 
     swap(&s, &actor, &headers, list::Id(id), None).await
 }

@@ -4,6 +4,7 @@
 //! and (later) MCP are adapters over this crate, and none of them may reach past it
 //! to the database.
 
+pub mod history_rank;
 pub mod models;
 pub mod quick_add;
 pub mod service;

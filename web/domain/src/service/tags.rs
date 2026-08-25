@@ -2,6 +2,7 @@
 //! — but attaching one to an item is a change to that item, so it follows the item's
 //! ownership rather than the tag's.
 
+use crate::models::history::Entry;
 use crate::models::tag::{self, Colour, Emoji, Name, Tag};
 use crate::models::{OffsetPage, OrderBy, Paging, item, list};
 
@@ -76,13 +77,31 @@ pub async fn on_list(
 
 /// Tagging is an edit to the item, so it needs the item, not the tag.
 pub async fn attach(ctx: &Ctx, actor: &Actor, item_id: item::Id, tag_id: tag::Id) -> Result<()> {
-    items::owned(ctx, actor.person()?, item_id).await?;
-    Ok(Tag::attach(&ctx.db, item_id, tag_id).await?)
+    let owner = actor.person()?;
+    let item = items::owned(ctx, owner, item_id).await?;
+    Tag::attach(&ctx.db, item_id, tag_id).await?;
+
+    // Filing something is the strongest signal about where it belongs, so the next
+    // time it is added it arrives already filed. Best-effort: an item that has never
+    // been through quick-add has no history row, and that is not a failure to tag.
+    let _ = Entry::remember_tag(&ctx.db, owner.id, &item.name, Some(tag_id)).await;
+
+    Ok(())
 }
 
 pub async fn detach(ctx: &Ctx, actor: &Actor, item_id: item::Id, tag_id: tag::Id) -> Result<()> {
-    items::owned(ctx, actor.person()?, item_id).await?;
-    Ok(Tag::detach(&ctx.db, item_id, tag_id).await?)
+    let owner = actor.person()?;
+    let item = items::owned(ctx, owner, item_id).await?;
+    Tag::detach(&ctx.db, item_id, tag_id).await?;
+
+    // Unfiling is a signal too: stop putting it there.
+    if let Ok(Some(entry)) = Entry::get(&ctx.db, owner.id, &item.name).await
+        && entry.tag_id == Some(tag_id)
+    {
+        let _ = Entry::remember_tag(&ctx.db, owner.id, &item.name, None).await;
+    }
+
+    Ok(())
 }
 
 fn readable(_actor: &Actor) -> Result<()> {

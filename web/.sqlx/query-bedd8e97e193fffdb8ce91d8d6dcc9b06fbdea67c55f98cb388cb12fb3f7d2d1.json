@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM item_history\n            WHERE user_id = ?1 AND name IN (\n                SELECT name FROM item_history\n                WHERE user_id = ?1\n                ORDER BY uses DESC, last_used_at DESC\n                LIMIT -1 OFFSET ?2\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "bedd8e97e193fffdb8ce91d8d6dcc9b06fbdea67c55f98cb388cb12fb3f7d2d1"
+}

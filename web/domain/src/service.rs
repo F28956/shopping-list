@@ -71,6 +71,35 @@ impl Ctx {
 
 pub type Result<T, E = ServiceError> = std::result::Result<T, E>;
 
+/// Everything, for the reference tables that are small by construction.
+pub(crate) fn everything() -> crate::models::Paging {
+    crate::models::Paging {
+        number: 1,
+        size: 500,
+    }
+}
+
+/// Alphabetical, for a list a person reads.
+pub(crate) fn by_name<F: NamedField>() -> crate::models::OrderBy<F> {
+    crate::models::OrderBy {
+        field: F::NAME,
+        direction: crate::models::Direction::Ascending,
+    }
+}
+
+/// The `Name` variant of a model's sortable fields.
+pub(crate) trait NamedField: Copy {
+    const NAME: Self;
+}
+
+impl NamedField for crate::models::unit::Field {
+    const NAME: Self = crate::models::unit::Field::Name;
+}
+
+impl NamedField for crate::models::tag::Field {
+    const NAME: Self = crate::models::tag::Field::Name;
+}
+
 /// What can go wrong, in the caller's terms rather than the database's.
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {

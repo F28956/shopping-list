@@ -445,3 +445,253 @@ async fn clearing_nothing_is_not_an_error(#[future(awt)] pool: SqlitePool) {
         0
     );
 }
+
+// ------------------------------------------------------------------- history
+
+use crate::models::history::{Entry, MAX_ENTRIES};
+
+/// The reason the history table exists: it has to outlive the lists it was gathered
+/// from. Deriving suggestions from live rows meant "clear done" — the natural
+/// end-of-shop action — wiped the lot.
+#[rstest]
+#[tokio::test]
+async fn history_survives_clearing_the_list(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    items::quick_add(&s.ctx, &s.mine, s.list.id, "Sourdough")
+        .await
+        .unwrap();
+    let item = items::for_list(&s.ctx, &s.mine, s.list.id, all(), order(item::Field::Id))
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|i| i.name.0 == "Sourdough")
+        .unwrap();
+    items::set_done(&s.ctx, &s.mine, item.id, true)
+        .await
+        .unwrap();
+
+    items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap();
+
+    let after = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
+    assert!(
+        after.iter().any(|n| n.0 == "Sourdough"),
+        "clearing the list forgot what was on it: {after:?}"
+    );
+}
+
+/// Deleting the whole list, likewise.
+#[rstest]
+#[tokio::test]
+async fn history_survives_deleting_the_list(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    items::quick_add(&s.ctx, &s.mine, s.list.id, "Rye")
+        .await
+        .unwrap();
+
+    lists::delete(&s.ctx, &s.mine, s.list.id).await.unwrap();
+
+    let after = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
+    assert!(after.iter().any(|n| n.0 == "Rye"), "{after:?}");
+}
+
+/// The payoff: an item added a second time arrives measured and filed, from four
+/// letters and no other input.
+#[rstest]
+#[tokio::test]
+async fn a_remembered_item_returns_measured_and_filed(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let pint = units::create(&s.ctx, &Actor::System, unit::Name("pint".into()))
+        .await
+        .unwrap();
+    let dairy = tags::create(
+        &s.ctx,
+        &Actor::System,
+        tag::Name("dairy".into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // first time: spelled out, then filed by hand
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, "4 pint milk")
+        .await
+        .unwrap();
+    assert_eq!(first.unit_id, Some(pint.id));
+    tags::attach(&s.ctx, &s.mine, first.id, dairy.id)
+        .await
+        .unwrap();
+
+    // second time: just the word
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, "milk")
+        .await
+        .unwrap();
+
+    assert_eq!(again.unit_id, Some(pint.id), "the unit was not remembered");
+    assert_eq!(
+        again.amount,
+        item::Amount(1.0),
+        "the amount is not remembered, only the unit"
+    );
+    let on_it = tags::for_item(&s.ctx, &s.mine, again.id).await.unwrap();
+    assert_eq!(
+        on_it.iter().map(|t| t.id).collect::<Vec<_>>(),
+        vec![dairy.id],
+        "the category was not remembered"
+    );
+}
+
+/// A line that says a unit outranks the remembered one — this week is two litres,
+/// whatever last week was.
+#[rstest]
+#[tokio::test]
+async fn the_line_beats_the_memory(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let pint = units::create(&s.ctx, &Actor::System, unit::Name("pint".into()))
+        .await
+        .unwrap();
+    let litre = units::create(&s.ctx, &Actor::System, unit::Name("litre".into()))
+        .await
+        .unwrap();
+    items::quick_add(&s.ctx, &s.mine, s.list.id, "4 pint milk")
+        .await
+        .unwrap();
+
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, "2 litre milk")
+        .await
+        .unwrap();
+
+    assert_eq!(again.unit_id, Some(litre.id));
+    assert_ne!(again.unit_id, Some(pint.id));
+}
+
+/// Unfiling is a signal too — stop putting it there.
+#[rstest]
+#[tokio::test]
+async fn removing_a_tag_stops_it_coming_back(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let dairy = tags::create(
+        &s.ctx,
+        &Actor::System,
+        tag::Name("dairy".into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, "milk")
+        .await
+        .unwrap();
+    tags::attach(&s.ctx, &s.mine, first.id, dairy.id)
+        .await
+        .unwrap();
+    tags::detach(&s.ctx, &s.mine, first.id, dairy.id)
+        .await
+        .unwrap();
+
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, "milk")
+        .await
+        .unwrap();
+
+    assert!(
+        tags::for_item(&s.ctx, &s.mine, again.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a tag that was taken off came back"
+    );
+}
+
+/// One memory per item however it is spelled.
+#[rstest]
+#[tokio::test]
+async fn spelling_does_not_split_the_memory(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    items::quick_add(&s.ctx, &s.mine, s.list.id, "Milk")
+        .await
+        .unwrap();
+    items::quick_add(&s.ctx, &s.mine, s.list.id, "MILK")
+        .await
+        .unwrap();
+    items::quick_add(&s.ctx, &s.mine, s.list.id, "  milk ")
+        .await
+        .unwrap();
+
+    let suggestions = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
+    let milks: Vec<_> = suggestions
+        .iter()
+        .filter(|n| n.0.to_lowercase() == "milk")
+        .collect();
+    assert_eq!(
+        milks.len(),
+        1,
+        "one item became several memories: {suggestions:?}"
+    );
+    // shown back the way it was last written
+    assert_eq!(milks[0].0, "milk");
+}
+
+/// A typo can be taken back.
+#[rstest]
+#[tokio::test]
+async fn a_mistake_can_be_forgotten(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    items::quick_add(&s.ctx, &s.mine, s.list.id, "Mlik")
+        .await
+        .unwrap();
+
+    items::forget(&s.ctx, &s.mine, item::Name("mlik".into()))
+        .await
+        .unwrap();
+
+    let after = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
+    assert!(!after.iter().any(|n| n.0 == "Mlik"), "{after:?}");
+    // and forgetting something that was never there is a miss, not a silent no-op
+    assert_eq!(
+        items::forget(&s.ctx, &s.mine, item::Name("never".into())).await,
+        Err(ServiceError::NotFound)
+    );
+}
+
+/// Uncapped, every typo would live forever.
+#[rstest]
+#[tokio::test]
+async fn history_is_capped(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    // one over the cap, each used once
+    for n in 0..=MAX_ENTRIES {
+        items::quick_add(&s.ctx, &s.mine, s.list.id, &format!("item-{n}"))
+            .await
+            .unwrap();
+    }
+
+    let held = Entry::for_user(&s.ctx.db, s.mine.person().unwrap().id, 10_000)
+        .await
+        .unwrap();
+    assert_eq!(held.len(), MAX_ENTRIES as usize, "the cap did not hold");
+}
+
+/// Another person's history is not mine, however much we shop alike.
+#[rstest]
+#[tokio::test]
+async fn history_is_private(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let theirs_list = lists::create(&s.ctx, &s.theirs, list::Name("Theirs".into()))
+        .await
+        .unwrap();
+    items::quick_add(&s.ctx, &s.theirs, theirs_list.id, "Absinthe")
+        .await
+        .unwrap();
+
+    let mine = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
+
+    assert!(!mine.iter().any(|n| n.0 == "Absinthe"), "{mine:?}");
+    assert_eq!(
+        items::forget(&s.ctx, &s.mine, item::Name("absinthe".into())).await,
+        Err(ServiceError::NotFound),
+        "one person forgot another person's history"
+    );
+}
