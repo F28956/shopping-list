@@ -54,11 +54,12 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
-        # Defaults, so the project builds and runs before any of the Google console
-        # work is done. Config.xcconfig overrides them — see the README.
-        SHOPPING_LIST_API_BASE_URL: http://localhost:8080
-        GOOGLE_IOS_CLIENT_ID: ""
-        GOOGLE_IOS_REVERSED_CLIENT_ID: ""
+        # SHOPPING_LIST_API_BASE_URL, GOOGLE_IOS_CLIENT_ID and
+        # GOOGLE_IOS_REVERSED_CLIENT_ID deliberately have no default here. A target
+        # setting outranks the project-level xcconfig, so defining them would
+        # silently override Config.xcconfig with no sign the file was ignored.
+        # They come from Config.xcconfig alone; the app copes with them being
+        # absent (Config.apiBaseURL falls back, Identity.isConfigured reports false).
 
   ShoppingListTests:
     type: bundle.unit-test

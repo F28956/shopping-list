@@ -1,10 +1,10 @@
 // Copy to Config.xcconfig and fill in. That copy is gitignored.
 //
 // None of these are secrets. An iOS OAuth client id is embedded in every copy of the
-// app and is public by design — it identifies the app, it does not authorise it.
+// app and is public by design - it identifies the app, it does not authorise it.
 // Google's iOS clients have no client secret at all, which is why the flow uses PKCE.
 
-// From the Google Cloud console: Credentials → OAuth client ID → iOS.
+// From the Google Cloud console: Credentials -> OAuth client ID -> iOS.
 GOOGLE_IOS_CLIENT_ID =
 // The same value with its parts reversed, which the console shows you. It is the URL
 // scheme Google redirects back to, so sign-in cannot return without it.
