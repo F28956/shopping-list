@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n        SELECT\n            id          as \"id: Id\",\n            name        as \"name: Name\",\n            owner_id    as \"owner_id: user::Id\",\n            created_at  as \"created_at: CreatedAt\",\n            updated_at  as \"updated_at: UpdatedAt\"\n        FROM lists\n        WHERE owner_id = ?1\n        ORDER BY\n            CASE\n                WHEN ?3 = 'ascending' THEN\n                    CASE ?2\n                        WHEN 'id' THEN id\n                        WHEN 'name' THEN name\n                        WHEN 'created_at' THEN created_at\n                        WHEN 'updated_at' THEN updated_at\n                    END\n                END ASC NULLS LAST,\n            CASE\n                WHEN ?3 = 'descending' THEN\n                    CASE ?2\n                        WHEN 'id' THEN id\n                        WHEN 'name' THEN name\n                        WHEN 'created_at' THEN created_at\n                        WHEN 'updated_at' THEN updated_at\n                    END\n            END DESC NULLS LAST,\n            -- keeps paging deterministic when the sort key ties\n            id ASC\n        LIMIT ?4 OFFSET ?5\n        ",
+  "query": "\n        SELECT\n            id          as \"id: Id\",\n            name        as \"name: Name\",\n            owner_id    as \"owner_id: user::Id\",\n            created_at  as \"created_at: CreatedAt\",\n            updated_at  as \"updated_at: UpdatedAt\"\n        FROM lists\n        WHERE owner_id = ?1\n           OR id IN (SELECT list_id FROM list_members WHERE user_id = ?1)\n        ORDER BY\n            CASE\n                WHEN ?3 = 'ascending' THEN\n                    CASE ?2\n                        WHEN 'id' THEN id\n                        WHEN 'name' THEN name\n                        WHEN 'created_at' THEN created_at\n                        WHEN 'updated_at' THEN updated_at\n                    END\n                END ASC NULLS LAST,\n            CASE\n                WHEN ?3 = 'descending' THEN\n                    CASE ?2\n                        WHEN 'id' THEN id\n                        WHEN 'name' THEN name\n                        WHEN 'created_at' THEN created_at\n                        WHEN 'updated_at' THEN updated_at\n                    END\n            END DESC NULLS LAST,\n            -- keeps paging deterministic when the sort key ties\n            id ASC\n        LIMIT ?4 OFFSET ?5\n        ",
   "describe": {
     "columns": [
       {
@@ -70,5 +70,5 @@
       false
     ]
   },
-  "hash": "3c69d20b45ac85c062f85648c4c9d5394559460208d8026d020496e16e24e934"
+  "hash": "3152987a99662e8fe23cf4bcc844528f3b178046f32b85702c358593b6edadae"
 }

@@ -121,24 +121,37 @@ pub enum ServiceError {
     InUse,
     #[error("invalid input")]
     InvalidInput,
-    /// The actor cannot act as a person at all. Distinct from an actor who is a
-    /// person but may not touch this particular row — that is `NotFound`.
+    /// The actor cannot act as a person at all.
     #[error("unauthenticated")]
     Unauthenticated,
+    /// A person who may see the thing but not do this to it — a viewer trying to
+    /// edit. Distinct from `NotFound`, which is what someone who may not see it at
+    /// all gets; see [`ServiceError::forbidden`].
+    #[error("forbidden")]
+    Forbidden,
     #[error(transparent)]
     Internal(models::Error),
 }
 
 impl ServiceError {
-    /// The answer to "you may not touch this".
+    /// The answer to "you cannot see this".
     ///
-    /// It is [`ServiceError::NotFound`], never a distinct `Forbidden`. `Forbidden`
-    /// confirms the row exists, which tells someone holding a guessed id something
-    /// true about another person's data. The distinction is kept in the log line, not
-    /// in the response.
-    fn forbidden(what: &str, actor: &user::User) -> Self {
+    /// [`ServiceError::NotFound`], never `Forbidden`: confirming the row exists tells
+    /// someone holding a guessed id something true about another person's data. The
+    /// distinction is kept in the log line, not in the response.
+    fn hidden(what: &str, actor: &user::User) -> Self {
         tracing::warn!(user = actor.id.0, resource = what, "access refused");
         ServiceError::NotFound
+    }
+
+    /// The answer to "you may see this, but you may not do that to it".
+    ///
+    /// A viewer on a shared list already knows it exists, so pretending otherwise is
+    /// a lie that reads as a bug. This is the only case where the distinction is safe
+    /// to make, and it exists only because roles do.
+    fn refused(what: &str, actor: &user::User) -> Self {
+        tracing::info!(user = actor.id.0, resource = what, "insufficient role");
+        ServiceError::Forbidden
     }
 }
 
@@ -161,7 +174,8 @@ impl PartialEq for ServiceError {
             | (Self::Conflict, Self::Conflict)
             | (Self::InUse, Self::InUse)
             | (Self::InvalidInput, Self::InvalidInput)
-            | (Self::Unauthenticated, Self::Unauthenticated) => true,
+            | (Self::Unauthenticated, Self::Unauthenticated)
+            | (Self::Forbidden, Self::Forbidden) => true,
             (Self::Internal(a), Self::Internal(b)) => a == b,
             _ => false,
         }

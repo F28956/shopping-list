@@ -1321,3 +1321,168 @@ fn the_page_cap_has_one_definition() {
         "the items page has drifted from the shared ceiling"
     );
 }
+
+// ------------------------------------------------------------------- sharing
+
+/// The whole flow as a person does it: create a link, follow it, and find the list
+/// on the other person's screen.
+#[rstest]
+#[tokio::test]
+async fn a_list_can_be_shared_by_link(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|owner").await;
+    post(&app, "/lists", &mine, "name=Household").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+
+    // the owner is offered the controls
+    let (_, page) = get(&app, &format!("/lists/{list_id}"), &mine).await;
+    assert!(page.contains("Create a link"), "no way to share: {page}");
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/lists/{list_id}/invites"))
+                .method("POST")
+                .header(header::COOKIE, &mine)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from("role=editor"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let shown =
+        String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    let at = shown.find("/join/").expect("no link on the page");
+    let token: String = shown[at + 6..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+    assert_eq!(token.len(), 64, "the token is not 256 bits of hex: {token}");
+    assert!(
+        shown.contains("only time it is shown"),
+        "the page does not say the link cannot be recovered"
+    );
+
+    // somebody else follows it
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|housemate").await;
+    let (status, _) = get(&app2, &format!("/join/{token}"), &theirs).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+
+    // and now has the list
+    let (_, their_page) = get(&app2, "/", &theirs).await;
+    assert!(
+        their_page.contains("Household"),
+        "the shared list is missing: {their_page}"
+    );
+
+    // they can add to it, and the owner sees what they added
+    assert_eq!(
+        post(
+            &app2,
+            &format!("/lists/{list_id}/items"),
+            &theirs,
+            "line=2+kg+apples"
+        )
+        .await,
+        StatusCode::SEE_OTHER
+    );
+    let (_, owner_page) = get(&app, &format!("/lists/{list_id}"), &mine).await;
+    assert!(
+        owner_page.contains("apples"),
+        "the editor's item is not on the list"
+    );
+}
+
+/// A viewer is given a list to read, not a list covered in controls that refuse.
+#[rstest]
+#[tokio::test]
+async fn a_viewer_is_not_offered_the_controls(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|owner2").await;
+    post(&app, "/lists", &mine, "name=Readonly").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+    post(&app, &format!("/lists/{list_id}/items"), &mine, "line=Milk").await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/lists/{list_id}/invites"))
+                .method("POST")
+                .header(header::COOKIE, &mine)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from("role=viewer"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let shown =
+        String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    let at = shown.find("/join/").unwrap();
+    let token: String = shown[at + 6..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|looker").await;
+    get(&app2, &format!("/join/{token}"), &theirs).await;
+
+    let (status, page) = get(&app2, &format!("/lists/{list_id}"), &theirs).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains("Milk"),
+        "a viewer cannot see the list: {page}"
+    );
+    assert!(
+        !page.contains("Add an item"),
+        "a viewer was offered a control that would refuse them: {page}"
+    );
+    assert!(
+        !page.contains("Create a link"),
+        "a viewer was offered sharing"
+    );
+
+    // and the refusal, if they contrive one, says forbidden rather than missing
+    assert_eq!(
+        post(
+            &app2,
+            &format!("/lists/{list_id}/items"),
+            &theirs,
+            "line=smuggled"
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
+}
+
+/// A stranger is still told nothing at all.
+#[rstest]
+#[tokio::test]
+async fn a_stranger_still_sees_a_404(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|owner3").await;
+    post(&app, "/lists", &mine, "name=Private").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|nobody").await;
+
+    let (status, _) = get(&app2, &format!("/lists/{list_id}"), &theirs).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        post(&app2, &format!("/lists/{list_id}/items"), &theirs, "line=x").await,
+        StatusCode::NOT_FOUND,
+        "a stranger was told the list exists"
+    );
+}
+
+/// A guessed link is a miss, and the token never appears in storage in the clear.
+#[rstest]
+#[tokio::test]
+async fn a_guessed_link_gets_nowhere(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|guesser").await;
+
+    let (status, _) = get(&app, "/join/0000000000000000", &cookie).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

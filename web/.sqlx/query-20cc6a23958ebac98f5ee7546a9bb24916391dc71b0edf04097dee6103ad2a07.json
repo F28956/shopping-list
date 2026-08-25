@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO list_invites (token_hash, list_id, role, created_by, expires_at)\n            VALUES (?1, ?2, ?3, ?4, ?5)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "20cc6a23958ebac98f5ee7546a9bb24916391dc71b0edf04097dee6103ad2a07"
+}

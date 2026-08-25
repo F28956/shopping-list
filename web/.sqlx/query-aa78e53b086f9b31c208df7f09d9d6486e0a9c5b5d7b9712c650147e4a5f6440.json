@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                list_id  as \"list_id: Id\",\n                user_id  as \"user_id: user::Id\",\n                role     as \"role: Role\",\n                added_at as \"added_at: CreatedAt\"\n            FROM list_members\n            WHERE list_id = ?1\n            ORDER BY added_at DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "list_id: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "list_members",
+            "name": "list_id"
+          }
+        }
+      },
+      {
+        "name": "user_id: user::Id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "list_members",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "name": "role: Role",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "list_members",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "name": "added_at: CreatedAt",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "list_members",
+            "name": "added_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "aa78e53b086f9b31c208df7f09d9d6486e0a9c5b5d7b9712c650147e4a5f6440"
+}

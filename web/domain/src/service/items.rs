@@ -5,23 +5,29 @@
 
 use crate::models::history::Entry;
 use crate::models::item::{self, Amount, Item, Name};
+use crate::models::list::Role;
 use crate::models::user::User;
 use crate::models::{OffsetPage, OrderBy, Paging, list, tag, unit};
 
-use super::{Actor, Ctx, Result, ServiceError, lists};
+use super::{Actor, Ctx, Result, lists};
 use crate::history_rank::{self, Candidate};
 use crate::quick_add;
 
 /// Loads an item on a list the actor owns, or reports it missing.
-pub(super) async fn owned(ctx: &Ctx, owner: &User, id: item::Id) -> Result<Item> {
+/// Loads an item on a list the actor may act on at `need`, or reports it missing.
+///
+/// The item's own row says nothing about who may touch it; its list does. A refusal
+/// from the list is passed through unchanged, so a viewer editing gets `Forbidden`
+/// and a stranger gets `NotFound`.
+pub(super) async fn accessible(ctx: &Ctx, actor: &User, id: item::Id, need: Role) -> Result<Item> {
     let item = Item::get(&ctx.db, item::Lookup::Id(id)).await?;
+    lists::accessible(ctx, actor, item.list_id, need).await?;
+    Ok(item)
+}
 
-    // The item's own row says nothing about who may touch it; its list does.
-    match lists::owned(ctx, owner, item.list_id).await {
-        Ok(_) => Ok(item),
-        Err(ServiceError::NotFound) => Err(ServiceError::forbidden("item", owner)),
-        Err(e) => Err(e),
-    }
+/// The commonest case: may this person change this item?
+pub(super) async fn editable(ctx: &Ctx, actor: &User, id: item::Id) -> Result<Item> {
+    accessible(ctx, actor, id, Role::Editor).await
 }
 
 /// Adds an item, and remembers that this person buys it.
@@ -38,12 +44,12 @@ pub async fn create(
     unit_id: Option<unit::Id>,
 ) -> Result<Item> {
     let owner = actor.person()?;
-    lists::owned(ctx, owner, list_id).await?;
+    lists::editable(ctx, owner, list_id).await?;
 
     let item = Item::create(&ctx.db, list_id, name, amount, unit_id).await?;
 
-    Entry::record(&ctx.db, owner.id, &item.name, unit_id).await?;
-    Entry::prune(&ctx.db, owner.id).await?;
+    Entry::record(&ctx.db, list_id, &item.name, unit_id).await?;
+    Entry::prune(&ctx.db, list_id).await?;
 
     Ok(item)
 }
@@ -57,12 +63,12 @@ pub async fn for_list(
     order_by: OrderBy<item::Field>,
 ) -> Result<OffsetPage<Item>> {
     let owner = actor.person()?;
-    lists::owned(ctx, owner, list_id).await?;
+    lists::readable(ctx, owner, list_id).await?;
     Ok(Item::for_list(&ctx.db, list_id, page, order_by).await?)
 }
 
 pub async fn get(ctx: &Ctx, actor: &Actor, id: item::Id) -> Result<Item> {
-    owned(ctx, actor.person()?, id).await
+    accessible(ctx, actor.person()?, id, Role::Viewer).await
 }
 
 pub async fn update(
@@ -74,20 +80,20 @@ pub async fn update(
     unit_id: Option<unit::Id>,
 ) -> Result<Item> {
     let owner = actor.person()?;
-    owned(ctx, owner, id).await?;
+    editable(ctx, owner, id).await?;
     let item = Item::update(&ctx.db, id, name, amount, unit_id).await?;
 
     // Correcting a name teaches the correction. The typo it replaced stays until it
     // decays out or is forgotten explicitly — nothing here can tell an edit that
     // fixes a spelling from one that changes the item.
-    Entry::record(&ctx.db, owner.id, &item.name, item.unit_id).await?;
+    Entry::record(&ctx.db, item.list_id, &item.name, item.unit_id).await?;
 
     Ok(item)
 }
 
 /// Ticks an item off, or puts it back.
 pub async fn set_done(ctx: &Ctx, actor: &Actor, id: item::Id, done: bool) -> Result<Item> {
-    owned(ctx, actor.person()?, id).await?;
+    editable(ctx, actor.person()?, id).await?;
     Ok(Item::set_done(&ctx.db, id, done).await?)
 }
 
@@ -105,7 +111,7 @@ pub async fn set_done(ctx: &Ctx, actor: &Actor, id: item::Id, done: bool) -> Res
 /// that pays back: `milk` arrives in pints, under dairy, having typed four letters.
 pub async fn quick_add(ctx: &Ctx, actor: &Actor, list_id: list::Id, line: &str) -> Result<Item> {
     let owner = actor.person()?;
-    lists::owned(ctx, owner, list_id).await?;
+    lists::editable(ctx, owner, list_id).await?;
 
     let units = unit::Unit::list(&ctx.db, super::everything(), super::by_name()).await?;
     let names: Vec<String> = units.items.iter().map(|u| u.name.0.clone()).collect();
@@ -118,7 +124,7 @@ pub async fn quick_add(ctx: &Ctx, actor: &Actor, list_id: list::Id, line: &str) 
         .unit
         .and_then(|u| units.items.iter().find(|x| x.name.0 == u).map(|x| x.id));
 
-    let remembered = Entry::get(&ctx.db, owner.id, &name).await?;
+    let remembered = Entry::get(&ctx.db, list_id, &name).await?;
     let unit_id = spelled_unit.or_else(|| remembered.as_ref().and_then(|e| e.unit_id));
 
     // Through `create` rather than the model, so there is one place that learns.
@@ -143,21 +149,29 @@ pub async fn quick_add(ctx: &Ctx, actor: &Actor, list_id: list::Id, line: &str) 
 }
 
 /// Forgets one remembered item — the way back from a typo.
-pub async fn forget(ctx: &Ctx, actor: &Actor, name: Name) -> Result<()> {
-    let owner = actor.person()?;
-    Ok(Entry::forget(&ctx.db, owner.id, &name).await?)
+///
+/// An editor's to do: the memory is shared, so forgetting affects everyone on the
+/// list, which is the same standing as putting something on it.
+pub async fn forget(ctx: &Ctx, actor: &Actor, list_id: list::Id, name: Name) -> Result<()> {
+    lists::editable(ctx, actor.person()?, list_id).await?;
+    Ok(Entry::forget(&ctx.db, list_id, &name).await?)
 }
 
-/// What this person has bought before, for a quick-add suggestion list.
+/// What gets bought on this list, for a quick-add suggestion list.
 ///
-/// Their own history only — the owner comes from the actor, so there is no way to ask
-/// what somebody else buys.
-pub async fn suggestions(ctx: &Ctx, actor: &Actor, limit: i64) -> Result<Vec<Name>> {
-    let owner = actor.person()?;
+/// The list's memory, not the actor's: everyone sharing it sees and feeds the same
+/// one, which is the point of keying history on the list.
+pub async fn suggestions(
+    ctx: &Ctx,
+    actor: &Actor,
+    list_id: list::Id,
+    limit: i64,
+) -> Result<Vec<Name>> {
+    lists::readable(ctx, actor.person()?, list_id).await?;
 
     // Read by recency, offer by rank: the query bounds how much is considered, and
     // `history_rank` decides the order — see there for why not in SQL.
-    let entries = Entry::for_user(&ctx.db, owner.id, limit.clamp(0, 500)).await?;
+    let entries = Entry::for_list(&ctx.db, list_id, limit.clamp(0, super::PAGE_MAX)).await?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
 
     let ranked = history_rank::rank(
@@ -166,7 +180,7 @@ pub async fn suggestions(ctx: &Ctx, actor: &Actor, limit: i64) -> Result<Vec<Nam
             .map(|e| Candidate {
                 uses: e.uses.0,
                 last_used_at: e.last_used_at.0.unix_timestamp(),
-                // Offered in the spelling they last used, not the normalised key.
+                // Offered in the spelling last used, not the normalised key.
                 value: e.display.0,
             })
             .collect(),
@@ -179,11 +193,11 @@ pub async fn suggestions(ctx: &Ctx, actor: &Actor, limit: i64) -> Result<Vec<Nam
 /// Clears everything ticked off one of the actor's lists, returning how many went.
 pub async fn clear_done(ctx: &Ctx, actor: &Actor, list_id: list::Id) -> Result<u64> {
     let owner = actor.person()?;
-    lists::owned(ctx, owner, list_id).await?;
+    lists::editable(ctx, owner, list_id).await?;
     Ok(Item::delete_done(&ctx.db, list_id).await?)
 }
 
 pub async fn delete(ctx: &Ctx, actor: &Actor, id: item::Id) -> Result<()> {
-    owned(ctx, actor.person()?, id).await?;
+    editable(ctx, actor.person()?, id).await?;
     Ok(Item::delete(&ctx.db, id).await?)
 }

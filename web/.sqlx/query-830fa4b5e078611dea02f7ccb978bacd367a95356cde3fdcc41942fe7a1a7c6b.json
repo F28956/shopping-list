@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT owner_id as \"owner_id: user::Id\" FROM lists WHERE id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "owner_id: user::Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "owner_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "830fa4b5e078611dea02f7ccb978bacd367a95356cde3fdcc41942fe7a1a7c6b"
+}

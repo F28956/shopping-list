@@ -11,6 +11,7 @@ pub mod lists;
 pub mod me;
 pub mod notes;
 pub mod reference;
+pub mod sharing;
 
 use domain::models::{Direction, OrderBy, Paging};
 

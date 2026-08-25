@@ -204,6 +204,18 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
         .route("/lists/{id}", get(pages::items::show))
         .route("/lists/{id}/items", post(pages::items::create))
         .route("/lists/{id}/clear-done", post(pages::items::clear_done))
+        .route("/lists/{id}/invites", post(pages::items::invite))
+        .route(
+            "/lists/{id}/invites/revoke",
+            post(pages::items::revoke_invites),
+        )
+        .route(
+            "/lists/{id}/members/{who}/remove",
+            post(pages::items::remove_member),
+        )
+        .route("/lists/{id}/leave", post(pages::items::leave))
+        // An invitation is followed, not submitted, so this one is a GET
+        .route("/join/{token}", get(pages::items::join))
         // A browser form can only GET or POST, so ticking off and deleting are POSTs
         // to their own paths rather than PUT and DELETE on the item.
         .route(

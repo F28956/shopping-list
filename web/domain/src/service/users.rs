@@ -41,7 +41,7 @@ pub async fn list(
 ) -> Result<OffsetPage<User>> {
     if !actor.is_system() {
         let person = actor.person()?;
-        return Err(ServiceError::forbidden("user list", person));
+        return Err(ServiceError::hidden("user list", person));
     }
     Ok(User::list(&ctx.db, page, order_by).await?)
 }

@@ -1,7 +1,8 @@
-//! What this person buys, and the way back from a typo.
+//! What gets bought on a list, and the way back from a typo.
 //!
-//! Read and forget only. History is written as a side effect of adding items — there
-//! is no way to teach it something you have not actually bought, which is the point.
+//! Nested under the list because that is what the memory belongs to: everyone sharing
+//! a list shares its history. Read and forget only — history is written as a side
+//! effect of adding items, so there is no way to teach it something nobody bought.
 
 use axum::{
     Json, Router,
@@ -9,7 +10,7 @@ use axum::{
     http::StatusCode,
     routing::get,
 };
-use domain::models::item;
+use domain::models::{item, list};
 use domain::service::items;
 
 use crate::auth::CurrentUser;
@@ -26,9 +27,16 @@ pub fn router() -> Router<AppState> {
 async fn list(
     State(state): State<AppState>,
     user: CurrentUser,
+    Path(list_id): Path<i64>,
 ) -> Result<Json<Vec<item::Name>>, AppError> {
     Ok(Json(
-        items::suggestions(&state.ctx, &user.actor(), domain::service::PAGE_MAX).await?,
+        items::suggestions(
+            &state.ctx,
+            &user.actor(),
+            list::Id(list_id),
+            domain::service::PAGE_MAX,
+        )
+        .await?,
     ))
 }
 
@@ -39,8 +47,14 @@ async fn list(
 async fn forget(
     State(state): State<AppState>,
     user: CurrentUser,
-    Path(name): Path<String>,
+    Path((list_id, name)): Path<(i64, String)>,
 ) -> Result<StatusCode, AppError> {
-    items::forget(&state.ctx, &user.actor(), item::Name(name)).await?;
+    items::forget(
+        &state.ctx,
+        &user.actor(),
+        list::Id(list_id),
+        item::Name(name),
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -84,3 +84,11 @@ details.edit summary::-webkit-details-marker { display: none; }
 
 /* A page that shows a prefix says so. */
 .truncated { font-size: .8rem; opacity: .6; margin: 0 0 .6rem; }
+
+/* Who else can see this list. */
+.share { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.share .rows li { padding: .35rem 0; }
+.share form.add { margin: .6rem 0 0; }
+.token { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem;
+         word-break: break-all; padding: .6rem .7rem; border: 1px solid var(--line);
+         border-radius: 6px; user-select: all; }

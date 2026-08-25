@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE item_history SET tag_id = ?3 WHERE list_id = ?1 AND name = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "dda37d3dc43fb3a0df07d2189e45f9b92a9e570df30d530fa9ac2ccd798f0914"
+}

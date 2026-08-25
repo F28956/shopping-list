@@ -51,7 +51,7 @@ fn writable(actor: &Actor) -> Result<()> {
         return Ok(());
     }
     if let Ok(person) = actor.person() {
-        return Err(ServiceError::forbidden("unit (write)", person));
+        return Err(ServiceError::hidden("unit (write)", person));
     }
     Err(ServiceError::Unauthenticated)
 }

@@ -38,7 +38,7 @@ pub async fn get(ctx: &Ctx, actor: &Actor, id: note::Id) -> Result<Note> {
     let note = Note::get(&ctx.db, note::Lookup::Id(id)).await?;
 
     if note.user_id != reader.id {
-        return Err(ServiceError::forbidden("note", reader));
+        return Err(ServiceError::hidden("note", reader));
     }
 
     Ok(note)

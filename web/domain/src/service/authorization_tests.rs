@@ -368,7 +368,9 @@ async fn suggestions_are_my_own_history(#[future(awt)] pool: SqlitePool) {
     .await
     .unwrap();
 
-    let mine = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
+    let mine = items::suggestions(&s.ctx, &s.mine, s.list.id, 50)
+        .await
+        .unwrap();
 
     assert!(
         mine.iter().any(|n| n.0 == "Apples"),
@@ -473,17 +475,25 @@ async fn history_survives_clearing_the_list(#[future(awt)] pool: SqlitePool) {
 
     items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap();
 
-    let after = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
+    let after = items::suggestions(&s.ctx, &s.mine, s.list.id, 50)
+        .await
+        .unwrap();
     assert!(
         after.iter().any(|n| n.0 == "Sourdough"),
         "clearing the list forgot what was on it: {after:?}"
     );
 }
 
-/// Deleting the whole list, likewise.
+/// Deleting the list does take its history, and that is the price of keying it on the
+/// list: a household shares one memory, and there is nowhere for it to live once the
+/// list it belonged to is gone.
+///
+/// Tolerable only because this application pushes towards lists that live a long time
+/// — "clear done" exists so the same list carries week to week. It would be the wrong
+/// trade in an application where a shop means a new list.
 #[rstest]
 #[tokio::test]
-async fn history_survives_deleting_the_list(#[future(awt)] pool: SqlitePool) {
+async fn history_goes_with_the_list(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
     items::quick_add(&s.ctx, &s.mine, s.list.id, "Rye")
         .await
@@ -491,8 +501,12 @@ async fn history_survives_deleting_the_list(#[future(awt)] pool: SqlitePool) {
 
     lists::delete(&s.ctx, &s.mine, s.list.id).await.unwrap();
 
-    let after = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
-    assert!(after.iter().any(|n| n.0 == "Rye"), "{after:?}");
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM item_history WHERE list_id = ?1")
+        .bind(s.list.id.0)
+        .fetch_one(&s.ctx.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "the history outlived the list it belonged to");
 }
 
 /// The payoff: an item added a second time arrives measured and filed, from four
@@ -619,7 +633,9 @@ async fn spelling_does_not_split_the_memory(#[future(awt)] pool: SqlitePool) {
         .await
         .unwrap();
 
-    let suggestions = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
+    let suggestions = items::suggestions(&s.ctx, &s.mine, s.list.id, 50)
+        .await
+        .unwrap();
     let milks: Vec<_> = suggestions
         .iter()
         .filter(|n| n.0.to_lowercase() == "milk")
@@ -642,15 +658,17 @@ async fn a_mistake_can_be_forgotten(#[future(awt)] pool: SqlitePool) {
         .await
         .unwrap();
 
-    items::forget(&s.ctx, &s.mine, item::Name("mlik".into()))
+    items::forget(&s.ctx, &s.mine, s.list.id, item::Name("mlik".into()))
         .await
         .unwrap();
 
-    let after = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
+    let after = items::suggestions(&s.ctx, &s.mine, s.list.id, 50)
+        .await
+        .unwrap();
     assert!(!after.iter().any(|n| n.0 == "Mlik"), "{after:?}");
     // and forgetting something that was never there is a miss, not a silent no-op
     assert_eq!(
-        items::forget(&s.ctx, &s.mine, item::Name("never".into())).await,
+        items::forget(&s.ctx, &s.mine, s.list.id, item::Name("never".into())).await,
         Err(ServiceError::NotFound)
     );
 }
@@ -668,9 +686,7 @@ async fn history_is_capped(#[future(awt)] pool: SqlitePool) {
             .unwrap();
     }
 
-    let held = Entry::for_user(&s.ctx.db, s.mine.person().unwrap().id, 10_000)
-        .await
-        .unwrap();
+    let held = Entry::for_list(&s.ctx.db, s.list.id, 10_000).await.unwrap();
     assert_eq!(held.len(), MAX_ENTRIES as usize, "the cap did not hold");
 }
 
@@ -686,12 +702,313 @@ async fn history_is_private(#[future(awt)] pool: SqlitePool) {
         .await
         .unwrap();
 
-    let mine = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
+    let mine = items::suggestions(&s.ctx, &s.mine, s.list.id, 50)
+        .await
+        .unwrap();
 
     assert!(!mine.iter().any(|n| n.0 == "Absinthe"), "{mine:?}");
     assert_eq!(
-        items::forget(&s.ctx, &s.mine, item::Name("absinthe".into())).await,
+        items::forget(&s.ctx, &s.mine, s.list.id, item::Name("absinthe".into())).await,
         Err(ServiceError::NotFound),
         "one person forgot another person's history"
     );
+}
+
+// ------------------------------------------------------------------- sharing
+
+use crate::models::list::Role;
+
+/// Puts `theirs` on `mine`'s list at `role`, the way a person would: an invitation,
+/// then a link followed.
+async fn share(s: &Scene, role: Role) {
+    let token = lists::invite(&s.ctx, &s.mine, s.list.id, role)
+        .await
+        .unwrap();
+    lists::join(&s.ctx, &s.theirs, &token).await.unwrap();
+}
+
+#[rstest]
+#[tokio::test]
+async fn a_shared_list_appears_for_the_person_it_was_shared_with(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let before = lists::for_user(&s.ctx, &s.theirs, all(), order(list::Field::Id))
+        .await
+        .unwrap();
+    assert_eq!(before.total, 0, "they start with nothing");
+
+    share(&s, Role::Editor).await;
+
+    let after = lists::for_user(&s.ctx, &s.theirs, all(), order(list::Field::Id))
+        .await
+        .unwrap();
+    assert_eq!(after.total, 1, "the shared list is not on their screen");
+    assert_eq!(after.items[0].id, s.list.id);
+}
+
+/// An editor may do everything to what is *on* the list, including removing items —
+/// a decision, not an accident.
+#[rstest]
+#[tokio::test]
+async fn an_editor_may_change_what_is_on_the_list(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    share(&s, Role::Editor).await;
+
+    let added = items::quick_add(&s.ctx, &s.theirs, s.list.id, "2 kg apples")
+        .await
+        .unwrap();
+    items::set_done(&s.ctx, &s.theirs, added.id, true)
+        .await
+        .unwrap();
+    items::update(
+        &s.ctx,
+        &s.theirs,
+        added.id,
+        item::Name("pears".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+    items::delete(&s.ctx, &s.theirs, added.id).await.unwrap();
+    items::clear_done(&s.ctx, &s.theirs, s.list.id)
+        .await
+        .unwrap();
+}
+
+/// ...but not to the list itself.
+#[rstest]
+#[tokio::test]
+async fn an_editor_may_not_rename_or_delete_the_list(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    share(&s, Role::Editor).await;
+
+    assert_eq!(
+        lists::update(&s.ctx, &s.theirs, s.list.id, list::Name("theirs".into()))
+            .await
+            .err(),
+        Some(ServiceError::Forbidden),
+        "an editor renamed a list"
+    );
+    assert_eq!(
+        lists::delete(&s.ctx, &s.theirs, s.list.id).await.err(),
+        Some(ServiceError::Forbidden)
+    );
+    assert_eq!(
+        lists::invite(&s.ctx, &s.theirs, s.list.id, Role::Viewer)
+            .await
+            .err(),
+        Some(ServiceError::Forbidden),
+        "an editor invited someone"
+    );
+}
+
+/// A viewer reads and nothing else — and gets `Forbidden`, not `NotFound`, because
+/// they can already see the list. Pretending otherwise would read as a bug.
+#[rstest]
+#[tokio::test]
+async fn a_viewer_may_only_read(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    share(&s, Role::Viewer).await;
+
+    assert!(lists::get(&s.ctx, &s.theirs, s.list.id).await.is_ok());
+    assert!(
+        items::for_list(&s.ctx, &s.theirs, s.list.id, all(), order(item::Field::Id))
+            .await
+            .is_ok()
+    );
+    assert!(
+        items::suggestions(&s.ctx, &s.theirs, s.list.id, 50)
+            .await
+            .is_ok()
+    );
+
+    for refusal in [
+        items::quick_add(&s.ctx, &s.theirs, s.list.id, "smuggled")
+            .await
+            .err(),
+        items::set_done(&s.ctx, &s.theirs, s.item.id, true)
+            .await
+            .err(),
+        items::delete(&s.ctx, &s.theirs, s.item.id).await.err(),
+        items::clear_done(&s.ctx, &s.theirs, s.list.id).await.err(),
+        items::forget(&s.ctx, &s.theirs, s.list.id, item::Name("apples".into()))
+            .await
+            .err(),
+    ] {
+        assert_eq!(
+            refusal,
+            Some(ServiceError::Forbidden),
+            "a viewer changed something"
+        );
+    }
+}
+
+/// The distinction the roles bought: a stranger is told nothing, a member is told no.
+#[rstest]
+#[tokio::test]
+async fn a_stranger_is_told_nothing_and_a_viewer_is_told_no(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    assert_eq!(
+        lists::get(&s.ctx, &s.theirs, s.list.id).await.err(),
+        Some(ServiceError::NotFound),
+        "a guessed id confirmed the list exists"
+    );
+
+    share(&s, Role::Viewer).await;
+
+    assert_eq!(
+        lists::delete(&s.ctx, &s.theirs, s.list.id).await.err(),
+        Some(ServiceError::Forbidden),
+        "someone who can see the list was told it does not exist"
+    );
+}
+
+/// The memory is the list's, so it is shared with the list.
+#[rstest]
+#[tokio::test]
+async fn history_is_shared_with_the_list(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    share(&s, Role::Editor).await;
+    items::quick_add(&s.ctx, &s.mine, s.list.id, "Sourdough")
+        .await
+        .unwrap();
+
+    let theirs = items::suggestions(&s.ctx, &s.theirs, s.list.id, 50)
+        .await
+        .unwrap();
+
+    assert!(
+        theirs.iter().any(|n| n.0 == "Sourdough"),
+        "what one person added is not offered to the other: {theirs:?}"
+    );
+}
+
+/// An invitation is single-role and not a way to become the owner.
+#[rstest]
+#[tokio::test]
+async fn ownership_cannot_be_invited(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    assert_eq!(
+        lists::invite(&s.ctx, &s.mine, s.list.id, Role::Owner)
+            .await
+            .err(),
+        Some(ServiceError::InvalidInput)
+    );
+}
+
+/// Following the same link twice is a double-click, and a stale lesser invitation
+/// must not demote anybody.
+#[rstest]
+#[tokio::test]
+async fn redeeming_twice_is_harmless_and_never_demotes(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let editor = lists::invite(&s.ctx, &s.mine, s.list.id, Role::Editor)
+        .await
+        .unwrap();
+    let viewer = lists::invite(&s.ctx, &s.mine, s.list.id, Role::Viewer)
+        .await
+        .unwrap();
+
+    lists::join(&s.ctx, &s.theirs, &editor).await.unwrap();
+    lists::join(&s.ctx, &s.theirs, &editor).await.unwrap();
+    lists::join(&s.ctx, &s.theirs, &viewer).await.unwrap();
+
+    // still an editor
+    assert!(
+        items::quick_add(&s.ctx, &s.theirs, s.list.id, "still allowed")
+            .await
+            .is_ok(),
+        "a stale viewer invitation demoted an editor"
+    );
+    let members = lists::members(&s.ctx, &s.mine, s.list.id).await.unwrap();
+    assert_eq!(
+        members.len(),
+        1,
+        "one person joined twice and became two members"
+    );
+}
+
+#[rstest]
+#[tokio::test]
+async fn an_unknown_or_revoked_invitation_is_a_miss(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let token = lists::invite(&s.ctx, &s.mine, s.list.id, Role::Editor)
+        .await
+        .unwrap();
+
+    lists::revoke_invites(&s.ctx, &s.mine, s.list.id)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        lists::join(&s.ctx, &s.theirs, &token).await.err(),
+        Some(ServiceError::NotFound),
+        "a revoked link still worked"
+    );
+    assert_eq!(
+        lists::join(
+            &s.ctx,
+            &s.theirs,
+            &crate::models::invite::Token("guessed".into())
+        )
+        .await
+        .err(),
+        Some(ServiceError::NotFound)
+    );
+}
+
+/// The owner may remove anybody; anybody may remove themselves; the owner cannot
+/// leave, because there is no transfer and a list without its owner could not be
+/// renamed or deleted by anyone.
+#[rstest]
+#[tokio::test]
+async fn leaving_and_removing(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    share(&s, Role::Editor).await;
+    let them = s.theirs.person().unwrap().id;
+    let me = s.mine.person().unwrap().id;
+
+    // an editor cannot remove somebody else
+    assert_eq!(
+        lists::remove_member(&s.ctx, &s.theirs, s.list.id, me)
+            .await
+            .err(),
+        Some(ServiceError::InvalidInput),
+        "the owner was removable"
+    );
+
+    // but may leave
+    lists::remove_member(&s.ctx, &s.theirs, s.list.id, them)
+        .await
+        .unwrap();
+    assert_eq!(
+        lists::get(&s.ctx, &s.theirs, s.list.id).await.err(),
+        Some(ServiceError::NotFound),
+        "leaving did not take the access away"
+    );
+
+    // and the owner may remove people
+    share(&s, Role::Editor).await;
+    lists::remove_member(&s.ctx, &s.mine, s.list.id, them)
+        .await
+        .unwrap();
+    assert_eq!(
+        lists::get(&s.ctx, &s.theirs, s.list.id).await.err(),
+        Some(ServiceError::NotFound)
+    );
+}
+
+/// The owner is not a membership row, so nothing can contradict who owns the list.
+#[rstest]
+#[tokio::test]
+async fn the_owner_is_not_a_member_row(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    share(&s, Role::Editor).await;
+
+    let members = lists::members(&s.ctx, &s.mine, s.list.id).await.unwrap();
+
+    assert_eq!(members.len(), 1);
+    assert_ne!(members[0].user_id, s.mine.person().unwrap().id);
 }

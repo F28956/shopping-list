@@ -41,7 +41,7 @@ pub enum Lookup {
 ///
 /// Every variant added here needs a matching `WHEN` arm in both `CASE` branches of
 /// the query. A variant without one silently sorts by nothing, which is what
-/// `for_user_every_field_changes_the_order` exists to catch.
+/// `visible_to_every_field_changes_the_order` exists to catch.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::VariantArray, serde::Deserialize,
 )]
@@ -56,27 +56,141 @@ pub enum Field {
 
 /// A member's standing on a list.
 ///
-/// Sharing is not implemented: `list_members` exists in the schema and this maps it,
-/// but there are no membership operations and no fixture, so every list today is
-/// reached through its owner. Adding sharing means deciding what a `viewer` may do,
-/// which is a product question rather than a mechanical one — until then `for_user`
-/// deliberately means "lists this person owns", not "lists this person can see".
-#[derive(serde::Serialize, Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+/// Ordered, so a required role can be compared against a held one: `Viewer < Editor <
+/// Owner`. Everything a viewer may do, an editor may do; everything an editor may do,
+/// an owner may do. Reading a permission check is then just `held >= needed`.
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    sqlx::Type,
+)]
 #[sqlx(rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
-    Owner,
-    Editor,
+    /// Read, and nothing else.
     Viewer,
+    /// Everything on the list itself: add, tick, edit, tag, remove.
+    Editor,
+    /// The list too: rename it, delete it, and decide who else is on it.
+    ///
+    /// Held by exactly one person — `lists.owner_id` — and never granted by an
+    /// invitation. There is no transfer: an owner who wants out deletes the list.
+    Owner,
 }
 
-/// A row of `list_members`. See [`Role`] for why nothing operates on it yet.
+/// A row of `list_members`.
+///
+/// The owner is deliberately *not* one of these: `lists.owner_id` is the single
+/// source of truth for ownership, so the two can never disagree. Membership is
+/// purely additive.
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, PartialEq)]
 pub struct ListMember {
     pub list_id: Id,
     pub user_id: user::Id,
     pub role: Role,
     pub added_at: CreatedAt,
+}
+
+impl ListMember {
+    /// The role this person holds on this list, if any.
+    ///
+    /// Ownership is answered from `lists.owner_id` rather than from a membership row,
+    /// so a member row can never contradict who owns the list.
+    pub async fn role_of(
+        pool: &sqlx::SqlitePool,
+        list_id: Id,
+        user_id: user::Id,
+    ) -> Result<Option<Role>> {
+        if let Some(owner) = sqlx::query_scalar!(
+            r#"SELECT owner_id as "owner_id: user::Id" FROM lists WHERE id = ?1"#,
+            list_id
+        )
+        .fetch_optional(pool)
+        .await?
+            && owner == user_id
+        {
+            return Ok(Some(Role::Owner));
+        }
+
+        Ok(sqlx::query_scalar!(
+            r#"SELECT role as "role: Role" FROM list_members WHERE list_id = ?1 AND user_id = ?2"#,
+            list_id,
+            user_id
+        )
+        .fetch_optional(pool)
+        .await?)
+    }
+
+    /// Everyone sharing a list, most recently added first. The owner is not among
+    /// them — see the note on the struct.
+    pub async fn for_list(pool: &sqlx::SqlitePool, list_id: Id) -> Result<Vec<ListMember>> {
+        Ok(sqlx::query_as!(
+            ListMember,
+            r#"
+            SELECT
+                list_id  as "list_id: Id",
+                user_id  as "user_id: user::Id",
+                role     as "role: Role",
+                added_at as "added_at: CreatedAt"
+            FROM list_members
+            WHERE list_id = ?1
+            ORDER BY added_at DESC
+            "#,
+            list_id
+        )
+        .fetch_all(pool)
+        .await?)
+    }
+
+    /// Adds someone, or changes the role they already hold.
+    ///
+    /// Idempotent, because redeeming the same invitation twice is a double-click, not
+    /// an error worth showing anybody.
+    pub async fn put(
+        pool: &sqlx::SqlitePool,
+        list_id: Id,
+        user_id: user::Id,
+        role: Role,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO list_members (list_id, user_id, role)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(list_id, user_id) DO UPDATE SET role = ?3
+            "#,
+            list_id,
+            user_id,
+            role
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Removes someone from a list. A miss is [`Error::NotFound`].
+    pub async fn remove(pool: &sqlx::SqlitePool, list_id: Id, user_id: user::Id) -> Result<()> {
+        let result = sqlx::query!(
+            r#"DELETE FROM list_members WHERE list_id = ?1 AND user_id = ?2"#,
+            list_id,
+            user_id
+        )
+        .execute(pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(Error::NotFound);
+        }
+
+        Ok(())
+    }
 }
 
 impl List {
@@ -156,7 +270,7 @@ impl List {
         Ok(())
     }
 
-    /// Fetches one page of the lists a user owns.
+    /// Fetches one page of the lists a user can see — owned, or shared with them.
     ///
     /// Lists are scoped to their owner, so there is no unscoped `list`: an endpoint
     /// that could page over everybody's lists is one refactor away from leaking
@@ -165,7 +279,7 @@ impl List {
     /// `total` counts that owner's lists, not the table's, and is a second statement
     /// — see [`super::unit::Unit::list`] for why it is not folded into the page
     /// query.
-    pub async fn for_user(
+    pub async fn visible_to(
         pool: &sqlx::SqlitePool,
         owner_id: user::Id,
         page: Paging,
@@ -188,6 +302,7 @@ impl List {
             updated_at  as "updated_at: UpdatedAt"
         FROM lists
         WHERE owner_id = ?1
+           OR id IN (SELECT list_id FROM list_members WHERE user_id = ?1)
         ORDER BY
             CASE
                 WHEN ?3 = 'ascending' THEN
@@ -221,7 +336,11 @@ impl List {
         .await?;
 
         let total = sqlx::query_scalar!(
-            r#"SELECT count(*) as "total!: i64" FROM lists WHERE owner_id = ?1"#,
+            r#"
+            SELECT count(*) as "total!: i64" FROM lists
+            WHERE owner_id = ?1
+               OR id IN (SELECT list_id FROM list_members WHERE user_id = ?1)
+            "#,
             owner_id
         )
         .fetch_one(pool)
@@ -301,7 +420,7 @@ mod tests {
 
     async fn any_list(pool: &SqlitePool) -> Result<List> {
         let owner = user_id(pool, BUSIEST).await?;
-        let mut page = List::for_user(
+        let mut page = List::visible_to(
             pool,
             owner,
             all_lists(),
@@ -640,14 +759,14 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn for_user_returns_only_that_users_lists(
+    async fn visible_to_returns_only_that_users_lists(
         #[with(seeds!("fixtures/users.sql", "fixtures/lists.sql"))]
         #[future(awt)]
         pool: SqlitePool,
     ) -> Result<()> {
         let owner = user_id(&pool, BUSIEST).await?;
 
-        let page = List::for_user(
+        let page = List::visible_to(
             &pool,
             owner,
             all_lists(),
@@ -670,14 +789,14 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn for_user_is_empty_for_someone_who_owns_nothing(
+    async fn visible_to_is_empty_for_someone_who_owns_nothing(
         #[with(seeds!("fixtures/users.sql", "fixtures/lists.sql"))]
         #[future(awt)]
         pool: SqlitePool,
     ) -> Result<()> {
         let nobody = user_id(&pool, LISTLESS).await?;
 
-        let page = List::for_user(
+        let page = List::visible_to(
             &pool,
             nobody,
             all_lists(),
@@ -733,7 +852,7 @@ mod tests {
         assert: |p| assert!(updated_ats(p).windows(2).all(|w| w[0].0 >= w[1].0), "{:?}", updated_ats(p)),
     })]
     #[tokio::test]
-    async fn for_user_orders_by_every_field(
+    async fn visible_to_orders_by_every_field(
         #[with(seeds!("fixtures/users.sql", "fixtures/lists.sql"))]
         #[future(awt)]
         pool: SqlitePool,
@@ -741,7 +860,7 @@ mod tests {
     ) -> Result<()> {
         let owner = user_id(&pool, BUSIEST).await?;
 
-        let page = List::for_user(&pool, owner, all_lists(), c.order_by).await?;
+        let page = List::visible_to(&pool, owner, all_lists(), c.order_by).await?;
         assert_eq!(page.items.len(), BUSIEST_LISTS as usize);
         (c.assert)(&page);
         Ok(())
@@ -756,7 +875,7 @@ mod tests {
     /// lists rather than three.
     #[rstest]
     #[tokio::test]
-    async fn for_user_every_field_changes_the_order(
+    async fn visible_to_every_field_changes_the_order(
         #[with(seeds!("fixtures/users.sql", "fixtures/lists.sql"))]
         #[future(awt)]
         pool: SqlitePool,
@@ -766,7 +885,8 @@ mod tests {
         let mut orders = Vec::new();
         for &field in Field::VARIANTS {
             for direction in [Direction::Ascending, Direction::Descending] {
-                let page = List::for_user(&pool, owner, all_lists(), by(field, direction)).await?;
+                let page =
+                    List::visible_to(&pool, owner, all_lists(), by(field, direction)).await?;
                 orders.push((format!("{field:?} {direction:?}"), ids(&page)));
             }
         }
@@ -818,7 +938,7 @@ mod tests {
         PageCase { page: Paging { number: i64::MAX, size: 2 }, lists: 0, total_pages: 4, has_more: false }
     )]
     #[tokio::test]
-    async fn for_user_pages(
+    async fn visible_to_pages(
         #[with(seeds!("fixtures/users.sql", "fixtures/lists.sql"))]
         #[future(awt)]
         pool: SqlitePool,
@@ -827,7 +947,7 @@ mod tests {
         let owner = user_id(&pool, BUSIEST).await?;
 
         let page =
-            List::for_user(&pool, owner, c.page, by(Field::Id, Direction::Ascending)).await?;
+            List::visible_to(&pool, owner, c.page, by(Field::Id, Direction::Ascending)).await?;
 
         assert_eq!(page.items.len(), c.lists, "lists on the page");
         assert_eq!(
@@ -845,7 +965,7 @@ mod tests {
     #[case::by_created_at(Field::CreatedAt)]
     #[case::by_updated_at(Field::UpdatedAt)]
     #[tokio::test]
-    async fn for_user_walks_every_list_exactly_once(
+    async fn visible_to_walks_every_list_exactly_once(
         #[with(seeds!("fixtures/users.sql", "fixtures/lists.sql"))]
         #[future(awt)]
         pool: SqlitePool,
@@ -856,7 +976,7 @@ mod tests {
         let mut number = 1;
 
         loop {
-            let page = List::for_user(
+            let page = List::visible_to(
                 &pool,
                 owner,
                 Paging { number, size: 2 },
@@ -885,7 +1005,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn for_user_totals_ignore_other_owners(
+    async fn visible_to_totals_ignore_other_owners(
         #[with(seeds!("fixtures/users.sql", "fixtures/lists.sql"))]
         #[future(awt)]
         pool: SqlitePool,
@@ -894,18 +1014,18 @@ mod tests {
         let other = user_id(&pool, LISTLESS).await?;
         let order = by(Field::Id, Direction::Ascending);
 
-        let before = List::for_user(&pool, owner, all_lists(), order).await?;
+        let before = List::visible_to(&pool, owner, all_lists(), order).await?;
         assert_eq!(before.total, BUSIEST_LISTS);
 
         List::create(&pool, other, Name("not theirs".into())).await?;
-        let after = List::for_user(&pool, owner, all_lists(), order).await?;
+        let after = List::visible_to(&pool, owner, all_lists(), order).await?;
         assert_eq!(
             after.total, BUSIEST_LISTS,
             "someone else's list changed nothing"
         );
 
         List::create(&pool, owner, Name("theirs".into())).await?;
-        let mine = List::for_user(&pool, owner, all_lists(), order).await?;
+        let mine = List::visible_to(&pool, owner, all_lists(), order).await?;
         assert_eq!(mine.total, BUSIEST_LISTS + 1);
         Ok(())
     }

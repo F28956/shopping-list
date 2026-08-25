@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            SELECT\n                name         as \"name: item::Name\",\n                display      as \"display: Display\",\n                unit_id      as \"unit_id?: unit::Id\",\n                tag_id       as \"tag_id?: tag::Id\",\n                uses         as \"uses: Uses\",\n                last_used_at as \"last_used_at: LastUsedAt\"\n            FROM item_history\n            WHERE user_id = ?1 AND name = ?2\n            ",
+  "query": "\n            SELECT\n                name         as \"name: item::Name\",\n                display      as \"display: Display\",\n                unit_id      as \"unit_id?: unit::Id\",\n                tag_id       as \"tag_id?: tag::Id\",\n                uses         as \"uses: Uses\",\n                last_used_at as \"last_used_at: LastUsedAt\"\n            FROM item_history\n            WHERE list_id = ?1 AND name = ?2\n            ",
   "describe": {
     "columns": [
       {
@@ -82,5 +82,5 @@
       false
     ]
   },
-  "hash": "7c53ecc85a5ef47a619a42d73996cd2dd4dcbc13c02a9baa7f4dd3c59a1db08d"
+  "hash": "0e062b6a6737461c429c255ecb5460fa5f055c41f1323ae90c3e8e9558b7a473"
 }

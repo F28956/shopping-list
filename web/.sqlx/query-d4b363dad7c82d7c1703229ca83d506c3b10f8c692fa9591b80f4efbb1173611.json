@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE list_invites SET used_at = unixepoch() WHERE token_hash = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "d4b363dad7c82d7c1703229ca83d506c3b10f8c692fa9591b80f4efbb1173611"
+}

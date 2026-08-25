@@ -54,6 +54,7 @@ impl IntoResponse for AppError {
                 ServiceError::Conflict | ServiceError::InUse => StatusCode::CONFLICT,
                 ServiceError::InvalidInput => StatusCode::BAD_REQUEST,
                 ServiceError::Unauthenticated => StatusCode::UNAUTHORIZED,
+                ServiceError::Forbidden => StatusCode::FORBIDDEN,
                 ServiceError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             },
         };

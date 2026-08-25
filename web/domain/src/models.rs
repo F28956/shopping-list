@@ -4,6 +4,7 @@ pub(in crate::models) mod macros;
 mod common;
 pub mod error;
 pub mod history;
+pub mod invite;
 pub mod item;
 pub mod list;
 pub mod note;

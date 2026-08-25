@@ -54,7 +54,13 @@ pub async fn delete(ctx: &Ctx, actor: &Actor, id: tag::Id) -> Result<()> {
 
 /// The tags on one of the actor's items.
 pub async fn for_item(ctx: &Ctx, actor: &Actor, item_id: item::Id) -> Result<Vec<Tag>> {
-    items::owned(ctx, actor.person()?, item_id).await?;
+    items::accessible(
+        ctx,
+        actor.person()?,
+        item_id,
+        crate::models::list::Role::Viewer,
+    )
+    .await?;
     Ok(Tag::for_item(&ctx.db, item_id).await?)
 }
 
@@ -67,7 +73,7 @@ pub async fn for_list(
     actor: &Actor,
     list_id: list::Id,
 ) -> Result<std::collections::HashMap<i64, Vec<Tag>>> {
-    lists::owned(ctx, actor.person()?, list_id).await?;
+    lists::readable(ctx, actor.person()?, list_id).await?;
 
     let mut by_item: std::collections::HashMap<i64, Vec<Tag>> = std::collections::HashMap::new();
     for (item_id, tag) in Tag::for_list(&ctx.db, list_id).await? {
@@ -79,27 +85,27 @@ pub async fn for_list(
 /// Tagging is an edit to the item, so it needs the item, not the tag.
 pub async fn attach(ctx: &Ctx, actor: &Actor, item_id: item::Id, tag_id: tag::Id) -> Result<()> {
     let owner = actor.person()?;
-    let item = items::owned(ctx, owner, item_id).await?;
+    let item = items::editable(ctx, owner, item_id).await?;
     Tag::attach(&ctx.db, item_id, tag_id).await?;
 
     // Filing something is the strongest signal about where it belongs, so the next
     // time it is added it arrives already filed. Best-effort: an item that has never
     // been through quick-add has no history row, and that is not a failure to tag.
-    let _ = Entry::remember_tag(&ctx.db, owner.id, &item.name, Some(tag_id)).await;
+    let _ = Entry::remember_tag(&ctx.db, item.list_id, &item.name, Some(tag_id)).await;
 
     Ok(())
 }
 
 pub async fn detach(ctx: &Ctx, actor: &Actor, item_id: item::Id, tag_id: tag::Id) -> Result<()> {
     let owner = actor.person()?;
-    let item = items::owned(ctx, owner, item_id).await?;
+    let item = items::editable(ctx, owner, item_id).await?;
     Tag::detach(&ctx.db, item_id, tag_id).await?;
 
     // Unfiling is a signal too: stop putting it there.
-    if let Ok(Some(entry)) = Entry::get(&ctx.db, owner.id, &item.name).await
+    if let Ok(Some(entry)) = Entry::get(&ctx.db, item.list_id, &item.name).await
         && entry.tag_id == Some(tag_id)
     {
-        let _ = Entry::remember_tag(&ctx.db, owner.id, &item.name, None).await;
+        let _ = Entry::remember_tag(&ctx.db, item.list_id, &item.name, None).await;
     }
 
     Ok(())
@@ -110,7 +116,7 @@ fn writable(actor: &Actor) -> Result<()> {
         return Ok(());
     }
     if let Ok(person) = actor.person() {
-        return Err(ServiceError::forbidden("tag (write)", person));
+        return Err(ServiceError::hidden("tag (write)", person));
     }
     Err(ServiceError::Unauthenticated)
 }

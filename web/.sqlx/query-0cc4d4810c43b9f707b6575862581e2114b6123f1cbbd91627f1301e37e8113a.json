@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT role as \"role: Role\" FROM list_members WHERE list_id = ?1 AND user_id = ?2",
+  "describe": {
+    "columns": [
+      {
+        "name": "role: Role",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "list_members",
+            "name": "role"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0cc4d4810c43b9f707b6575862581e2114b6123f1cbbd91627f1301e37e8113a"
+}

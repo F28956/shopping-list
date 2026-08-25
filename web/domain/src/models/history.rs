@@ -1,19 +1,25 @@
-//! What a person buys, remembered across the lists they bought it on.
+//! What gets bought on a list, remembered by the list.
 //!
-//! Keyed on a normalised name, so `milk`, `Milk` and `MILK` are one memory, with the
-//! spelling they last used kept alongside for showing back.
+//! Keyed on the list rather than the person, so a household sharing a list shares one
+//! memory of it: what the shop calls it, what it comes in, and where it belongs. The
+//! cost is that a new list starts blank and nothing carries between lists — worth it
+//! only because this application pushes towards lists that live a long time, which is
+//! what "clear done" is for.
+//!
+//! Keyed on a normalised name too, so `milk`, `Milk` and `MILK` are one memory, with
+//! the spelling last used kept alongside for showing back.
 
 use time::OffsetDateTime;
 
 use super::{Error, Result};
-use super::{item, tag, unit, user};
+use super::{item, list, tag, unit};
 
 // Scaffold Display, Uses and LastUsedAt
 string!(Display);
 i64!(Uses);
 timestamp!(LastUsedAt);
 
-/// The most entries one person's history will hold.
+/// The most entries one list's history will hold.
 ///
 /// Uncapped it would grow by every typo forever. Five hundred is far more than a
 /// household buys and small enough that the whole table stays cheap to read.
@@ -51,7 +57,7 @@ impl Entry {
     /// or a lost count.
     pub async fn record(
         pool: &sqlx::SqlitePool,
-        user_id: user::Id,
+        list_id: list::Id,
         name: &item::Name,
         unit_id: Option<unit::Id>,
     ) -> Result<()> {
@@ -60,15 +66,15 @@ impl Entry {
 
         sqlx::query!(
             r#"
-            INSERT INTO item_history (user_id, name, display, unit_id)
+            INSERT INTO item_history (list_id, name, display, unit_id)
             VALUES (?1, ?2, ?3, ?4)
-            ON CONFLICT(user_id, name) DO UPDATE SET
+            ON CONFLICT(list_id, name) DO UPDATE SET
                 display      = ?3,
                 unit_id      = coalesce(?4, item_history.unit_id),
                 uses         = item_history.uses + 1,
                 last_used_at = unixepoch()
             "#,
-            user_id,
+            list_id,
             key,
             display,
             unit_id,
@@ -85,15 +91,15 @@ impl Entry {
     /// and because a tag being removed should not count as another use.
     pub async fn remember_tag(
         pool: &sqlx::SqlitePool,
-        user_id: user::Id,
+        list_id: list::Id,
         name: &item::Name,
         tag_id: Option<tag::Id>,
     ) -> Result<()> {
         let key = key(name);
 
         sqlx::query!(
-            r#"UPDATE item_history SET tag_id = ?3 WHERE user_id = ?1 AND name = ?2"#,
-            user_id,
+            r#"UPDATE item_history SET tag_id = ?3 WHERE list_id = ?1 AND name = ?2"#,
+            list_id,
             key,
             tag_id,
         )
@@ -106,7 +112,7 @@ impl Entry {
     /// One entry, if this person has bought it before.
     pub async fn get(
         pool: &sqlx::SqlitePool,
-        user_id: user::Id,
+        list_id: list::Id,
         name: &item::Name,
     ) -> Result<Option<Entry>> {
         let key = key(name);
@@ -122,23 +128,23 @@ impl Entry {
                 uses         as "uses: Uses",
                 last_used_at as "last_used_at: LastUsedAt"
             FROM item_history
-            WHERE user_id = ?1 AND name = ?2
+            WHERE list_id = ?1 AND name = ?2
             "#,
-            user_id,
+            list_id,
             key
         )
         .fetch_optional(pool)
         .await?)
     }
 
-    /// This person's whole history, newest use first.
+    /// This list's whole history, newest use first.
     ///
     /// The order here is only a bound on how much is read — see
     /// [`crate::history_rank`] for the order it is offered in. Recency is the right
     /// thing to bound by: an entry not touched in years is the one that matters least.
-    pub async fn for_user(
+    pub async fn for_list(
         pool: &sqlx::SqlitePool,
-        user_id: user::Id,
+        list_id: list::Id,
         limit: i64,
     ) -> Result<Vec<Entry>> {
         Ok(sqlx::query_as!(
@@ -152,11 +158,11 @@ impl Entry {
                 uses         as "uses: Uses",
                 last_used_at as "last_used_at: LastUsedAt"
             FROM item_history
-            WHERE user_id = ?1
+            WHERE list_id = ?1
             ORDER BY last_used_at DESC
             LIMIT ?2
             "#,
-            user_id,
+            list_id,
             limit
         )
         .fetch_all(pool)
@@ -166,14 +172,14 @@ impl Entry {
     /// Drops one remembered item — the way back from a typo.
     pub async fn forget(
         pool: &sqlx::SqlitePool,
-        user_id: user::Id,
+        list_id: list::Id,
         name: &item::Name,
     ) -> Result<()> {
         let key = key(name);
 
         let result = sqlx::query!(
-            r#"DELETE FROM item_history WHERE user_id = ?1 AND name = ?2"#,
-            user_id,
+            r#"DELETE FROM item_history WHERE list_id = ?1 AND name = ?2"#,
+            list_id,
             key
         )
         .execute(pool)
@@ -186,23 +192,23 @@ impl Entry {
         Ok(())
     }
 
-    /// Trims the history back to [`MAX_ENTRIES`], dropping the least-used and
+    /// Trims a list's history back to [`MAX_ENTRIES`], dropping the least-used and
     /// least-recent first, and says how many went.
     ///
     /// Called after recording rather than on a schedule: the only moment the table
     /// can grow is the moment something was added to it.
-    pub async fn prune(pool: &sqlx::SqlitePool, user_id: user::Id) -> Result<u64> {
+    pub async fn prune(pool: &sqlx::SqlitePool, list_id: list::Id) -> Result<u64> {
         let result = sqlx::query!(
             r#"
             DELETE FROM item_history
-            WHERE user_id = ?1 AND name IN (
+            WHERE list_id = ?1 AND name IN (
                 SELECT name FROM item_history
-                WHERE user_id = ?1
+                WHERE list_id = ?1
                 ORDER BY uses DESC, last_used_at DESC
                 LIMIT -1 OFFSET ?2
             )
             "#,
-            user_id,
+            list_id,
             MAX_ENTRIES
         )
         .execute(pool)

@@ -26,7 +26,9 @@ pub fn router() -> Router<AppState> {
         .nest("/lists", routes::lists::router())
         // Items are nested under their list because the list is what authorises them
         .nest("/lists/{list_id}/items", routes::items::router())
-        .nest("/history", routes::history::router())
+        // The memory belongs to the list, so it is addressed through it
+        .nest("/lists/{list_id}/history", routes::history::router())
+        .nest("/lists/{list_id}/members", routes::sharing::router())
         .nest("/me", routes::me::router())
         .nest("/notes", routes::notes::router())
         .nest("/units", routes::reference::units_router())
