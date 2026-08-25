@@ -893,3 +893,71 @@ async fn an_item_being_edited_offers_a_way_out(#[future(awt)] pool: SqlitePool) 
         &body[tag_start..cancel_at + 40]
     );
 }
+
+/// Choosing a tag is the action. There is no confirm button to click, except for
+/// browsers that cannot post without one — which is exactly what <noscript> means.
+#[rstest]
+#[tokio::test]
+async fn choosing_a_tag_adds_it(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|picker").await;
+    post(&app, "/lists", &cookie, "name=Bakery").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &cookie,
+        "name=Bagels&amount=1&unit_id=",
+    )
+    .await;
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    let item_id: i64 = body[body.find("/items/").unwrap() + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap();
+
+    // the picker posts on change rather than on submit
+    let form_at = body
+        .find(&format!("action=\"/lists/{list_id}/items/{item_id}/tags\""))
+        .unwrap();
+    let form_end = body[form_at..].find('>').unwrap() + form_at;
+    assert!(
+        body[form_at..form_end].contains("hx-trigger=\"change\""),
+        "the tag picker still waits to be submitted: {}",
+        &body[form_at..form_end]
+    );
+
+    // the only Add button left is the one browsers without scripting need
+    let tag_form_end = body[form_at..].find("</form>").unwrap() + form_at;
+    let tag_form = &body[form_at..tag_form_end];
+    assert!(
+        !tag_form.contains("<button") || tag_form.contains("<noscript><button"),
+        "there is a confirm button outside <noscript>: {tag_form}"
+    );
+
+    // and choosing one really does attach it
+    let tag_id = first_tag_option(&body).expect("no tag options");
+    let (_, after) = post_htmx(
+        &app,
+        &format!("/lists/{list_id}/items/{item_id}/tags"),
+        &cookie,
+        &format!("tag_id={tag_id}"),
+    )
+    .await;
+    assert!(
+        after.contains("class=\"chip removable\""),
+        "the tag was not attached: {after}"
+    );
+    // the picker comes back offering what is left, without the one just added
+    assert_ne!(
+        first_tag_option(&after),
+        Some(tag_id),
+        "the picker still offers a tag already on the item"
+    );
+}

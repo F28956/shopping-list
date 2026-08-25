@@ -174,10 +174,16 @@ fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
                                             }
                                         }
                                     }
+                                    // Choosing a tag is the whole action, so `change`
+                                    // fires it. The confirm button only exists for
+                                    // browsers that cannot post on their own, which is
+                                    // what <noscript> says precisely.
                                     form class="inline" method="post" action={ (item) "/tags" }
                                          hx-post={ (item) "/tags" }
-                                         hx-target="#items" hx-swap="outerHTML" {
-                                        select name="tag_id" aria-label="Tag" required {
+                                         hx-target="#items" hx-swap="outerHTML"
+                                         hx-trigger="change" {
+                                        select class="tag-add" name="tag_id" aria-label="Add a tag"
+                                               required {
                                             option value="" disabled selected { "+ tag" }
                                             @for t in &b.all_tags {
                                                 // only what is not already on it
@@ -189,7 +195,7 @@ fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
                                                 }
                                             }
                                         }
-                                        button { "Add" }
+                                        noscript { button { "Add" } }
                                     }
                                 }
 

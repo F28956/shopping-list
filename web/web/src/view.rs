@@ -64,8 +64,11 @@ ul.rows li.item { display: block; }
           border-radius: 4px; }
 .cancel:hover { opacity: 1; }
 .tag-edit { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
-.tag-edit select { font-size: .8rem; padding: .2rem .35rem; }
 .tag-edit button { font-size: .8rem; padding: .2rem .45rem; }
+/* The picker reads as one more chip until you use it. */
+select.tag-add { font-size: .72rem; padding: .05rem .45rem; border-radius: 999px;
+                 opacity: .75; cursor: pointer; }
+select.tag-add:hover, select.tag-add:focus { opacity: 1; border-color: currentColor; }
 
 /* The list index keeps its own small rename disclosure. */
 details.edit { font-size: .8rem; opacity: .55; }
