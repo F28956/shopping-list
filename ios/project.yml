@@ -4,6 +4,12 @@
 # artefact that reviews terribly and conflicts worse; this is the description of it,
 # which is neither.
 name: ShoppingList
+# Values that differ per machine and per person live here rather than in the project.
+# The file is gitignored; Config.example.xcconfig is the template to copy.
+configFiles:
+  Debug: Config.xcconfig
+  Release: Config.xcconfig
+
 options:
   bundleIdPrefix: com.rimantas
   deploymentTarget:
@@ -48,9 +54,8 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
-        # Overridden by ios/Config.xcconfig when it exists — see the README. The
-        # defaults let the project build and run against a simulator without any of
-        # the Google console work being done first.
+        # Defaults, so the project builds and runs before any of the Google console
+        # work is done. Config.xcconfig overrides them — see the README.
         SHOPPING_LIST_API_BASE_URL: http://localhost:8080
         GOOGLE_IOS_CLIENT_ID: ""
         GOOGLE_IOS_REVERSED_CLIENT_ID: ""

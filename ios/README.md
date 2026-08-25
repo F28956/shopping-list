@@ -8,7 +8,8 @@ gets the same answers as the browser because it asks the same questions.
 
 ```sh
 cd ios
-xcodegen generate          # writes ShoppingList.xcodeproj from project.yml
+cp -n Config.example.xcconfig Config.xcconfig   # per-machine values; gitignored
+xcodegen generate                               # writes the .xcodeproj from project.yml
 open ShoppingList.xcodeproj
 ```
 
@@ -30,14 +31,16 @@ for the same project:
 - Bundle ID: `com.rimantas.shoppinglist` (match `PRODUCT_BUNDLE_IDENTIFIER` in
   `project.yml` if you change it)
 
-That gives you a client id and its *reversed* form. Put both in `ios/Config.xcconfig`,
-which is gitignored:
+That gives you a client id and its *reversed* form. Put both in `ios/Config.xcconfig`
+and regenerate:
 
 ```
 GOOGLE_IOS_CLIENT_ID = 000000000000-xxxx.apps.googleusercontent.com
 GOOGLE_IOS_REVERSED_CLIENT_ID = com.googleusercontent.apps.000000000000-xxxx
-SHOPPING_LIST_API_BASE_URL = http://192.168.1.10:8080
 ```
+
+None of those are secrets: an iOS client id ships inside every copy of the app, and
+Google's iOS clients have no client secret at all — which is why the flow uses PKCE.
 
 Then tell the server to accept tokens from it, in `web/.env`:
 
