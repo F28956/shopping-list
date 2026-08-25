@@ -74,11 +74,12 @@ actor API {
 
     /// Adds an item from one typed line.
     ///
-    /// The line is sent as typed and parsed on the server, so "2 kg apples" means the
-    /// same thing here as in the browser. Parsing it twice, in two languages, is how
-    /// the two come to disagree.
+    /// Sent under `line`, not `name`: `name` is taken literally, and `line` is read
+    /// the way a person means it. The parsing happens on the server, so "2 kg apples"
+    /// means the same thing here as in the browser -- doing it twice, in two
+    /// languages, is how the two come to disagree.
     func add(_ line: String, to list: List) async throws {
-        _ = try await send("POST", "/api/lists/\(list.id)/items", ["name": line])
+        _ = try await send("POST", "/api/lists/\(list.id)/items", ["line": line])
     }
 
     func setDone(_ item: Item, on list: List, done: Bool) async throws {

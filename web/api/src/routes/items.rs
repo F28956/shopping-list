@@ -11,7 +11,7 @@ use domain::models::OffsetPage;
 use domain::models::item::{self, Amount, Item, Name};
 use domain::models::tag;
 use domain::models::{list, unit};
-use domain::service::{items, tags};
+use domain::service::{ServiceError, items, tags};
 
 use crate::auth::CurrentUser;
 use crate::error::AppError;
@@ -36,6 +36,22 @@ pub fn router() -> Router<AppState> {
 #[derive(Debug, serde::Deserialize)]
 pub struct ItemInput {
     pub name: String,
+    #[serde(default = "one")]
+    pub amount: f64,
+    pub unit_id: Option<i64>,
+}
+
+/// What to add, either way a caller might mean it.
+///
+/// `line` is one typed string read the way a person means it -- "2 kg apples" -- and
+/// `name` is the three fields spelled out. Two shapes rather than one, because they
+/// are two different intentions: a client that means an item literally called
+/// "1 kg bag of rice" has to be able to say so, and guessing from whether the other
+/// fields happen to be present would take that away.
+#[derive(Debug, serde::Deserialize)]
+pub struct NewItem {
+    pub line: Option<String>,
+    pub name: Option<String>,
     #[serde(default = "one")]
     pub amount: f64,
     pub unit_id: Option<i64>,
@@ -77,18 +93,35 @@ async fn create(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(list_id): Path<i64>,
-    Json(input): Json<ItemInput>,
+    Json(input): Json<NewItem>,
 ) -> Result<(StatusCode, Json<Item>), AppError> {
-    let (name, amount, unit_id) = input.parts();
-    let item = items::create(
-        &state.ctx,
-        &user.actor(),
-        list::Id(list_id),
-        name,
-        amount,
-        unit_id,
-    )
-    .await?;
+    let list_id = list::Id(list_id);
+    let actor = user.actor();
+
+    let item = match (input.line, input.name) {
+        // Both is ambiguous, and picking one silently would mean a client with a
+        // bug got an item it never asked for. (The reason does not reach the caller
+        // -- the error body carries the status' canonical text and nothing else.)
+        (Some(_), Some(_)) => return Err(AppError::Service(ServiceError::InvalidInput)),
+        // Parsed in the service, never here: the browser posts a line through the
+        // same function, and two parsers in two transports is how a phone and a
+        // browser come to disagree about what `2 kg apples` means.
+        (Some(line), None) => items::quick_add(&state.ctx, &actor, list_id, &line).await?,
+        (None, Some(name)) => {
+            items::create(
+                &state.ctx,
+                &actor,
+                list_id,
+                Name(name),
+                Amount(input.amount),
+                input.unit_id.map(unit::Id),
+            )
+            .await?
+        }
+        // Neither: an item has to be called something.
+        (None, None) => return Err(AppError::Service(ServiceError::InvalidInput)),
+    };
+
     Ok((StatusCode::CREATED, Json(item)))
 }
 

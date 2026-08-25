@@ -9,6 +9,7 @@ struct WatchItemsView: View {
     let api: API
     let list: List
     @Environment(WatchIdentity.self) private var identity
+    @Environment(\.scenePhase) private var phase
 
     @State private var items: [Item] = []
     @State private var units: [Int64: String] = [:]
@@ -47,6 +48,44 @@ struct WatchItemsView: View {
         }
         .navigationTitle(list.name)
         .task { await load() }
+        .task { await watch() }
+        // watchOS suspends a connection the moment the app stops being frontmost, so
+        // coming back is the gap the stream cannot cover on its own.
+        .onChange(of: phase) { _, now in
+            if now == .active { Task { await load() } }
+        }
+    }
+
+    /// Keeps the wrist in step with the phone and the browser.
+    ///
+    /// The same stream the phone watches, through the same shared client. A watch is
+    /// the screen most likely to be showing a list somebody else is changing -- the
+    /// other half of the shop, holding the phone -- so it is the one that can least
+    /// afford to be quietly stale.
+    private func watch() async {
+        var reconnecting = false
+
+        while !Task.isCancelled {
+            if reconnecting { await load() }
+
+            do {
+                for try await _ in try await api.changes(on: list) {
+                    await load()
+                }
+            } catch let problem as APIError {
+                // A stream refused for want of a token means the cached one has
+                // expired. Dropping it makes the next attempt ask the phone again,
+                // which is the whole recovery path on a watch.
+                if case .unauthorized = problem {
+                    identity.refused()
+                }
+            } catch {}
+
+            // A watch loses its connection constantly -- a lowered wrist is enough --
+            // so this is ordinary rather than an error worth showing.
+            reconnecting = true
+            try? await Task.sleep(for: .seconds(3))
+        }
     }
 
     /// A row says what it says on the phone: struck through, greyed, and under the

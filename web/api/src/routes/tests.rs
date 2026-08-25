@@ -609,6 +609,120 @@ async fn a_stranger_cannot_watch_my_list(#[future(awt)] pool: SqlitePool) {
     assert_eq!(status, StatusCode::NOT_FOUND, "a hidden list stays hidden");
 }
 
+/// A typed line means the same thing through the API as through the browser.
+///
+/// This is the bug the phone had: the API took `name` literally, so "2 kg apples"
+/// became an item called that, one of it, while the same text in the browser became
+/// two kilograms of apples.
+#[rstest]
+#[tokio::test]
+async fn a_typed_line_is_read_the_way_a_person_means_it(
+    #[future(awt)]
+    #[with(fixtures::UNITS)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+    let (status, list) = send(
+        &app,
+        req("POST", "/api/lists", &me(), Some(json!({"name": "Fruit"}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let list_id = list["id"].as_i64().unwrap();
+
+    let (status, item) = send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{list_id}/items"),
+            &me(),
+            Some(json!({"line": "2 kg apples"})),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(item["name"], "apples", "the quantity is not part of the name");
+    assert_eq!(item["amount"], 2.0);
+    assert!(!item["unit_id"].is_null(), "kg was recognised as the unit");
+}
+
+/// The structured shape still means exactly what it says. A client that wants an item
+/// literally called "1 kg bag of rice" has to be able to have one.
+#[rstest]
+#[tokio::test]
+async fn a_spelled_out_item_is_not_parsed(
+    #[future(awt)]
+    #[with(fixtures::UNITS)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+    let (_, list) = send(
+        &app,
+        req("POST", "/api/lists", &me(), Some(json!({"name": "Fruit"}))),
+    )
+    .await;
+    let list_id = list["id"].as_i64().unwrap();
+
+    let (status, item) = send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{list_id}/items"),
+            &me(),
+            Some(json!({"name": "1 kg bag of rice"})),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(item["name"], "1 kg bag of rice", "taken literally");
+    assert_eq!(item["amount"], 1.0);
+    assert!(item["unit_id"].is_null());
+}
+
+/// Ambiguous or empty is the caller's mistake, not a guess to make on their behalf.
+#[rstest]
+#[case::both(json!({"line": "2 kg apples", "name": "Apples"}))]
+#[case::neither(json!({"amount": 2.0}))]
+#[tokio::test]
+async fn an_add_must_say_which_it_means(
+    #[future(awt)] pool: SqlitePool,
+    #[case] body: serde_json::Value,
+) {
+    let app = app(pool);
+    let (_, list) = send(
+        &app,
+        req("POST", "/api/lists", &me(), Some(json!({"name": "Fruit"}))),
+    )
+    .await;
+    let list_id = list["id"].as_i64().unwrap();
+
+    let (status, _) = send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{list_id}/items"),
+            &me(),
+            Some(body),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (_, page) = send(
+        &app,
+        req(
+            "GET",
+            &format!("/api/lists/{list_id}/items?order_by=id"),
+            &me(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(page["total"], 0, "nothing was added on a refused request");
+}
+
 /// Clearing takes the ticked-off rows and nothing else.
 #[rstest]
 #[tokio::test]

@@ -32,7 +32,7 @@ struct ItemsView: View {
         SwiftUI.List {
             Section {
                 HStack {
-                    TextField("Add an item", text: $line)
+                    TextField("Add an item — try 2 kg apples", text: $line)
                         .focused($typing)
                         .submitLabel(.done)
                         .onSubmit { Task { await add() } }
