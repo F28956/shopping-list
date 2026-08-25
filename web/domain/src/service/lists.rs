@@ -145,6 +145,12 @@ pub async fn role(ctx: &Ctx, actor: &Actor, id: list::Id) -> Result<Role> {
         .ok_or(ServiceError::NotFound)
 }
 
+/// How many people each of the actor's lists is shared with, for an index that wants
+/// to say so without asking per row.
+pub async fn share_counts(ctx: &Ctx, actor: &Actor) -> Result<std::collections::HashMap<i64, i64>> {
+    Ok(ListMember::counts_for(&ctx.db, actor.person()?.id).await?)
+}
+
 /// Everyone the list is shared with, and the role each holds.
 ///
 /// Readable by any member: knowing who else can see your shopping is part of knowing

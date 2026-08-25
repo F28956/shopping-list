@@ -2,10 +2,9 @@
 
 use axum::extract::{Form, Path, State};
 use axum::http::HeaderMap;
-use axum::response::{Redirect, Response};
-use domain::models::invite::Token;
+use axum::response::Response;
 use domain::models::item::{self, Amount, Name};
-use domain::models::list::{ListMember, Role};
+use domain::models::list::Role;
 use domain::models::{Direction, OrderBy, Paging, list, tag, unit};
 use domain::service::{Actor, items, lists, tags, units};
 use maud::{Markup, html};
@@ -47,8 +46,6 @@ struct Board {
     items: Vec<item::Item>,
     /// What this person may do here, which decides what the page offers them.
     role: Role,
-    /// Everyone else on the list, so it is obvious who can see your shopping.
-    members: Vec<ListMember>,
     /// How many are on this list in total, and whether the page holds them all.
     total: i64,
     truncated: bool,
@@ -78,7 +75,6 @@ async fn board(s: &AppState, actor: &Actor, list_id: list::Id) -> Result<Board, 
         truncated: page.has_more,
         items: page.items,
         role: lists::role(&s.ctx, actor, list_id).await?,
-        members: lists::members(&s.ctx, actor, list_id).await?,
         suggestions: items::suggestions(&s.ctx, actor, list_id, 100).await?,
         unit_names: unit_lookup(s, actor).await?,
         // One query for the whole page rather than one per item.
@@ -146,11 +142,13 @@ fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
                                 (item_row(list_id, b, i, open))
                             }
                         }
+                        @if b.role >= Role::Editor {
                         form class="inline" method="post" action={ (base) "/clear-done" }
                              hx-post={ (base) "/clear-done" }
                              hx-target="#items" hx-swap="outerHTML"
                              hx-confirm={ "Remove all " (done) " ticked items?" } {
                             button class="danger" { "Clear done" }
+                        }
                         }
                     }
                 }
@@ -176,6 +174,7 @@ fn item_row(list_id: list::Id, b: &Board, i: &item::Item, open: Option<i64>) -> 
                   checked[open == Some(i.id.0)];
 
             div class="view" {
+                @if b.role >= Role::Editor {
                 form class="inline" method="post" action={ (item) "/toggle" }
                      hx-post={ (item) "/toggle" }
                      hx-target="#items" hx-swap="outerHTML" {
@@ -184,6 +183,7 @@ fn item_row(list_id: list::Id, b: &Board, i: &item::Item, open: Option<i64>) -> 
                     }
                 }
 
+                }
                 span class="grow" {
                     (i.name.0)
                     // Tags are shown, not operated, out here. Inside a category group
@@ -201,10 +201,13 @@ fn item_row(list_id: list::Id, b: &Board, i: &item::Item, open: Option<i64>) -> 
                     span class="amount" { (measure) }
                 }
 
-                label class="panel-toggle" for=(format!("panel-{}", i.id.0))
-                      title="Edit" { "⋯" }
+                @if b.role >= Role::Editor {
+                    label class="panel-toggle" for=(format!("panel-{}", i.id.0))
+                          title="Edit" { "⋯" }
+                }
             }
 
+            @if b.role >= Role::Editor {
             div class="panel-body" {
                 form class="add" method="post" action={ (item) "/edit" }
                      hx-post={ (item) "/edit" }
@@ -269,6 +272,7 @@ fn item_row(list_id: list::Id, b: &Board, i: &item::Item, open: Option<i64>) -> 
                      hx-confirm={ "Remove " (i.name.0) "?" } {
                     button class="danger" { "Remove item" }
                 }
+            }
             }
         }
     }
@@ -340,8 +344,6 @@ pub async fn show(
             h2 style="font-size:1.1rem;margin:.5rem 0 1rem" { (list.name.0) }
 
             (fragment(list.id, &b, None))
-
-            (share_panel(&list, &b))
 
             // One field. "2 kg apples" is parsed into the three the model wants —
             // see domain::quick_add — and the editor is there for anything it reads
@@ -540,148 +542,4 @@ async fn swap(
     } else {
         Ok(swap_or_redirect(headers, maud::html! {}, &to))
     }
-}
-
-/// Who else is on this list, and — for the owner — how to add somebody.
-///
-/// Shown to everyone, because knowing who can see your shopping is part of knowing
-/// what sharing means. Only the owner is offered the controls.
-fn share_panel(list: &list::List, b: &Board) -> Markup {
-    let base = format!("/lists/{}", list.id.0);
-    html! {
-        section class="share" {
-            h3 class="group-heading" {
-                @if b.members.is_empty() { "Not shared" } @else { "Shared with" }
-            }
-
-            @if !b.members.is_empty() {
-                ul class="rows" {
-                    @for m in &b.members {
-                        li class="item" {
-                            span class="grow" { "Someone" }
-                            span class="amount" { (role_name(m.role)) }
-                            @if b.role >= Role::Owner {
-                                form class="inline" method="post"
-                                     action={ (base) "/members/" (m.user_id.0) "/remove" }
-                                     hx-post={ (base) "/members/" (m.user_id.0) "/remove" }
-                                     hx-target="body" hx-swap="outerHTML" {
-                                    button class="quiet" title="Remove" { "×" }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            @if b.role >= Role::Owner {
-                form class="add" method="post" action={ (base) "/invites" } {
-                    select name="role" aria-label="What they may do" {
-                        option value="editor" { "can add and tick off" }
-                        option value="viewer" { "can only look" }
-                    }
-                    button { "Create a link" }
-                }
-            } @else {
-                // A member should be able to get out without asking the owner.
-                form class="inline" method="post" action={ (base) "/leave" } {
-                    button class="quiet" { "Leave this list" }
-                }
-            }
-        }
-    }
-}
-
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::Owner => "owner",
-        Role::Editor => "can edit",
-        Role::Viewer => "can look",
-    }
-}
-
-/// Creates an invitation and shows the link once.
-///
-/// Once, because only its hash is stored — an owner who loses it makes another. The
-/// page says so rather than letting somebody discover it.
-pub async fn invite(
-    session: Session,
-    State(s): State<AppState>,
-    Path(id): Path<i64>,
-    Form(form): Form<InviteForm>,
-) -> Result<Markup, AppError> {
-    let actor = auth::require_actor(&session, &s.ctx).await?;
-    let user = actor.person()?.clone();
-    let list = lists::get(&s.ctx, &actor, list::Id(id)).await?;
-
-    let token = lists::invite(&s.ctx, &actor, list::Id(id), form.role).await?;
-    let origin =
-        std::env::var("PUBLIC_ORIGIN").unwrap_or_else(|_| "http://localhost:8080".to_string());
-    let link = format!("{origin}/join/{}", token.0);
-
-    Ok(view::page(
-        &list.name.0,
-        Some(&crate::pages::who(&user)),
-        html! {
-            p { a href={ "/lists/" (list.id.0) } { "← back to " (list.name.0) } }
-            h2 style="font-size:1.1rem;margin:.5rem 0" { "Invitation link" }
-            p { "Send this to whoever should join. It works once per person and stops "
-                "working after a week." }
-            p class="token" { (link) }
-            p class="truncated" {
-                "This is the only time it is shown — nothing stores the link itself, "
-                "only enough to recognise it. Lose it and make another."
-            }
-            form class="inline" method="post" action={ "/lists/" (list.id.0) "/invites/revoke" } {
-                button class="danger" { "Cancel all outstanding links" }
-            }
-        },
-    ))
-}
-
-#[derive(serde::Deserialize)]
-pub struct InviteForm {
-    pub role: Role,
-}
-
-pub async fn revoke_invites(
-    session: Session,
-    State(s): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<Redirect, AppError> {
-    let actor = auth::require_actor(&session, &s.ctx).await?;
-    lists::revoke_invites(&s.ctx, &actor, list::Id(id)).await?;
-    Ok(Redirect::to(&format!("/lists/{id}")))
-}
-
-pub async fn remove_member(
-    session: Session,
-    State(s): State<AppState>,
-    Path((id, who)): Path<(i64, i64)>,
-) -> Result<Redirect, AppError> {
-    let actor = auth::require_actor(&session, &s.ctx).await?;
-    lists::remove_member(&s.ctx, &actor, list::Id(id), domain::models::user::Id(who)).await?;
-    Ok(Redirect::to(&format!("/lists/{id}")))
-}
-
-/// Leaving is removing yourself, so it is the same operation.
-pub async fn leave(
-    session: Session,
-    State(s): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<Redirect, AppError> {
-    let actor = auth::require_actor(&session, &s.ctx).await?;
-    let me = actor.person()?.id;
-    lists::remove_member(&s.ctx, &actor, list::Id(id), me).await?;
-    Ok(Redirect::to("/"))
-}
-
-/// Following an invitation link.
-pub async fn join(
-    session: Session,
-    State(s): State<AppState>,
-    Path(token): Path<String>,
-) -> Result<Redirect, AppError> {
-    let actor = auth::require_actor(&session, &s.ctx).await?;
-    let list = lists::join(&s.ctx, &actor, &Token(token)).await?;
-    Ok(Redirect::to(&format!("/lists/{}", list.id.0)))
 }

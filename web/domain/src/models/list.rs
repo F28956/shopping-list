@@ -128,6 +128,32 @@ impl ListMember {
         .await?)
     }
 
+    /// How many people each of this person's lists is shared with.
+    ///
+    /// One query for the whole index rather than one per row: a lists page that asks
+    /// per list turns ten lists into eleven round trips, and the answer is a single
+    /// group-by.
+    pub async fn counts_for(
+        pool: &sqlx::SqlitePool,
+        user_id: user::Id,
+    ) -> Result<std::collections::HashMap<i64, i64>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT m.list_id as "list_id!: i64", count(*) as "n!: i64"
+            FROM list_members m
+            JOIN lists l ON l.id = m.list_id
+            WHERE l.owner_id = ?1
+               OR m.list_id IN (SELECT list_id FROM list_members WHERE user_id = ?1)
+            GROUP BY m.list_id
+            "#,
+            user_id
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|r| (r.list_id, r.n)).collect())
+    }
+
     /// Everyone sharing a list, most recently added first. The owner is not among
     /// them — see the note on the struct.
     pub async fn for_list(pool: &sqlx::SqlitePool, list_id: Id) -> Result<Vec<ListMember>> {

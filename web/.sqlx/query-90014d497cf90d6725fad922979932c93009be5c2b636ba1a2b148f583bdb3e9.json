@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT m.list_id as \"list_id!: i64\", count(*) as \"n!: i64\"\n            FROM list_members m\n            JOIN lists l ON l.id = m.list_id\n            WHERE l.owner_id = ?1\n               OR m.list_id IN (SELECT list_id FROM list_members WHERE user_id = ?1)\n            GROUP BY m.list_id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "list_id!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "list_members",
+            "name": "list_id"
+          }
+        }
+      },
+      {
+        "name": "n!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "90014d497cf90d6725fad922979932c93009be5c2b636ba1a2b148f583bdb3e9"
+}

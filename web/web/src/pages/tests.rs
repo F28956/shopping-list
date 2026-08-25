@@ -93,6 +93,25 @@ async fn post_htmx(
     (status, body)
 }
 
+/// Like `post`, but for the handlers that answer with a page rather than a redirect.
+async fn post_page(app: &axum::Router, uri: &str, cookie: &str, form: &str) -> String {
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .method("POST")
+                .header(header::COOKIE, cookie)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(form.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec())
+        .unwrap_or_default()
+}
+
 async fn post(app: &axum::Router, uri: &str, cookie: &str, form: &str) -> StatusCode {
     let res = app
         .clone()
@@ -1334,25 +1353,20 @@ async fn a_list_can_be_shared_by_link(#[future(awt)] pool: SqlitePool) {
     let (_, body) = get(&app, "/", &mine).await;
     let list_id = first_list_id(&body);
 
-    // the owner is offered the controls
-    let (_, page) = get(&app, &format!("/lists/{list_id}"), &mine).await;
-    assert!(page.contains("Create a link"), "no way to share: {page}");
+    // sharing is offered from the index, beside renaming and deleting
+    let (_, index) = get(&app, "/", &mine).await;
+    assert!(
+        index.contains(&format!("/lists/{list_id}/share")),
+        "no way to reach sharing from the lists page: {index}"
+    );
 
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/lists/{list_id}/invites"))
-                .method("POST")
-                .header(header::COOKIE, &mine)
-                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                .body(Body::from("role=editor"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let shown =
-        String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    let (_, page) = get(&app, &format!("/lists/{list_id}/share"), &mine).await;
+    assert!(
+        page.contains("Create an invitation link"),
+        "no way to share: {page}"
+    );
+
+    let shown = post_page(&app, &format!("/lists/{list_id}/invites"), &mine, "").await;
     let at = shown.find("/join/").expect("no link on the page");
     let token: String = shown[at + 6..]
         .chars()
@@ -1394,7 +1408,12 @@ async fn a_list_can_be_shared_by_link(#[future(awt)] pool: SqlitePool) {
     );
 }
 
-/// A viewer is given a list to read, not a list covered in controls that refuse.
+/// A viewer is given a list to read, not a list covered in controls that would refuse
+/// them.
+///
+/// Only editor links are offered in the interface, so the viewer here is made through
+/// the service — the role exists and the page has to render it honestly even though
+/// nothing in the UI hands it out yet.
 #[rstest]
 #[tokio::test]
 async fn a_viewer_is_not_offered_the_controls(#[future(awt)] pool: SqlitePool) {
@@ -1404,29 +1423,28 @@ async fn a_viewer_is_not_offered_the_controls(#[future(awt)] pool: SqlitePool) {
     let list_id = first_list_id(&body);
     post(&app, &format!("/lists/{list_id}/items"), &mine, "line=Milk").await;
 
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/lists/{list_id}/invites"))
-                .method("POST")
-                .header(header::COOKIE, &mine)
-                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                .body(Body::from("role=viewer"))
-                .unwrap(),
+    let ctx = Ctx::new(pool.clone());
+    let owner = domain::service::Actor::User(
+        domain::models::user::User::find_or_create(
+            &pool,
+            Sub("google-oauth2|owner2".into()),
+            None,
+            None,
         )
         .await
-        .unwrap();
-    let shown =
-        String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
-    let at = shown.find("/join/").unwrap();
-    let token: String = shown[at + 6..]
-        .chars()
-        .take_while(|c| c.is_ascii_hexdigit())
-        .collect();
+        .unwrap(),
+    );
+    let token = domain::service::lists::invite(
+        &ctx,
+        &owner,
+        domain::models::list::Id(list_id),
+        domain::models::list::Role::Viewer,
+    )
+    .await
+    .unwrap();
 
     let (app2, theirs) = signed_in(&pool, "google-oauth2|looker").await;
-    get(&app2, &format!("/join/{token}"), &theirs).await;
+    get(&app2, &format!("/join/{}", token.0), &theirs).await;
 
     let (status, page) = get(&app2, &format!("/lists/{list_id}"), &theirs).await;
     assert_eq!(status, StatusCode::OK);
@@ -1434,14 +1452,18 @@ async fn a_viewer_is_not_offered_the_controls(#[future(awt)] pool: SqlitePool) {
         page.contains("Milk"),
         "a viewer cannot see the list: {page}"
     );
-    assert!(
-        !page.contains("Add an item"),
-        "a viewer was offered a control that would refuse them: {page}"
-    );
-    assert!(
-        !page.contains("Create a link"),
-        "a viewer was offered sharing"
-    );
+
+    for control in [
+        "Add an item",
+        "Remove item",
+        "panel-toggle",
+        "class=\"tick\"",
+    ] {
+        assert!(
+            !page.contains(control),
+            "a viewer was offered {control}, which would refuse them: {page}"
+        );
+    }
 
     // and the refusal, if they contrive one, says forbidden rather than missing
     assert_eq!(
@@ -1453,6 +1475,41 @@ async fn a_viewer_is_not_offered_the_controls(#[future(awt)] pool: SqlitePool) {
         )
         .await,
         StatusCode::FORBIDDEN
+    );
+}
+
+/// An editor gets the controls, and the owner's are still the owner's.
+#[rstest]
+#[tokio::test]
+async fn an_editor_is_offered_the_controls_but_not_the_owners(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|owner4").await;
+    post(&app, "/lists", &mine, "name=Shared").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+    post(&app, &format!("/lists/{list_id}/items"), &mine, "line=Milk").await;
+
+    let shown = post_page(&app, &format!("/lists/{list_id}/invites"), &mine, "").await;
+    let at = shown.find("/join/").unwrap();
+    let token: String = shown[at + 6..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|helper").await;
+    get(&app2, &format!("/join/{token}"), &theirs).await;
+
+    let (_, page) = get(&app2, &format!("/lists/{list_id}"), &theirs).await;
+    assert!(page.contains("Add an item"), "an editor cannot add: {page}");
+    assert!(page.contains("Remove item"), "an editor cannot remove");
+
+    let (_, share) = get(&app2, &format!("/lists/{list_id}/share"), &theirs).await;
+    assert!(
+        !share.contains("Create an invitation link"),
+        "someone who is not the owner was offered sharing: {share}"
+    );
+    assert!(
+        share.contains("Leave this list"),
+        "no way out for a member: {share}"
     );
 }
 

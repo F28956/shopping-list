@@ -6,6 +6,7 @@ mod tests;
 pub mod items;
 pub mod lists;
 pub mod notes;
+pub mod sharing;
 
 use domain::models::user::User;
 
