@@ -511,3 +511,53 @@ async fn bad_item_edits_are_client_errors(
     .await;
     assert_eq!(item["name"], "Apples");
 }
+
+#[rstest]
+#[tokio::test]
+async fn me_is_the_signed_in_person(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+
+    let (status, mine) = send(&app, req("GET", "/api/me", &me(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(mine["sub"], "google-oauth2|me");
+
+    let (status, theirs) = send(&app, req("GET", "/api/me", &them(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(theirs["id"], mine["id"], "two tokens, two people");
+    assert_eq!(theirs["sub"], "google-oauth2|someone-else");
+}
+
+#[rstest]
+#[tokio::test]
+async fn me_needs_a_token(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/me")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Read-only on purpose — see the note on the module.
+#[rstest]
+#[case::edit("PUT")]
+#[case::close_the_account("DELETE")]
+#[tokio::test]
+async fn me_is_not_writable(#[future(awt)] pool: SqlitePool, #[case] method: &str) {
+    let app = app(pool);
+
+    let (status, _) = send(&app, req(method, "/api/me", &me(), Some(json!({})))).await;
+
+    assert_eq!(
+        status,
+        StatusCode::METHOD_NOT_ALLOWED,
+        "a write route exists where none was intended"
+    );
+}

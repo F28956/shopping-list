@@ -756,6 +756,50 @@ mod tests {
         Ok(())
     }
 
+    /// The interaction that keeps profile editing unwired: `find_or_create` runs on
+    /// every authenticated request and coalesces the provider's claims over what is
+    /// stored, so a name a person set for themselves does not survive their next
+    /// request. Whether the provider or the person wins is a decision nobody has
+    /// made; this test is here so that changing the answer breaks something loud.
+    #[rstest]
+    #[tokio::test]
+    async fn a_login_overwrites_a_self_chosen_name(#[future(awt)] pool: SqlitePool) -> Result<()> {
+        let sub = Sub("google-oauth2|self-namer".into());
+        let user = User::find_or_create(
+            &pool,
+            sub.clone(),
+            Some(Name("Robert Smith".into())),
+            Some(Email("robert@example.com".into())),
+        )
+        .await?;
+
+        // they rename themselves
+        let edited = User::update(
+            &pool,
+            user.id,
+            Some(Name("Bob".into())),
+            Some(Email("robert@example.com".into())),
+        )
+        .await?;
+        assert_eq!(edited.name, Some(Name("Bob".into())));
+
+        // ...and the next request arrives with the provider's claims again
+        let after = User::find_or_create(
+            &pool,
+            sub,
+            Some(Name("Robert Smith".into())),
+            Some(Email("robert@example.com".into())),
+        )
+        .await?;
+
+        assert_eq!(
+            after.name,
+            Some(Name("Robert Smith".into())),
+            "the provider's name won, so self-chosen names do not stick"
+        );
+        Ok(())
+    }
+
     // ---------------------------------------------------------------- delete
 
     #[rstest]

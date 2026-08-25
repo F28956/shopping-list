@@ -7,6 +7,7 @@ mod tests;
 
 pub mod items;
 pub mod lists;
+pub mod me;
 pub mod notes;
 pub mod reference;
 
