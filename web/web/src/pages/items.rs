@@ -74,10 +74,14 @@ async fn board(s: &AppState, actor: &Actor, list_id: list::Id) -> Result<Board, 
 /// The part of the page that changes. Every edit re-renders exactly this, so there is
 /// one description of what an item looks like rather than one per operation.
 ///
-/// The add form sits outside it: htmx replaces this element, and a form that is
-/// replaced loses the cursor. Leaving it in place means you can add a whole shop's
-/// worth of items without touching the mouse.
-fn fragment(list_id: list::Id, b: &Board) -> Markup {
+/// One row per item, and it reads as a shopping list: tick box, what it is, what it
+/// is tagged, how much. Everything that *changes* an item — rename, amount, unit,
+/// tags, delete — lives behind the one disclosure at the end, because a list you are
+/// reading in a shop should not be covered in buttons you are not pressing.
+///
+/// `open` is the item whose panel should come back expanded. Acting inside the panel
+/// swaps this whole element, which would otherwise snap it shut mid-edit.
+fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
     let base = format!("/lists/{}", list_id.0);
     html! {
         div id="items" {
@@ -86,82 +90,98 @@ fn fragment(list_id: list::Id, b: &Board) -> Markup {
             } @else {
                 ul class="rows" {
                     @for i in &b.items {
-                        li class=@if i.done_at.is_some() { "done" } @else { "" } {
-                            form class="inline" method="post"
-                                 action={ (base) "/items/" (i.id.0) "/toggle" }
-                                 hx-post={ (base) "/items/" (i.id.0) "/toggle" }
+                        @let on_item = b.tags_by_item.get(&i.id.0);
+                        @let item = format!("{base}/items/{}", i.id.0);
+                        li class=@if i.done_at.is_some() { "item done" } @else { "item" } {
+                            form class="inline" method="post" action={ (item) "/toggle" }
+                                 hx-post={ (item) "/toggle" }
                                  hx-target="#items" hx-swap="outerHTML" {
-                                button class="quiet" title="Tick off" {
+                                button class="tick" title="Tick off" {
                                     @if i.done_at.is_some() { "☑" } @else { "☐" }
                                 }
                             }
-                            span class="grow" { (i.name.0) }
+
+                            span class="grow" {
+                                (i.name.0)
+                                // Tags are shown, not operated, out here: what an item
+                                // is tagged is worth knowing at a glance; changing it
+                                // is not worth a control on every row.
+                                @for t in on_item.into_iter().flatten() {
+                                    span class="chip" {
+                                        @if let Some(e) = &t.emoji { (e.0) " " }
+                                        (t.name.0)
+                                    }
+                                }
+                            }
+
                             span class="amount" {
                                 (trim_amount(i.amount))
                                 @if let Some(u) = i.unit_id.and_then(|u| b.unit_names.get(&u.0)) {
                                     " " (u)
                                 }
                             }
-                            form class="inline" method="post"
-                                 action={ (base) "/items/" (i.id.0) "/delete" }
-                                 hx-post={ (base) "/items/" (i.id.0) "/delete" }
-                                 hx-target="#items" hx-swap="outerHTML" {
-                                button class="quiet" title="Remove" { "×" }
-                            }
-                        }
-                        li class="tagrow" {
-                            @let on_item = b.tags_by_item.get(&i.id.0);
-                            @for t in on_item.into_iter().flatten() {
-                                form class="inline" method="post"
-                                     action={ (base) "/items/" (i.id.0) "/tags/" (t.id.0) "/delete" }
-                                     hx-post={ (base) "/items/" (i.id.0) "/tags/" (t.id.0) "/delete" }
-                                     hx-target="#items" hx-swap="outerHTML" {
-                                    button class="chip" title="Remove tag" {
-                                        @if let Some(e) = &t.emoji { (e.0) " " }
-                                        (t.name.0) " ×"
-                                    }
-                                }
-                            }
-                            details class="edit" {
-                                summary title="Edit" { "✎ edit" }
-                                form class="add" method="post"
-                                     action={ (base) "/items/" (i.id.0) "/edit" }
-                                     hx-post={ (base) "/items/" (i.id.0) "/edit" }
-                                     hx-target="#items" hx-swap="outerHTML" {
-                                    input type="text" name="name" value=(i.name.0)
-                                          required maxlength="128" aria-label="Item name";
-                                    input type="number" name="amount" value=(trim_amount(i.amount))
-                                          min="0" step="any" style="width:5rem" aria-label="Amount";
-                                    select name="unit_id" aria-label="Unit" {
-                                        option value="" selected[i.unit_id.is_none()] { "unit" }
-                                        @for (uid, uname) in &unit_names_sorted(&b.unit_names) {
-                                            option value=(uid)
-                                                   selected[i.unit_id.map(|u| u.0) == Some(*uid)] {
-                                                (uname)
-                                            }
-                                        }
-                                    }
-                                    button { "Save" }
-                                }
-                            }
-                            details {
-                                summary { "+ tag" }
-                                form class="add" method="post"
-                                     action={ (base) "/items/" (i.id.0) "/tags" }
-                                     hx-post={ (base) "/items/" (i.id.0) "/tags" }
-                                     hx-target="#items" hx-swap="outerHTML" {
-                                    select name="tag_id" aria-label="Tag" required {
-                                        @for t in &b.all_tags {
-                                            // only what is not already on it
-                                            @if !on_item.is_some_and(|ts| ts.iter().any(|x| x.id == t.id)) {
-                                                option value=(t.id.0) {
-                                                    @if let Some(e) = &t.emoji { (e.0) " " }
-                                                    (t.name.0)
+
+                            details class="panel" open[open == Some(i.id.0)] {
+                                summary title="Edit" { "⋯" }
+                                div class="panel-body" {
+                                    form class="add" method="post" action={ (item) "/edit" }
+                                         hx-post={ (item) "/edit" }
+                                         hx-target="#items" hx-swap="outerHTML" {
+                                        input type="text" name="name" value=(i.name.0)
+                                              required maxlength="128" aria-label="Item name";
+                                        input type="number" name="amount"
+                                              value=(trim_amount(i.amount))
+                                              min="0" step="any" style="width:5rem"
+                                              aria-label="Amount";
+                                        select name="unit_id" aria-label="Unit" {
+                                            option value="" selected[i.unit_id.is_none()] { "unit" }
+                                            @for (uid, uname) in &unit_names_sorted(&b.unit_names) {
+                                                option value=(uid)
+                                                       selected[i.unit_id.map(|u| u.0) == Some(*uid)] {
+                                                    (uname)
                                                 }
                                             }
                                         }
+                                        button { "Save" }
                                     }
-                                    button { "Add" }
+
+                                    div class="tag-edit" {
+                                        @for t in on_item.into_iter().flatten() {
+                                            form class="inline" method="post"
+                                                 action={ (item) "/tags/" (t.id.0) "/delete" }
+                                                 hx-post={ (item) "/tags/" (t.id.0) "/delete" }
+                                                 hx-target="#items" hx-swap="outerHTML" {
+                                                button class="chip removable" title="Remove tag" {
+                                                    @if let Some(e) = &t.emoji { (e.0) " " }
+                                                    (t.name.0) " ×"
+                                                }
+                                            }
+                                        }
+                                        form class="inline" method="post" action={ (item) "/tags" }
+                                             hx-post={ (item) "/tags" }
+                                             hx-target="#items" hx-swap="outerHTML" {
+                                            select name="tag_id" aria-label="Tag" required {
+                                                option value="" disabled selected { "+ tag" }
+                                                @for t in &b.all_tags {
+                                                    // only what is not already on it
+                                                    @if !on_item.is_some_and(|ts| ts.iter().any(|x| x.id == t.id)) {
+                                                        option value=(t.id.0) {
+                                                            @if let Some(e) = &t.emoji { (e.0) " " }
+                                                            (t.name.0)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            button { "Add" }
+                                        }
+                                    }
+
+                                    form class="inline" method="post" action={ (item) "/delete" }
+                                         hx-post={ (item) "/delete" }
+                                         hx-target="#items" hx-swap="outerHTML"
+                                         hx-confirm={ "Remove " (i.name.0) "?" } {
+                                        button class="danger" { "Remove item" }
+                                    }
                                 }
                             }
                         }
@@ -192,7 +212,7 @@ pub async fn show(
             p { a href="/" { "← all lists" } }
             h2 style="font-size:1.1rem;margin:.5rem 0 1rem" { (list.name.0) }
 
-            (fragment(list.id, &b))
+            (fragment(list.id, &b, None))
 
             form class="add" method="post" action={ "/lists/" (list.id.0) "/items" }
                  hx-post={ "/lists/" (list.id.0) "/items" }
@@ -274,7 +294,7 @@ pub async fn create(
     )
     .await?;
 
-    swap(&s, &actor, &headers, list::Id(id)).await
+    swap(&s, &actor, &headers, list::Id(id), None).await
 }
 
 /// One button that flips whichever way the item currently is — a browser form cannot
@@ -291,7 +311,7 @@ pub async fn toggle(
     let item = items::get(&s.ctx, &actor, item::Id(item_id)).await?;
     items::set_done(&s.ctx, &actor, item.id, item.done_at.is_none()).await?;
 
-    swap(&s, &actor, &headers, list::Id(list_id)).await
+    swap(&s, &actor, &headers, list::Id(list_id), None).await
 }
 
 pub async fn delete(
@@ -302,7 +322,7 @@ pub async fn delete(
 ) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     items::delete(&s.ctx, &actor, item::Id(item_id)).await?;
-    swap(&s, &actor, &headers, list::Id(list_id)).await
+    swap(&s, &actor, &headers, list::Id(list_id), None).await
 }
 
 #[derive(serde::Deserialize)]
@@ -321,7 +341,7 @@ pub async fn attach_tag(
 ) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     tags::attach(&s.ctx, &actor, item::Id(item_id), tag::Id(form.tag_id)).await?;
-    swap(&s, &actor, &headers, list::Id(list_id)).await
+    swap(&s, &actor, &headers, list::Id(list_id), Some(item_id)).await
 }
 
 pub async fn detach_tag(
@@ -332,7 +352,7 @@ pub async fn detach_tag(
 ) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     tags::detach(&s.ctx, &actor, item::Id(item_id), tag::Id(tag_id)).await?;
-    swap(&s, &actor, &headers, list::Id(list_id)).await
+    swap(&s, &actor, &headers, list::Id(list_id), Some(item_id)).await
 }
 
 /// Edits what a person typed: name, amount, unit. Not the list it is on -- moving an
@@ -363,20 +383,25 @@ pub async fn edit(
     )
     .await?;
 
-    swap(&s, &actor, &headers, list::Id(list_id)).await
+    swap(&s, &actor, &headers, list::Id(list_id), Some(item_id)).await
 }
 
 /// Re-renders the item board for htmx, or sends a browser back to the page.
+/// Re-renders the item board for htmx, or sends a browser back to the page.
+///
+/// `open` keeps the panel the person is working in from closing under them: acting
+/// inside it swaps the whole board, so the new markup has to say it was open.
 async fn swap(
     s: &AppState,
     actor: &Actor,
     headers: &HeaderMap,
     list_id: list::Id,
+    open: Option<i64>,
 ) -> Result<Response, AppError> {
     let to = format!("/lists/{}", list_id.0);
     if crate::htmx::is_htmx(headers) {
         let b = board(s, actor, list_id).await?;
-        Ok(swap_or_redirect(headers, fragment(list_id, &b), &to))
+        Ok(swap_or_redirect(headers, fragment(list_id, &b, open), &to))
     } else {
         Ok(swap_or_redirect(headers, maud::html! {}, &to))
     }

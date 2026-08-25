@@ -110,6 +110,21 @@ async fn post(app: &axum::Router, uri: &str, cookie: &str, form: &str) -> Status
     res.status()
 }
 
+/// The first tag the picker actually offers, skipping the placeholder option.
+fn first_tag_option(html: &str) -> Option<i64> {
+    let select = html.find("name=\"tag_id\"")?;
+    html[select..]
+        .match_indices("value=\"")
+        .map(|(at, _)| {
+            html[select + at + 7..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+        })
+        .find(|v| !v.is_empty())
+        .and_then(|v| v.parse().ok())
+}
+
 /// Pulls the id out of the first `/lists/{id}` link on the page.
 fn first_list_id(html: &str) -> i64 {
     let at = html.find("/lists/").expect("no list link on the page");
@@ -205,8 +220,8 @@ async fn lists_and_items_render_and_change(#[future(awt)] pool: SqlitePool) {
     let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
     assert!(body.contains("☑"), "ticking it off did not show: {body}");
     assert!(
-        body.contains("class=\"done\""),
-        "the row is not struck through"
+        body.contains("item done"),
+        "the row is not marked done: {body}"
     );
 
     // and back again
@@ -339,14 +354,9 @@ async fn tagging_an_item_from_the_page(
         .unwrap();
     assert!(body.contains("+ tag"), "no tag picker on the page: {body}");
 
-    // pick whatever the first option offers
-    let opt = body.find("name=\"tag_id\"").expect("no tag select");
-    let tag_id: i64 = body[body[opt..].find("value=\"").unwrap() + opt + 7..]
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect::<String>()
-        .parse()
-        .expect("no tag options -- are tags seeded?");
+    // pick the first option that carries an id; the select leads with a disabled
+    // "+ tag" placeholder whose value is empty
+    let tag_id = first_tag_option(&body).expect("no tag options -- are tags seeded?");
 
     assert_eq!(
         post(
@@ -726,5 +736,79 @@ async fn the_page_serves_its_own_htmx(#[future(awt)] pool: SqlitePool) {
         js.len() > 10_000,
         "htmx looks truncated: {} bytes",
         js.len()
+    );
+}
+
+/// Acting inside the panel swaps the whole board, so the markup that comes back has
+/// to say the panel was open — otherwise it snaps shut under the person using it.
+#[rstest]
+#[tokio::test]
+async fn the_panel_stays_open_while_you_work_in_it(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|panel").await;
+    post(&app, "/lists", &cookie, "name=Bakery").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &cookie,
+        "name=Bagels&amount=1&unit_id=",
+    )
+    .await;
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    let item_id: i64 = body[body.find("/items/").unwrap() + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap();
+    assert!(
+        !body.contains("<details class=\"panel\" open>"),
+        "the panel starts closed"
+    );
+
+    // editing from inside the panel
+    let (_, body) = post_htmx(
+        &app,
+        &format!("/lists/{list_id}/items/{item_id}/edit"),
+        &cookie,
+        "name=Sourdough&amount=1&unit_id=",
+    )
+    .await;
+    assert!(body.contains("Sourdough"));
+    assert!(
+        body.contains("<details class=\"panel\" open>"),
+        "the panel closed under the edit: {body}"
+    );
+
+    // tagging from inside the panel
+    let tag_id = first_tag_option(&body).expect("no tag options");
+    let (_, body) = post_htmx(
+        &app,
+        &format!("/lists/{list_id}/items/{item_id}/tags"),
+        &cookie,
+        &format!("tag_id={tag_id}"),
+    )
+    .await;
+    assert!(
+        body.contains("<details class=\"panel\" open>"),
+        "the panel closed under the tag add: {body}"
+    );
+
+    // ticking off is done from the collapsed row, so it must NOT open anything
+    let (_, body) = post_htmx(
+        &app,
+        &format!("/lists/{list_id}/items/{item_id}/toggle"),
+        &cookie,
+        "",
+    )
+    .await;
+    assert!(
+        !body.contains("<details class=\"panel\" open>"),
+        "ticking an item opened its panel: {body}"
     );
 }

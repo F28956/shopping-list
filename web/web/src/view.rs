@@ -17,14 +17,14 @@ header { display: flex; justify-content: space-between; align-items: baseline; g
 header .who { font-size: .8rem; opacity: .7; }
 nav { display: flex; gap: 1rem; font-size: .85rem; margin-bottom: 1.2rem; }
 ul.rows { list-style: none; padding: 0; margin: 0; }
-ul.rows li { display: flex; align-items: center; gap: .6rem; padding: .55rem 0;
-             border-bottom: 1px solid var(--line); }
+ul.rows li { display: flex; align-items: center; gap: .5rem; padding: .55rem 0;
+             border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 ul.rows li .grow { flex: 1; min-width: 0; }
 ul.rows a { color: inherit; }
 .amount { opacity: .6; font-variant-numeric: tabular-nums; font-size: .85rem; white-space: nowrap; }
 .done .grow { opacity: .45; text-decoration: line-through; }
 form.inline { display: contents; }
-form.add { display: flex; gap: .4rem; margin: 1.2rem 0; flex-wrap: wrap; }
+form.add { display: flex; gap: .4rem; margin: 1.2rem 0; flex-wrap: wrap; align-items: center; }
 form.add input[type=text] { flex: 1 1 8rem; min-width: 0; }
 input, select, button { font: inherit; padding: .4rem .5rem; border-radius: 4px;
                         border: 1px solid var(--line); background: transparent; color: inherit; }
@@ -32,6 +32,38 @@ button { cursor: pointer; }
 button.primary { border-color: currentColor; }
 button.quiet { border: 0; opacity: .5; padding: .2rem .35rem; }
 button.quiet:hover { opacity: 1; }
+button.tick { border: 0; padding: 0; font-size: 1.1rem; line-height: 1; opacity: .75; }
+button.tick:hover { opacity: 1; }
+button.danger { border-color: color-mix(in oklab, #c0392b 60%, var(--line)); opacity: .85; }
+button.danger:hover { opacity: 1; }
+
+/* Tags read as labels in the row, and become buttons only inside the panel. */
+.chip { display: inline-block; font-size: .72rem; padding: .05rem .45rem; margin-left: .35rem;
+        border: 1px solid var(--line); border-radius: 999px; opacity: .75;
+        vertical-align: .05em; white-space: nowrap; }
+.done .chip { opacity: .4; }
+button.chip { cursor: pointer; margin: 0; }
+button.chip.removable:hover { opacity: 1; border-color: currentColor; }
+
+/* One disclosure per item holds everything that changes it. */
+details.panel { margin-left: auto; }
+details.panel > summary { cursor: pointer; list-style: none; opacity: .45;
+                          padding: 0 .3rem; font-size: 1rem; line-height: 1; }
+details.panel > summary::-webkit-details-marker { display: none; }
+details.panel[open] > summary, details.panel > summary:hover { opacity: 1; }
+.panel-body { flex-basis: 100%; margin: .6rem 0 .2rem; padding: .7rem .8rem;
+              border: 1px solid var(--line); border-radius: 6px;
+              display: flex; flex-direction: column; gap: .6rem; }
+.panel-body form.add { margin: 0; }
+.tag-edit { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
+.tag-edit select { font-size: .8rem; padding: .2rem .35rem; }
+.tag-edit button { font-size: .8rem; padding: .2rem .45rem; }
+
+/* The list index keeps its own small rename disclosure. */
+details.edit { font-size: .8rem; opacity: .55; }
+details.edit[open] { opacity: 1; flex-basis: 100%; }
+details.edit summary { cursor: pointer; list-style: none; }
+details.edit summary::-webkit-details-marker { display: none; }
 .empty { opacity: .6; padding: 2rem 0; text-align: center; }
 "#;
 
