@@ -28,7 +28,7 @@ one. In the [Google Cloud console](https://console.cloud.google.com/apis/credent
 for the same project:
 
 - **Create credentials → OAuth client ID → iOS**
-- Bundle ID: `com.rimantas.shoppinglist` (match `PRODUCT_BUNDLE_IDENTIFIER` in
+- Bundle ID: `com.cernauskas.shoppinglist` (match `PRODUCT_BUNDLE_IDENTIFIER` in
   `project.yml` if you change it)
 
 That gives you a client id and its *reversed* form. Put both in `ios/Config.xcconfig`
