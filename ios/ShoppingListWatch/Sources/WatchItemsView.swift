@@ -49,19 +49,20 @@ struct WatchItemsView: View {
         .task { await load() }
     }
 
-    /// Here, unlike on the phone, the tick mark stays.
+    /// A row says what it says on the phone: struck through, greyed, and under the
+    /// done heading. Three signals, none of them a control -- a box you can tick is
+    /// the row's job, and drawing one only repeats what tapping already does.
     ///
-    /// A phone row can afford strikethrough and grey and a section heading; at this
-    /// size the strikethrough is what a scratch on the glass looks like, and the mark
-    /// is the only unambiguous signal that the tap registered.
+    /// The dimming while a tap is in flight is not decoration here. It is the only
+    /// thing between the tap and the server's answer, and on a wrist that gap is the
+    /// phone's connection plus the server's.
     private func row(_ item: Item) -> some View {
         Button {
             Task { await toggle(item) }
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isDone ? Color.accentColor : .secondary)
                 Text(item.name)
+                    .strikethrough(item.isDone)
                     .foregroundStyle(item.isDone ? .secondary : .primary)
                 Spacer(minLength: 4)
                 if let measure = item.measure(units: units) {
