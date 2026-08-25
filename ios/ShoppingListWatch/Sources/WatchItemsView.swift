@@ -39,11 +39,21 @@ struct WatchItemsView: View {
                     ForEach(outstanding) { row($0) }
 
                     if !done.isEmpty {
-                        Section("\(done.count) done") {
+                        Section {
                             ForEach(done) { row($0) }
+                        } header: {
+                            Text("\(done.count) done")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .textCase(nil)
                         }
                     }
                 }
+                // Plain rather than the default: the inset style spends a margin on
+                // each side of every row, and on 208 points of width that margin is
+                // the difference between four rows and six.
+                .listStyle(.plain)
+                .environment(\.defaultMinListRowHeight, Self.rowHeight)
             }
         }
         .navigationTitle(list.name)
@@ -95,27 +105,46 @@ struct WatchItemsView: View {
     /// The dimming while a tap is in flight is not decoration here. It is the only
     /// thing between the tap and the server's answer, and on a wrist that gap is the
     /// phone's connection plus the server's.
+    /// How tall a row is allowed to be.
+    ///
+    /// Chosen against the screen rather than by feel: a 46mm watch leaves about 204
+    /// points below the title, so 34 fits six rows and 44 fits four. It does not go
+    /// lower than this, and the reason is particular to this screen -- the row *is*
+    /// the tap target, tapping is the only thing this app does, and a mis-tap crosses
+    /// off the wrong item, which you discover at home. A seventh row is not worth
+    /// that.
+    private static let rowHeight: CGFloat = 34
+
     private func row(_ item: Item) -> some View {
         Button {
             Task { await toggle(item) }
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Text(item.name)
+                    .font(.footnote)
+                    // Two lines rather than one: a truncated name on a shopping list
+                    // is the one thing the row exists to tell you.
+                    .lineLimit(2)
                     .strikethrough(item.isDone)
                     .foregroundStyle(item.isDone ? .secondary : .primary)
-                Spacer(minLength: 4)
+                Spacer(minLength: 2)
                 if let measure = item.measure(units: units) {
                     Text(measure)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        // Never squeezed to make room for a long name: the amount is
+                        // short and the name is the part that can afford to wrap.
+                        .layoutPriority(1)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .opacity(inFlight.contains(item.id) ? 0.4 : 1)
         }
         .buttonStyle(.plain)
         .disabled(inFlight.contains(item.id))
+        .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
     }
 
     private func toggle(_ item: Item) async {
