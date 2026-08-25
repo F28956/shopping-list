@@ -64,7 +64,7 @@ impl FromRequestParts<AppState> for CurrentUser {
 
                 decode::<Claims>(token, &DecodingKey::from_jwk(&jwk)?, &v)?.claims
             }
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             AuthMode::TrustTheToken => Claims {
                 sub: token.to_string(),
                 email: None,

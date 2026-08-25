@@ -27,6 +27,11 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # were being silently ignored — and printing a warning on every cargo invocation to
 # say so. They live in ../Cargo.toml.
 
+[features]
+# Exposes AuthMode::TrustTheToken so other crates can drive this router in tests.
+# Enabled from dev-dependencies only; a release build has no such variant.
+test-support = []
+
 [dev-dependencies]
 # drives the real router in-process, without binding a port
 tower = { version = "0.5", features = ["util"] }

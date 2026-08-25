@@ -19,6 +19,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use api::jwks::Jwks;
 use api::state::{AppState as ApiState, AuthMode};
 use domain::service::Ctx;
+use web::sessions::SqliteSessions;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -43,11 +44,13 @@ async fn main() -> anyhow::Result<()> {
             client_id: std::env::var("GOOGLE_CLIENT_ID")?,
         },
     };
-    let web_state = web::state(Ctx::new(db.clone())).await?;
+    let web_ctx = Ctx::new(db.clone());
+    let sessions = web::session_store(&web_ctx).await?;
+    let web_state = web::state(web_ctx).await?;
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     tracing::info!("listening on {}", listener.local_addr()?);
-    axum::serve(listener, app(api_state, web_state)).await?;
+    axum::serve(listener, app(api_state, web_state, sessions)).await?;
     Ok(())
 }
 
@@ -64,11 +67,11 @@ async fn main() -> anyhow::Result<()> {
 /// * `CatchPanicLayer` wraps both, so a panic in one transport is a 500 on the
 ///   request that caused it rather than an outage for the others. That is why
 ///   `panic = "abort"` is deliberately absent from the release profile.
-fn app(api_state: ApiState, web_state: web::AppState) -> Router {
+fn app(api_state: ApiState, web_state: web::AppState, sessions: SqliteSessions) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .nest("/api", api::router().with_state(api_state))
-        .merge(web::router(web_state))
+        .merge(web::router(web_state, sessions))
         .layer(CatchPanicLayer::new())
         .layer(TraceLayer::new_for_http())
 }
@@ -88,4 +91,112 @@ async fn open_database() -> anyhow::Result<SqlitePool> {
         .foreign_keys(true);
 
     Ok(SqlitePool::connect_with(opts).await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use domain::models::pool;
+    use http_body_util::BodyExt;
+    use rstest::rstest;
+    use sqlx::SqlitePool;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    /// The real composed router — web routes, API nested under /api, both layers on.
+    ///
+    /// Building it here rather than testing the two routers separately is the whole
+    /// point: the boundary this exercises only exists once they share an origin.
+    async fn composed(pool: SqlitePool) -> Router {
+        let ctx = Ctx::new(pool);
+        let api_state = ApiState {
+            ctx: ctx.clone(),
+            auth: AuthMode::TrustTheToken,
+        };
+        let sessions = web::session_store(&ctx).await.expect("session table");
+        // The OIDC discovery call is a network round trip, so the web half is
+        // represented by its session layer alone. That is the half this test is about.
+        Router::new()
+            .nest("/api", api::router().with_state(api_state))
+            .layer(tower_sessions::SessionManagerLayer::new(sessions))
+            .layer(CatchPanicLayer::new())
+    }
+
+    async fn status(app: &Router, req: Request<Body>) -> StatusCode {
+        let res = app.clone().oneshot(req).await.expect("router panicked");
+        let status = res.status();
+        let _ = res.into_body().collect().await;
+        status
+    }
+
+    /// D2. On a shared origin the browser attaches its session cookie to /api/* as
+    /// well, so if a cookie could authenticate an API route, every API route would be
+    /// reachable from any site that links to it. The API reads bearer tokens and
+    /// nothing else.
+    ///
+    /// This is deliberately tested through the *composed* router: mounting an API
+    /// route under the session layer is a one-line mistake with no visible symptom —
+    /// the endpoint keeps working, it just also works for everyone else.
+    #[rstest]
+    #[case::a_plausible_session("id=abcdefghijklmnopqrstuvwxyz123456")]
+    #[case::several_cookies("other=1; id=abcdefghijklmnopqrstuvwxyz123456; theme=dark")]
+    #[tokio::test]
+    async fn a_cookie_never_authenticates_the_api(
+        #[future(awt)] pool: SqlitePool,
+        #[case] cookie: &str,
+    ) {
+        let app = composed(pool).await;
+
+        let req = Request::builder()
+            .uri("/api/notes?order_by=id")
+            .method("GET")
+            .header("cookie", cookie)
+            .body(Body::empty())
+            .unwrap();
+
+        assert_eq!(
+            status(&app, req).await,
+            StatusCode::UNAUTHORIZED,
+            "a session cookie authenticated an API route"
+        );
+    }
+
+    /// The other half of the same rule: a bearer token still works when the session
+    /// layer is in the stack, so the boundary is not simply rejecting everything.
+    #[rstest]
+    #[tokio::test]
+    async fn a_bearer_token_still_works_alongside_the_session_layer(
+        #[future(awt)] pool: SqlitePool,
+    ) {
+        let app = composed(pool).await;
+
+        let req = Request::builder()
+            .uri("/api/notes?order_by=id")
+            .method("GET")
+            .header("authorization", "Bearer google-oauth2|someone")
+            .body(Body::empty())
+            .unwrap();
+
+        assert_eq!(status(&app, req).await, StatusCode::OK);
+    }
+
+    /// A cookie alongside a valid bearer token must not change the answer either —
+    /// the cookie is simply not consulted.
+    #[rstest]
+    #[tokio::test]
+    async fn a_cookie_is_ignored_when_a_token_is_present(#[future(awt)] pool: SqlitePool) {
+        let app = composed(pool).await;
+
+        let req = Request::builder()
+            .uri("/api/notes?order_by=id")
+            .method("GET")
+            .header("authorization", "Bearer google-oauth2|someone")
+            .header("cookie", "id=abcdefghijklmnopqrstuvwxyz123456")
+            .body(Body::empty())
+            .unwrap();
+
+        assert_eq!(status(&app, req).await, StatusCode::OK);
+    }
 }

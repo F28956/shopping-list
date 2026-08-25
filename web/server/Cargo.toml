@@ -17,3 +17,11 @@ tokio = { version = "1.53.1", features = ["full"] }
 tower-http = { version = "0.7.0", features = ["trace", "catch-panic"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tower-sessions = "0.15.0"
+
+[dev-dependencies]
+api = { path = "../api", features = ["test-support"] }
+domain = { path = "../domain", features = ["test-support"] }
+http-body-util = "0.1"
+rstest = "0.26.1"
+tower = { version = "0.5", features = ["util"] }

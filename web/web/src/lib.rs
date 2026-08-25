@@ -21,10 +21,11 @@ use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
 };
 use std::sync::Arc;
-use tower_sessions::{Expiry, MemoryStore, Session, SessionManagerLayer, cookie::SameSite};
+use tower_sessions::{Expiry, Session, SessionManagerLayer, cookie::SameSite};
 
 pub mod auth;
 pub mod error;
+pub mod sessions;
 pub use error::AppError;
 
 pub mod state;
@@ -212,16 +213,29 @@ pub async fn state(ctx: Ctx) -> anyhow::Result<AppState> {
     })
 }
 
+/// Creates the session table, and returns the store to hand to [`router`].
+///
+/// Sessions live in the same SQLite file as everything else: one fewer thing to run,
+/// and a restart no longer signs everybody out — which is what `MemoryStore` did on
+/// every deploy and every `cargo run`.
+pub async fn session_store(ctx: &Ctx) -> anyhow::Result<sessions::SqliteSessions> {
+    let store = sessions::SqliteSessions::new(ctx);
+    store.migrate().await?;
+    Ok(store)
+}
+
 /// The browser-facing routes, with the session layer already applied.
 ///
 /// The layer is attached here rather than by the caller so that it cannot be applied
 /// to anything else by accident: a router that has been merged with the API's is no
 /// longer safe to wrap in sessions, and this is the last point at which that is
 /// still obvious.
-pub fn router(state: AppState) -> Router {
-    let session_layer = SessionManagerLayer::new(MemoryStore::default())
+pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
+    let session_layer = SessionManagerLayer::new(sessions)
         .with_secure(false)
         .with_http_only(true)
+        // Lax keeps the cookie off cross-site non-navigation requests. It is depth
+        // behind the real rule, not the rule itself: /api never reads cookies at all.
         .with_same_site(SameSite::Lax)
         .with_expiry(Expiry::OnInactivity(
             tower_sessions::cookie::time::Duration::days(7),

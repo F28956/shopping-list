@@ -16,7 +16,12 @@ pub enum AuthMode {
     /// published keys.
     Google { jwks: Arc<Jwks>, client_id: String },
     /// Tests only: the bearer token is taken to be the subject, unverified.
-    #[cfg(test)]
+    ///
+    /// Behind a feature rather than `#[cfg(test)]` so that other crates can drive
+    /// this router in *their* tests — the composed router in `server` is where the
+    /// cookie-versus-bearer boundary actually has to hold. The feature is enabled
+    /// only from dev-dependencies, so a release build does not contain this variant.
+    #[cfg(any(test, feature = "test-support"))]
     TrustTheToken,
 }
 
