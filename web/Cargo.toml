@@ -1,5 +1,5 @@
 [workspace]
-members = ["domain", "api", "web"]
+members = ["domain", "api", "web", "server"]
 resolver = "2"
 
 [profile.release]

@@ -1,0 +1,26 @@
+//! The HTTP API: bearer-authenticated JSON, for clients that are not this server's
+//! own web UI.
+//!
+//! Exports a router rather than serving one. Which port it lands on, what it is
+//! nested under and which layers wrap it are the `server` crate's decisions — this
+//! crate only knows how to translate HTTP into service calls.
+
+pub mod auth;
+pub mod error;
+pub mod jwks;
+pub mod routes;
+pub mod state;
+
+use axum::Router;
+
+use crate::state::AppState;
+
+/// The API's routes, relative to wherever they are nested.
+///
+/// The caller must NOT wrap this in a session layer. Every route here
+/// authenticates from `Authorization: Bearer` and nothing else, and on a shared
+/// origin the browser will attach its session cookie to these paths too — see
+/// [`auth::CurrentUser`].
+pub fn router() -> Router<AppState> {
+    Router::new().nest("/notes", routes::notes::router())
+}
