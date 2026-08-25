@@ -61,9 +61,13 @@ actor API {
         return page.items
     }
 
-    func units() async throws -> [Int64: String] {
+    /// Every unit, in name order.
+    ///
+    /// An array rather than a lookup because the editor's picker needs an order and a
+    /// dictionary has none. Rows still want the lookup, and the screen builds it.
+    func units() async throws -> [Unit] {
         let page: Page<Unit> = try await get("/api/units?order_by=name&size=200")
-        return Dictionary(uniqueKeysWithValues: page.items.map { ($0.id, $0.name) })
+        return page.items
     }
 
     // MARK: - Writing
@@ -80,6 +84,31 @@ actor API {
     func setDone(_ item: Item, on list: List, done: Bool) async throws {
         let path = "/api/lists/\(list.id)/items/\(item.id)/done"
         _ = try await send(done ? "POST" : "DELETE", path, nil)
+    }
+
+    /// Corrects an item. The whole item goes back, because the route is a PUT.
+    func update(
+        _ item: Item,
+        on list: List,
+        name: String,
+        amount: Double,
+        unitID: Int64?
+    ) async throws {
+        // NSNull rather than a missing key: leaving `unit_id` out means "no opinion"
+        // to some servers and this one takes it as null anyway, but a nil Optional put
+        // straight into the dictionary makes JSONSerialization throw, and `send` drops
+        // a body it cannot encode without a word. Clearing a unit has to be explicit.
+        let body: [String: Any] = [
+            "name": name,
+            "amount": amount,
+            "unit_id": unitID.map { $0 as Any } ?? NSNull(),
+        ]
+        _ = try await send("PUT", "/api/lists/\(list.id)/items/\(item.id)", body)
+    }
+
+    /// Empties the trolley: everything ticked off, in one request.
+    func clearDone(on list: List) async throws {
+        _ = try await send("DELETE", "/api/lists/\(list.id)/items/done", nil)
     }
 
     func delete(_ item: Item, on list: List) async throws {

@@ -21,6 +21,9 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list).post(create))
+        // Before the `{item_id}` route only for readability; matchit prefers the
+        // static segment either way, so `done` can never be read as an item id.
+        .route("/done", axum::routing::delete(clear_done))
         .route("/{item_id}", get(read).put(update).delete(delete))
         .route("/{item_id}/done", post(tick).delete(untick))
         .route("/{item_id}/tags", get(item_tags).post(attach_tag))
@@ -149,6 +152,26 @@ async fn delete(
 ) -> Result<StatusCode, AppError> {
     items::delete(&state.ctx, &user.actor(), item::Id(item_id)).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// How many rows a bulk operation took with it.
+#[derive(Debug, serde::Serialize)]
+pub struct Cleared {
+    pub cleared: u64,
+}
+
+/// Clears everything already ticked off, in one request.
+///
+/// A route rather than the client deleting each row: emptying the trolley is one
+/// intention, and N requests for it can half-succeed, leaving a list in a state the
+/// person never asked for.
+async fn clear_done(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(list_id): Path<i64>,
+) -> Result<Json<Cleared>, AppError> {
+    let cleared = items::clear_done(&state.ctx, &user.actor(), list::Id(list_id)).await?;
+    Ok(Json(Cleared { cleared }))
 }
 
 /// What is on this item.

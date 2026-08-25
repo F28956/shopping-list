@@ -1,0 +1,50 @@
+import Foundation
+
+extension Double {
+    /// "2" rather than "2.0", "1.5" left as it is.
+    ///
+    /// Counts are whole far more often than not, and a trailing ".0" reads as a
+    /// measurement rather than a count. The magnitude guard is not decoration:
+    /// `Int(_:)` traps on NaN, on infinity, and on anything past `Int.max`, and the
+    /// amount arrives from the network.
+    var asAmount: String {
+        guard self == rounded(), abs(self) < 1e15 else { return String(self) }
+        return String(Int(self))
+    }
+}
+
+/// What the item editor has been typed into, and whether it can be saved.
+///
+/// Separate from the view because this is the part with rules in it. A view is
+/// awkward to test and this is the half that decides whether the phone sends the
+/// server something it will refuse.
+struct ItemDraft: Equatable {
+    var name: String
+    var amount: String
+    var unitID: Int64?
+
+    init(item: Item) {
+        name = item.name
+        amount = item.amount.asAmount
+        unitID = item.unitID
+    }
+
+    /// The values to send, or nil when what is typed is not a saveable item.
+    ///
+    /// nil is also what greys out Save, so there is one rule rather than two that can
+    /// drift apart — the button cannot offer to send something the server refuses.
+    var validated: (name: String, amount: Double, unitID: Int64?)? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A comma is the decimal separator across most of Europe and the decimal pad
+        // offers whichever the phone is set to, so both have to be read. `Double(_:)`
+        // only accepts a full stop.
+        let typed = amount
+            .trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: ",", with: ".")
+
+        guard !trimmed.isEmpty, let quantity = Double(typed), quantity > 0, quantity.isFinite
+        else { return nil }
+
+        return (trimmed, quantity, unitID)
+    }
+}

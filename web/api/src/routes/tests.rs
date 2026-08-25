@@ -199,6 +199,7 @@ async fn another_persons_list_and_items_are_invisible(#[future(awt)] pool: Sqlit
             format!("/api/lists/{list_id}/items"),
             Some(json!({"name": "smuggled"})),
         ),
+        ("DELETE", format!("/api/lists/{list_id}/items/done"), None),
         ("GET", format!("/api/lists/{list_id}/items/{item_id}"), None),
         (
             "PUT",
@@ -470,6 +471,90 @@ async fn editing_an_item(#[future(awt)] pool: SqlitePool) {
         "editing must not un-tick the item"
     );
     assert_eq!(edited["list_id"], list_id, "an edit is not a move");
+}
+
+/// Clearing takes the ticked-off rows and nothing else.
+#[rstest]
+#[tokio::test]
+async fn clearing_done_items(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, done_id) = a_list_with_an_item(&app).await;
+    let items = format!("/api/lists/{list_id}/items");
+
+    // a second row, left outstanding, so we can see what clearing spares
+    let (status, kept) = send(
+        &app,
+        req("POST", &items, &me(), Some(json!({"name": "Pears"}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let kept_id = kept["id"].as_i64().unwrap();
+
+    send(
+        &app,
+        req("POST", &format!("{items}/{done_id}/done"), &me(), None),
+    )
+    .await;
+
+    let (status, cleared) = send(&app, req("DELETE", &format!("{items}/done"), &me(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cleared["cleared"], 1, "one row was ticked off");
+
+    let (_, page) = send(&app, req("GET", &format!("{items}?order_by=id"), &me(), None)).await;
+    let left: Vec<i64> = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(left, vec![kept_id], "the outstanding row is untouched");
+
+    // Nothing ticked off is not an error -- the button is there either way.
+    let (status, cleared) = send(&app, req("DELETE", &format!("{items}/done"), &me(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cleared["cleared"], 0);
+}
+
+/// `done` is a route, not an item id: a viewer must not get past it either.
+#[rstest]
+#[tokio::test]
+async fn a_stranger_cannot_clear_my_done_items(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, item_id) = a_list_with_an_item(&app).await;
+    send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{list_id}/items/{item_id}/done"),
+            &me(),
+            None,
+        ),
+    )
+    .await;
+
+    let (status, _) = send(
+        &app,
+        req(
+            "DELETE",
+            &format!("/api/lists/{list_id}/items/done"),
+            &them(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a hidden list stays hidden");
+
+    let (_, page) = send(
+        &app,
+        req(
+            "GET",
+            &format!("/api/lists/{list_id}/items?order_by=id"),
+            &me(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(page["total"], 1, "the row is still there");
 }
 
 #[rstest]

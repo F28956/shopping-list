@@ -2,17 +2,19 @@ import SwiftUI
 
 /// What is on one list: the screen this app exists for.
 ///
-/// Adding, ticking off, and removing. Editing, tags and sharing are deliberately
-/// absent — a phone in a shop is for the two things you actually do standing in one,
-/// and every control that is not one of those is in the way.
+/// Adding, ticking off, correcting and clearing. Tags and sharing are deliberately
+/// absent — a phone in a shop is for the handful of things you actually do standing
+/// in one, and every control that is not one of those is in the way.
 struct ItemsView: View {
     let api: API
     let list: List
     @Environment(Identity.self) private var identity
 
     @State private var items: [Item] = []
-    @State private var units: [Int64: String] = [:]
+    @State private var units: [Unit] = []
     @State private var line = ""
+    @State private var editing: Item?
+    @State private var confirmingClear = false
     @State private var error: String?
     @State private var loaded = false
     @FocusState private var typing: Bool
@@ -20,11 +22,16 @@ struct ItemsView: View {
     private var outstanding: [Item] { items.filter { !$0.isDone } }
     private var done: [Item] { items.filter(\.isDone) }
 
+    /// Rows print a unit, the editor picks one. Built here rather than fetched twice.
+    private var unitNames: [Int64: String] {
+        Dictionary(uniqueKeysWithValues: units.map { ($0.id, $0.name) })
+    }
+
     var body: some View {
         SwiftUI.List {
             Section {
                 HStack {
-                    TextField("Add an item — try 2 kg apples", text: $line)
+                    TextField("Add an item", text: $line)
                         .focused($typing)
                         .submitLabel(.done)
                         .onSubmit { Task { await add() } }
@@ -46,19 +53,20 @@ struct ItemsView: View {
                 ForEach(outstanding) { item in
                     row(item)
                 }
-                .onDelete { offsets in
-                    Task { await remove(offsets.map { outstanding[$0] }) }
-                }
             }
 
             // What is already in the trolley, out of the way of what is not.
             if !done.isEmpty {
-                Section("\(done.count) done") {
+                Section {
                     ForEach(done) { item in
                         row(item)
                     }
-                    .onDelete { offsets in
-                        Task { await remove(offsets.map { done[$0] }) }
+                } header: {
+                    HStack {
+                        Text("\(done.count) done")
+                        Spacer()
+                        Button("Clear", role: .destructive) { confirmingClear = true }
+                            .textCase(nil)
                     }
                 }
             }
@@ -67,6 +75,23 @@ struct ItemsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
         .task { await load() }
+        .sheet(item: $editing) { item in
+            ItemEditor(item: item, units: units) { name, amount, unitID in
+                await attempt {
+                    try await api.update(item, on: list, name: name, amount: amount, unitID: unitID)
+                }
+            }
+        }
+        // Asked rather than assumed: this is the one control on the screen that takes
+        // several rows at once, and a mis-tap cannot be undone from here.
+        .confirmationDialog(
+            "Clear \(done.count) done \(done.count == 1 ? "item" : "items")?",
+            isPresented: $confirmingClear,
+            titleVisibility: .visible
+        ) {
+            Button("Clear", role: .destructive) { Task { await clearDone() } }
+            Button("Cancel", role: .cancel) {}
+        }
         .alert("Something went wrong", isPresented: .constant(error != nil)) {
             Button("OK") { error = nil }
         } message: {
@@ -79,13 +104,11 @@ struct ItemsView: View {
             Task { await toggle(item) }
         } label: {
             HStack {
-                Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isDone ? .secondary : .primary)
                 Text(item.name)
                     .strikethrough(item.isDone)
                     .foregroundStyle(item.isDone ? .secondary : .primary)
                 Spacer()
-                if let measure = item.measure(units: units) {
+                if let measure = item.measure(units: unitNames) {
                     Text(measure)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -95,6 +118,23 @@ struct ItemsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .swipeActions(edge: .trailing) {
+            // Delete first, so it is what a full swipe commits to: that was the whole
+            // gesture before edit existed, and changing what it does silently is how
+            // you delete something you meant to correct.
+            Button(role: .destructive) {
+                Task { await remove(item) }
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+
+            Button {
+                editing = item
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            .tint(.accentColor)
+        }
     }
 
     // MARK: - Doing things
@@ -115,12 +155,12 @@ struct ItemsView: View {
         await attempt { try await api.setDone(item, on: list, done: !item.isDone) }
     }
 
-    private func remove(_ items: [Item]) async {
-        await attempt {
-            for item in items {
-                try await api.delete(item, on: list)
-            }
-        }
+    private func remove(_ item: Item) async {
+        await attempt { try await api.delete(item, on: list) }
+    }
+
+    private func clearDone() async {
+        await attempt { try await api.clearDone(on: list) }
     }
 
     /// Runs something that changes the list, then reloads.
