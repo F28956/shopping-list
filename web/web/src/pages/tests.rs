@@ -750,11 +750,12 @@ async fn the_page_serves_its_own_htmx(#[future(awt)] pool: SqlitePool) {
     );
 }
 
-/// Acting inside the panel swaps the whole board, so the markup that comes back has
-/// to say the panel was open — otherwise it snaps shut under the person using it.
+/// Acting inside the panel swaps the whole board, so the markup that comes back
+/// decides whether it is still open. Tagging keeps it — you usually add more than one
+/// — while saving an edit closes it, because that finishes the job.
 #[rstest]
 #[tokio::test]
-async fn the_panel_stays_open_while_you_work_in_it(
+async fn the_panel_opens_and_closes_with_the_work(
     #[with(fixtures::TAGS)]
     #[future(awt)]
     pool: SqlitePool,
@@ -779,7 +780,7 @@ async fn the_panel_stays_open_while_you_work_in_it(
         .unwrap();
     assert!(!panel_is_open(&body), "the panel starts closed");
 
-    // editing from inside the panel
+    // saving finishes the job, so the panel closes behind it
     let (_, body) = post_htmx(
         &app,
         &format!("/lists/{list_id}/items/{item_id}/edit"),
@@ -787,14 +788,12 @@ async fn the_panel_stays_open_while_you_work_in_it(
         "name=Sourdough&amount=1&unit_id=",
     )
     .await;
-    assert!(body.contains("Sourdough"));
-    assert!(
-        panel_is_open(&body),
-        "the panel closed under the edit: {body}"
-    );
+    assert!(body.contains("Sourdough"), "the edit did not take: {body}");
+    assert!(!panel_is_open(&body), "saving left the panel open: {body}");
 
-    // tagging from inside the panel
-    let tag_id = first_tag_option(&body).expect("no tag options");
+    // tagging does not: people add two or three at a time
+    let (_, page) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    let tag_id = first_tag_option(&page).expect("no tag options");
     let (_, body) = post_htmx(
         &app,
         &format!("/lists/{list_id}/items/{item_id}/tags"),
@@ -805,6 +804,19 @@ async fn the_panel_stays_open_while_you_work_in_it(
     assert!(
         panel_is_open(&body),
         "the panel closed under the tag add: {body}"
+    );
+
+    // and removing one keeps it open too
+    let (_, body) = post_htmx(
+        &app,
+        &format!("/lists/{list_id}/items/{item_id}/tags/{tag_id}/delete"),
+        &cookie,
+        "",
+    )
+    .await;
+    assert!(
+        panel_is_open(&body),
+        "the panel closed under the tag removal: {body}"
     );
 
     // ticking off is done from the collapsed row, so it must NOT open anything

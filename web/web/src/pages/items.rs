@@ -80,7 +80,8 @@ async fn board(s: &AppState, actor: &Actor, list_id: list::Id) -> Result<Board, 
 /// reading in a shop should not be covered in buttons you are not pressing.
 ///
 /// `open` is the item whose panel should come back expanded. Acting inside the panel
-/// swaps this whole element, which would otherwise snap it shut mid-edit.
+/// swaps this whole element, so anything that should stay open has to say so — and
+/// anything that finishes a job, like saving an edit, deliberately does not.
 fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
     let base = format!("/lists/{}", list_id.0);
     html! {
@@ -391,14 +392,18 @@ pub async fn edit(
     )
     .await?;
 
-    swap(&s, &actor, &headers, list::Id(list_id), Some(item_id)).await
+    // Saving finishes the job, so the panel closes behind it. Tagging does not:
+    // people add two or three at a time, and reopening the panel for each one would
+    // mean four clicks to do what should take two.
+    swap(&s, &actor, &headers, list::Id(list_id), None).await
 }
 
 /// Re-renders the item board for htmx, or sends a browser back to the page.
 /// Re-renders the item board for htmx, or sends a browser back to the page.
 ///
-/// `open` keeps the panel the person is working in from closing under them: acting
-/// inside it swaps the whole board, so the new markup has to say it was open.
+/// `open` decides whether the panel comes back expanded. Acting inside it swaps the
+/// whole board, so the markup has to say so — but only where staying open is what the
+/// person wants. Tagging keeps it; saving an edit closes it, because the job is done.
 async fn swap(
     s: &AppState,
     actor: &Actor,
