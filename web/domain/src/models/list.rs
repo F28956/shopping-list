@@ -1,8 +1,8 @@
 use time::OffsetDateTime;
 
 use super::user;
-use super::{Direction, OffsetPage, OrderBy, Paging};
 use super::{Error, Result};
+use super::{OffsetPage, OrderBy, Paging};
 
 // Scaffold Id, Name, CreatedAt and UpdatedAt
 i64!(Id);
@@ -267,7 +267,7 @@ mod tests {
     use strum::VariantArray;
 
     use super::*;
-    use crate::models::{pool, seeds};
+    use crate::models::{Direction, pool};
 
     /// Lists in `fixtures/lists.sql`.
     const SEEDED: i64 = 18;

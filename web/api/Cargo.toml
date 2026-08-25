@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+domain = { path = "../domain" }
 anyhow = "1.0.104"
 axum = "0.8.9"
 dotenvy = "0.15.7"
@@ -21,12 +22,6 @@ tokio = { version = "1.53.1", features = ["full"] }
 tower-http = { version = "0.7.0", features = ["trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-
-[dev-dependencies]
-rstest = "0.26.1"
-# only for the concurrency test on User::find_or_create
-futures = "0.3"
-
 
 # No [profile.*] here. Cargo only honours profiles at the workspace root, so these
 # were being silently ignored — and printing a warning on every cargo invocation to

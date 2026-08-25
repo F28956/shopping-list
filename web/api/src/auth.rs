@@ -2,9 +2,9 @@ use axum::{extract::FromRequestParts, http::request::Parts};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 
 use crate::error::AppError;
-use crate::models::user;
-use crate::models::user::User;
 use crate::state::AppState;
+use domain::models::user;
+use domain::models::user::User;
 
 #[derive(serde::Deserialize)]
 struct GoogleClaims {

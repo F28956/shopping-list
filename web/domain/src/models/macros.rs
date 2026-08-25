@@ -5,7 +5,6 @@ macro_rules! string {
         pub struct $t(pub String);
     )*};
 }
-pub(in crate::models) use string;
 
 /// Gives each [`string!`] type a `normalized` method: the stored form of that value,
 /// trimmed and lowercased.
@@ -37,7 +36,6 @@ macro_rules! normalized {
         }
     )*};
 }
-pub(in crate::models) use normalized;
 
 /// Gives each [`string!`] type a `trimmed` method: surrounding whitespace removed,
 /// case left alone.
@@ -61,7 +59,6 @@ macro_rules! trimmed {
         }
     )*};
 }
-pub(in crate::models) use trimmed;
 
 macro_rules! i64 {
 ($($t:ident),* $(,)?) => {$(
@@ -70,7 +67,6 @@ macro_rules! i64 {
     pub struct $t(pub i64);
 )*};
 }
-pub(in crate::models) use i64;
 
 macro_rules! f64 {
 ($($t:ident),* $(,)?) => {$(
@@ -81,7 +77,6 @@ macro_rules! f64 {
     pub struct $t(pub f64);
 )*};
 }
-pub(in crate::models) use f64;
 
 macro_rules! timestamp {
 ($($t:ident),* $(,)?) => {$(
@@ -90,7 +85,6 @@ macro_rules! timestamp {
     pub struct $t(#[serde(with = "time::serde::rfc3339")] pub OffsetDateTime);
 )*};
 }
-pub(in crate::models) use timestamp;
 
 /// The contents of one or more fixture files, concatenated in the order given —
 /// a single `&'static str` to hand to [`crate::models::pool`].
@@ -110,5 +104,3 @@ macro_rules! seeds {
         concat!($(include_str!($path), "\n"),+)
     };
 }
-#[cfg(test)]
-pub(in crate::models) use seeds;

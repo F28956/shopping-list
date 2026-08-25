@@ -1,8 +1,8 @@
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 
 use super::item;
-use super::{Direction, OffsetPage, OrderBy, Paging};
 use super::{Error, Result};
+use super::{OffsetPage, OrderBy, Paging};
 
 // Scaffold Id, Name, Colour, Emoji and CreatedAt
 i64!(Id);
@@ -372,11 +372,12 @@ impl Tag {
 mod tests {
     use rstest::rstest;
     use sqlx::SqlitePool;
+    use time::Duration;
 
     use strum::VariantArray;
 
     use super::*;
-    use crate::models::{pool, seeds};
+    use crate::models::{Direction, pool};
 
     /// Everything `tags.sql` needs under it — see `fixtures/README.md` for the order.
     macro_rules! fixtures {

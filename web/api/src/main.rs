@@ -1,7 +1,6 @@
 mod auth;
 mod error;
 mod jwks;
-mod models;
 mod state;
 
 use std::str::FromStr;
@@ -48,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
         .foreign_keys(true);
 
     let db = SqlitePool::connect_with(opts).await?;
-    sqlx::migrate!("./migrations").run(&db).await?;
+    domain::MIGRATOR.run(&db).await?;
 
     let state = AppState {
         db,

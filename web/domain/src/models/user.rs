@@ -1,7 +1,7 @@
 use time::OffsetDateTime;
 
-use super::{Direction, OffsetPage, OrderBy, Paging};
 use super::{Error, Result};
+use super::{OffsetPage, OrderBy, Paging};
 
 // Scaffold Id, Sub, Email, Name and CreatedAt
 i64!(Id);
@@ -332,7 +332,7 @@ mod tests {
     use strum::VariantArray;
 
     use super::*;
-    use crate::models::{pool, seeds};
+    use crate::models::{Direction, pool};
 
     /// Users in `fixtures/users.sql`.
     const SEEDED: i64 = 20;
@@ -539,7 +539,10 @@ mod tests {
         let again = User::find_or_create(&pool, sub, None, None).await?;
 
         assert_eq!(first.id, again.id, "the same person, not a second row");
-        assert_eq!(again.created_at, first.created_at, "created_at means first seen");
+        assert_eq!(
+            again.created_at, first.created_at,
+            "created_at means first seen"
+        );
         assert_eq!(count(&pool).await?, 1);
         Ok(())
     }
@@ -556,7 +559,10 @@ mod tests {
         let users = futures::future::try_join_all(calls).await?;
 
         let first = users[0].id;
-        assert!(users.iter().all(|u| u.id == first), "raced into more than one user");
+        assert!(
+            users.iter().all(|u| u.id == first),
+            "raced into more than one user"
+        );
         assert_eq!(count(&pool).await?, 1);
         Ok(())
     }
@@ -611,7 +617,10 @@ mod tests {
 
         let after = User::find_or_create(&pool, sub, None, None).await?;
 
-        assert_eq!(after.name, before.name, "a withheld claim must not clear the name");
+        assert_eq!(
+            after.name, before.name,
+            "a withheld claim must not clear the name"
+        );
         assert_eq!(after.email, before.email, "nor the address");
         Ok(())
     }
@@ -641,7 +650,9 @@ mod tests {
         #[case] sub: Sub,
         #[case] expected: Result<()>,
     ) -> Result<()> {
-        let got = User::find_or_create(&pool, sub, None, None).await.map(|_| ());
+        let got = User::find_or_create(&pool, sub, None, None)
+            .await
+            .map(|_| ());
 
         assert_eq!(got, expected);
         assert_eq!(count(&pool).await?, 0);

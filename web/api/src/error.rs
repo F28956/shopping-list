@@ -1,9 +1,9 @@
-use super::models;
 use axum::{
     Json,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use domain::models;
 use serde_json::json;
 
 #[derive(Debug, thiserror::Error)]

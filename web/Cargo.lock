@@ -38,12 +38,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "domain",
  "dotenvy",
- "futures",
  "itertools 0.15.0",
  "jsonwebtoken",
  "reqwest 0.13.4",
- "rstest",
  "rustls",
  "serde",
  "serde_json",
@@ -610,6 +609,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "domain"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "rstest",
+ "serde",
+ "sqlx",
+ "strum",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

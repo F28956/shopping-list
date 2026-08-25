@@ -11,10 +11,8 @@ pub mod unit;
 pub mod user;
 
 pub use common::{Direction, OffsetPage, OrderBy, Paging};
-pub(crate) use error::Error;
+pub use error::Error;
 pub(in crate::models) use error::Result;
 
 #[cfg(test)]
 pub(in crate::models) use common::tests::pool;
-#[cfg(test)]
-pub(in crate::models) use macros::seeds;

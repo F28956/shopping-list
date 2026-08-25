@@ -1,7 +1,7 @@
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 
-use super::{Direction, OffsetPage, OrderBy, Paging};
 use super::{Error, Result};
+use super::{OffsetPage, OrderBy, Paging};
 
 // Scaffold Id, Name and CreatedAt
 i64!(Id);
@@ -233,11 +233,12 @@ impl Unit {
 mod tests {
     use rstest::rstest;
     use sqlx::SqlitePool;
+    use time::Duration;
 
     use strum::VariantArray;
 
     use super::*;
-    use crate::models::{pool, seeds};
+    use crate::models::{Direction, pool};
 
     /// Units in `fixtures/units.sql`.
     const SEEDED: i64 = 31;
