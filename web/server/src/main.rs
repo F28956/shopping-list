@@ -22,6 +22,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use api::jwks::Jwks;
 use api::state::{AppState as ApiState, AuthMode};
 use domain::service::Ctx;
+use domain::service::admission::Admission;
 use web::sessions::SqliteSessions;
 
 #[tokio::main]
@@ -44,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     // change notifier, and that sharing is the whole feature: a list edited in the
     // browser has to reach a phone watching it through the API. Two `Ctx::new` calls
     // would compile, pass every test, and silently never cross.
-    let ctx = Ctx::new(db.clone());
+    let ctx = Ctx::with_admission(db.clone(), admission()?);
 
     let api_state = ApiState {
         ctx: ctx.clone(),
@@ -136,6 +137,31 @@ fn security_headers() -> Headers {
 /// and the phone present tokens with different audiences. `GOOGLE_CLIENT_ID` is
 /// required — without it the web half cannot sign anybody in — and
 /// `GOOGLE_IOS_CLIENT_ID` is added when the phone app has been set up.
+/// Who may sign in, from `ALLOWED_EMAILS`.
+///
+/// Required, with no default. This is a personal service: owning the domain does not
+/// make it private, because anyone with a Google account can complete the sign-in
+/// flow and become a user on first sight. A default of "anyone" would make forgetting
+/// to set this indistinguishable from deciding not to, and the difference only shows
+/// up as a stranger's list appearing in the database.
+///
+/// `ALLOWED_EMAILS="*"` is how an open instance says so, deliberately and in writing.
+fn admission() -> anyhow::Result<Admission> {
+    let configured = std::env::var("ALLOWED_EMAILS").map_err(|_| {
+        anyhow::anyhow!(
+            "ALLOWED_EMAILS is not set. List the addresses allowed to sign in, \
+             comma-separated, or \"*\" to admit anyone."
+        )
+    })?;
+
+    let admission = Admission::parse(&configured)?;
+    match &admission {
+        Admission::Anyone => tracing::warn!("ALLOWED_EMAILS is \"*\": anyone may sign in"),
+        Admission::These(listed) => tracing::info!(admitted = listed.len(), "sign-in restricted"),
+    }
+    Ok(admission)
+}
+
 fn google_client_ids() -> anyhow::Result<Vec<String>> {
     let mut ids = vec![std::env::var("GOOGLE_CLIENT_ID")?];
 

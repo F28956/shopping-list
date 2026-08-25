@@ -10,6 +10,7 @@
 #[cfg(test)]
 mod authorization_tests;
 
+pub mod admission;
 pub mod changes;
 pub mod identity;
 pub mod items;
@@ -66,13 +67,25 @@ pub struct Ctx {
     /// Who to tell when a list changes. Clone a `Ctx` to share it; construct two and
     /// the transports are watching separate worlds.
     pub changes: changes::Changes,
+    /// Who may sign in at all. See [`admission`].
+    pub admission: admission::Admission,
 }
 
 impl Ctx {
+    /// A context that admits anyone.
+    ///
+    /// For tests and tools. A server built this way is open to every Google account
+    /// there is, which is why `main` reads the policy from configuration and refuses
+    /// to start without it rather than falling back to this.
     pub fn new(db: sqlx::SqlitePool) -> Self {
+        Self::with_admission(db, admission::Admission::Anyone)
+    }
+
+    pub fn with_admission(db: sqlx::SqlitePool, admission: admission::Admission) -> Self {
         Self {
             db,
             changes: changes::Changes::new(),
+            admission,
         }
     }
 }

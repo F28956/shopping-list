@@ -673,6 +673,86 @@ async fn a_mistake_can_be_forgotten(#[future(awt)] pool: SqlitePool) {
     );
 }
 
+/// A stranger is refused before a row is written for them.
+///
+/// The `find_or_create` on the far side of this call is what makes an account, so
+/// checking after it would leave one behind for everybody who tried the door.
+#[rstest]
+#[tokio::test]
+async fn an_unlisted_address_cannot_sign_in(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user;
+    use crate::service::admission::Admission;
+    use crate::service::identity;
+
+    let ctx = Ctx::with_admission(
+        pool.clone(),
+        Admission::parse("me@example.com").unwrap(),
+    );
+
+    assert_eq!(
+        identity::from_claims(
+            &ctx,
+            user::Sub("google-oauth2|stranger".into()),
+            Some(user::Name("Stranger".into())),
+            Some(user::Email("stranger@example.com".into())),
+        )
+        .await
+        .err(),
+        Some(ServiceError::Forbidden)
+    );
+
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "a refused sign-in must not create an account");
+
+    // ... and the listed address still gets in.
+    assert!(
+        identity::from_claims(
+            &ctx,
+            user::Sub("google-oauth2|me".into()),
+            Some(user::Name("Me".into())),
+            Some(user::Email("Me@Example.com".into())),
+        )
+        .await
+        .is_ok(),
+        "however it is capitalised"
+    );
+}
+
+/// Taking someone off the list ends the session they already hold. Checking only at
+/// sign-in would mean removal did nothing until their cookie happened to expire.
+#[rstest]
+#[tokio::test]
+async fn a_session_stops_working_when_the_address_is_removed(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user;
+    use crate::service::admission::Admission;
+    use crate::service::identity;
+
+    let welcome = Ctx::with_admission(pool.clone(), Admission::parse("me@example.com").unwrap());
+    let actor = identity::from_claims(
+        &welcome,
+        user::Sub("google-oauth2|me".into()),
+        Some(user::Name("Me".into())),
+        Some(user::Email("me@example.com".into())),
+    )
+    .await
+    .unwrap();
+    let id = actor.person().unwrap().id.0;
+
+    assert!(identity::from_session(&welcome, id).await.unwrap().is_some());
+
+    let removed = Ctx::with_admission(
+        pool.clone(),
+        Admission::parse("someone-else@example.com").unwrap(),
+    );
+    assert!(
+        identity::from_session(&removed, id).await.unwrap().is_none(),
+        "the session outlived the permission"
+    );
+}
+
 /// Uncapped, every typo would live forever.
 #[rstest]
 #[tokio::test]
