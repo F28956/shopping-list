@@ -78,10 +78,20 @@ pub mod tests {
     use sqlx::SqlitePool;
 
     /// A migrated in-memory database, seeded with `seed` — see [`seeds!`].
+    ///
+    /// The reference-data migration seeds units and tags for production. Tests start
+    /// from an empty table instead and seed their own, because they need control of
+    /// the baseline: a test asserting "a rejected name must not insert" is checking
+    /// for zero rows, and the fixtures stamp `created_at` with deliberately staggered
+    /// offsets that the production seed has no reason to carry.
     #[fixture]
     pub async fn pool(#[default("")] seed: &'static str) -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::migrate!().run(&pool).await.unwrap();
+        sqlx::raw_sql("DELETE FROM tags; DELETE FROM units;")
+            .execute(&pool)
+            .await
+            .unwrap();
         if !seed.is_empty() {
             sqlx::raw_sql(seed).execute(&pool).await.unwrap();
         }
