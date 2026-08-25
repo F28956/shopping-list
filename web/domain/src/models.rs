@@ -15,4 +15,4 @@ pub use error::Error;
 pub(in crate::models) use error::Result;
 
 #[cfg(test)]
-pub(in crate::models) use common::tests::pool;
+pub(crate) use common::tests::pool;

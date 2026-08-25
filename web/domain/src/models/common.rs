@@ -70,13 +70,13 @@ pub struct OffsetPage<T> {
 }
 
 #[cfg(test)]
-pub(in crate::models) mod tests {
+pub(crate) mod tests {
     use rstest::fixture;
     use sqlx::SqlitePool;
 
     /// A migrated in-memory database, seeded with `seed` — see [`seeds!`].
     #[fixture]
-    pub(in crate::models) async fn pool(#[default("")] seed: &'static str) -> SqlitePool {
+    pub(crate) async fn pool(#[default("")] seed: &'static str) -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::migrate!().run(&pool).await.unwrap();
         if !seed.is_empty() {
