@@ -13,6 +13,9 @@ struct ItemsView: View {
 
     @State private var items: [Item] = []
     @State private var units: [Unit] = []
+    /// What this list has bought before, best guess first. The order is the server's
+    /// -- recency and frequency, decayed -- so it is shown as given, never re-sorted.
+    @State private var history: [String] = []
     @State private var line = ""
     @State private var editing: Item?
     @State private var confirmingClear = false
@@ -22,6 +25,21 @@ struct ItemsView: View {
 
     private var outstanding: [Item] { items.filter { !$0.isDone } }
     private var done: [Item] { items.filter(\.isDone) }
+
+    /// The suggestions worth showing for what has been typed so far.
+    ///
+    /// Prefix, not substring: typing `milk` should not offer `almond milk` above the
+    /// thing you are plainly asking for. With nothing typed it offers the top of the
+    /// list, which is the useful case in a shop -- the same six things every week.
+    private var offered: [String] {
+        let typed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let matching = typed.isEmpty
+            ? history
+            : history.filter { $0.lowercased().hasPrefix(typed) && $0.lowercased() != typed }
+
+        return Array(matching.prefix(6))
+    }
 
     /// Rows print a unit, the editor picks one. Built here rather than fetched twice.
     private var unitNames: [Int64: String] {
@@ -39,6 +57,33 @@ struct ItemsView: View {
                         .autocorrectionDisabled()
                     if !line.isEmpty {
                         Button("Add") { Task { await add() } }
+                    }
+                }
+            }
+
+            // Only while the field has focus: a permanent list of things you might
+            // want is clutter on a screen whose job is what you actually need.
+            if typing && !offered.isEmpty {
+                Section {
+                    ForEach(offered, id: \.self) { suggestion in
+                        Button {
+                            // Fills the field rather than adding outright. What is
+                            // typed may carry a quantity -- "2 kg app" -- and the only
+                            // thing that knows what a line means is the server, so
+                            // guessing here is how the phone and the browser start
+                            // disagreeing about it.
+                            line = suggestion
+                        } label: {
+                            HStack {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .foregroundStyle(.secondary)
+                                    .font(.footnote)
+                                Text(suggestion)
+                                Spacer()
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -227,7 +272,8 @@ struct ItemsView: View {
         do {
             async let items = api.items(on: list)
             async let units = api.units()
-            (self.items, self.units) = try await (items, units)
+            async let history = api.suggestions(on: list)
+            (self.items, self.units, self.history) = try await (items, units, history)
             error = nil
         } catch let problem as APIError {
             if case .unauthorized = problem {

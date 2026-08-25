@@ -70,6 +70,15 @@ actor API {
         return page.items
     }
 
+    /// What gets bought on this list, best guess first.
+    ///
+    /// The list's memory, not this person's: everyone sharing it feeds and sees the
+    /// same one. The ranking is the server's -- recency and frequency with a decay --
+    /// so the phone shows them in the order it is given and does not re-sort.
+    func suggestions(on list: List) async throws -> [String] {
+        try await get("/api/lists/\(list.id)/history")
+    }
+
     // MARK: - Writing
 
     /// Adds an item from one typed line.
