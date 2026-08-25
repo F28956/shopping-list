@@ -67,14 +67,20 @@ pub async fn get(ctx: &Ctx, actor: &Actor, id: list::Id) -> Result<List> {
 /// Renaming is the owner's: a list's name is how everyone else finds it.
 pub async fn update(ctx: &Ctx, actor: &Actor, id: list::Id, name: Name) -> Result<List> {
     accessible(ctx, actor.person()?, id, Role::Owner).await?;
-    Ok(List::update(&ctx.db, id, name).await?)
+    let list = List::update(&ctx.db, id, name).await?;
+    ctx.changes.announce(id);
+    Ok(list)
 }
 
 /// Deletes a list and everything on it — `items` cascades. A list with items on it is
 /// therefore never `InUse`, unlike a unit some item still points at.
 pub async fn delete(ctx: &Ctx, actor: &Actor, id: list::Id) -> Result<()> {
     accessible(ctx, actor.person()?, id, Role::Owner).await?;
-    Ok(List::delete(&ctx.db, id).await?)
+    List::delete(&ctx.db, id).await?;
+    // Watchers are told last, so that anyone re-reading finds it already gone rather
+    // than racing the delete and being told it is still there.
+    ctx.changes.announce(id);
+    Ok(())
 }
 
 // ------------------------------------------------------------------- sharing

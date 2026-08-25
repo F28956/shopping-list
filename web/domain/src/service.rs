@@ -10,6 +10,7 @@
 #[cfg(test)]
 mod authorization_tests;
 
+pub mod changes;
 pub mod identity;
 pub mod items;
 pub mod lists;
@@ -62,11 +63,17 @@ impl Actor {
 #[derive(Debug, Clone)]
 pub struct Ctx {
     pub db: sqlx::SqlitePool,
+    /// Who to tell when a list changes. Clone a `Ctx` to share it; construct two and
+    /// the transports are watching separate worlds.
+    pub changes: changes::Changes,
 }
 
 impl Ctx {
     pub fn new(db: sqlx::SqlitePool) -> Self {
-        Self { db }
+        Self {
+            db,
+            changes: changes::Changes::new(),
+        }
     }
 }
 

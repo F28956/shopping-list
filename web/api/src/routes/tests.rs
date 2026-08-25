@@ -473,6 +473,142 @@ async fn editing_an_item(#[future(awt)] pool: SqlitePool) {
     assert_eq!(edited["list_id"], list_id, "an edit is not a move");
 }
 
+/// Reads one SSE frame, or gives up. A stream that stays silent is the failure this
+/// route exists to prevent, so waiting forever would turn a bug into a hung suite.
+async fn next_event(body: &mut axum::body::BodyDataStream) -> String {
+    use futures::StreamExt;
+    let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), body.next())
+        .await
+        .expect("no event arrived within 5s")
+        .expect("the stream ended instead of sending")
+        .expect("the body errored");
+    String::from_utf8_lossy(&chunk).into_owned()
+}
+
+/// A change made through an ordinary route reaches somebody watching the list --
+/// which is the whole point: two devices, one list, no manual refresh.
+#[rstest]
+#[tokio::test]
+async fn a_change_reaches_a_watcher(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, item_id) = a_list_with_an_item(&app).await;
+
+    let watching = app
+        .clone()
+        .oneshot(req(
+            "GET",
+            &format!("/api/lists/{list_id}/events"),
+            &me(),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(watching.status(), StatusCode::OK);
+    assert_eq!(
+        watching
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("text/event-stream"),
+    );
+    let mut body = watching.into_body().into_data_stream();
+
+    send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{list_id}/items/{item_id}/done"),
+            &me(),
+            None,
+        ),
+    )
+    .await;
+
+    let frame = next_event(&mut body).await;
+    assert!(frame.contains("event: changed"), "got: {frame:?}");
+    assert!(frame.contains(&format!("data: {list_id}")), "got: {frame:?}");
+}
+
+/// Asserts nothing arrives. The window is short because the events under test are
+/// sent in-process, with no network between: anything real turns up immediately.
+async fn no_event(body: &mut axum::body::BodyDataStream) {
+    use futures::StreamExt;
+    let heard = tokio::time::timeout(std::time::Duration::from_millis(500), body.next()).await;
+    if let Ok(Some(Ok(chunk))) = heard {
+        panic!(
+            "heard something it should not have: {:?}",
+            String::from_utf8_lossy(&chunk)
+        );
+    }
+}
+
+/// A watcher hears about its own list and no other. Without the filter every device
+/// re-reads on every change anyone makes anywhere.
+#[rstest]
+#[tokio::test]
+async fn a_watcher_hears_only_its_own_list(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (watched, _) = a_list_with_an_item(&app).await;
+    let (other, other_item) = a_list_with_an_item(&app).await;
+    assert_ne!(watched, other);
+
+    let watching = app
+        .clone()
+        .oneshot(req(
+            "GET",
+            &format!("/api/lists/{watched}/events"),
+            &me(),
+            None,
+        ))
+        .await
+        .unwrap();
+    let mut body = watching.into_body().into_data_stream();
+
+    // Silence is the assertion: a change to somebody else's list must not wake this
+    // stream at all. Reading a frame and checking which list it named would pass
+    // whether the filter was there or not, since the id is written from the path.
+    send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{other}/items/{other_item}/done"),
+            &me(),
+            None,
+        ),
+    )
+    .await;
+    no_event(&mut body).await;
+
+    // ... and the stream is still live, rather than merely broken.
+    send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{watched}/items"),
+            &me(),
+            Some(json!({"name": "Pears"})),
+        ),
+    )
+    .await;
+    let frame = next_event(&mut body).await;
+    assert!(frame.contains(&format!("data: {watched}")), "got: {frame:?}");
+}
+
+/// Watching is a read, and reads are authorised.
+#[rstest]
+#[tokio::test]
+async fn a_stranger_cannot_watch_my_list(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+
+    let (status, _) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}/events"), &them(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a hidden list stays hidden");
+}
+
 /// Clearing takes the ticked-off rows and nothing else.
 #[rstest]
 #[tokio::test]

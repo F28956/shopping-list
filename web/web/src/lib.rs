@@ -205,7 +205,11 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
         .route("/lists/{id}/rename", post(pages::lists::rename))
         .route("/lists/{id}/delete", post(pages::lists::delete))
         .route("/lists/{id}", get(pages::items::show))
-        .route("/lists/{id}/items", post(pages::items::create))
+        .route(
+            "/lists/{id}/items",
+            get(pages::items::fragment_only).post(pages::items::create),
+        )
+        .route("/lists/{id}/events", get(pages::items::events))
         .route("/lists/{id}/clear-done", post(pages::items::clear_done))
         .route("/lists/{id}/share", get(pages::sharing::show))
         .route("/lists/{id}/invites", post(pages::sharing::invite))

@@ -51,6 +51,7 @@ pub async fn create(
     Entry::record(&ctx.db, list_id, &item.name, unit_id).await?;
     Entry::prune(&ctx.db, list_id).await?;
 
+    ctx.changes.announce(list_id);
     Ok(item)
 }
 
@@ -88,13 +89,16 @@ pub async fn update(
     // fixes a spelling from one that changes the item.
     Entry::record(&ctx.db, item.list_id, &item.name, item.unit_id).await?;
 
+    ctx.changes.announce(item.list_id);
     Ok(item)
 }
 
 /// Ticks an item off, or puts it back.
 pub async fn set_done(ctx: &Ctx, actor: &Actor, id: item::Id, done: bool) -> Result<Item> {
     editable(ctx, actor.person()?, id).await?;
-    Ok(Item::set_done(&ctx.db, id, done).await?)
+    let item = Item::set_done(&ctx.db, id, done).await?;
+    ctx.changes.announce(item.list_id);
+    Ok(item)
 }
 
 /// Adds an item from one typed line, filling in what this person's history knows.
@@ -154,7 +158,11 @@ pub async fn quick_add(ctx: &Ctx, actor: &Actor, list_id: list::Id, line: &str) 
 /// list, which is the same standing as putting something on it.
 pub async fn forget(ctx: &Ctx, actor: &Actor, list_id: list::Id, name: Name) -> Result<()> {
     lists::editable(ctx, actor.person()?, list_id).await?;
-    Ok(Entry::forget(&ctx.db, list_id, &name).await?)
+    Entry::forget(&ctx.db, list_id, &name).await?;
+    // The memory is part of the list, and a suggestion box showing a typo somebody
+    // has just forgotten is the same staleness as a row that has gone.
+    ctx.changes.announce(list_id);
+    Ok(())
 }
 
 /// What gets bought on this list, for a quick-add suggestion list.
@@ -194,10 +202,19 @@ pub async fn suggestions(
 pub async fn clear_done(ctx: &Ctx, actor: &Actor, list_id: list::Id) -> Result<u64> {
     let owner = actor.person()?;
     lists::editable(ctx, owner, list_id).await?;
-    Ok(Item::delete_done(&ctx.db, list_id).await?)
+    let cleared = Item::delete_done(&ctx.db, list_id).await?;
+    // Announced even when nothing was ticked off: a watcher that re-reads an
+    // unchanged list is harmless, and deciding not to tell it is a second rule that
+    // can be wrong.
+    ctx.changes.announce(list_id);
+    Ok(cleared)
 }
 
 pub async fn delete(ctx: &Ctx, actor: &Actor, id: item::Id) -> Result<()> {
-    editable(ctx, actor.person()?, id).await?;
-    Ok(Item::delete(&ctx.db, id).await?)
+    // The row is read before it goes, because afterwards there is nothing to say
+    // which list to tell.
+    let item = editable(ctx, actor.person()?, id).await?;
+    Item::delete(&ctx.db, id).await?;
+    ctx.changes.announce(item.list_id);
+    Ok(())
 }

@@ -40,14 +40,20 @@ async fn main() -> anyhow::Result<()> {
     let db = open_database().await?;
     domain::MIGRATOR.run(&db).await?;
 
+    // One `Ctx`, cloned, rather than one built per transport. Cloning shares the
+    // change notifier, and that sharing is the whole feature: a list edited in the
+    // browser has to reach a phone watching it through the API. Two `Ctx::new` calls
+    // would compile, pass every test, and silently never cross.
+    let ctx = Ctx::new(db.clone());
+
     let api_state = ApiState {
-        ctx: Ctx::new(db.clone()),
+        ctx: ctx.clone(),
         auth: AuthMode::Google {
             jwks: Arc::new(Jwks::new(reqwest::Client::new())),
             client_ids: google_client_ids()?,
         },
     };
-    let web_ctx = Ctx::new(db.clone());
+    let web_ctx = ctx.clone();
     let sessions = web::session_store(&web_ctx).await?;
     let web_state = web::state(web_ctx).await?;
 

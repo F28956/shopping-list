@@ -17,6 +17,9 @@ time = { version = "0.3.55", features = ["serde-well-known"] }
 tracing = "0.1.44"
 sha2 = "0.11.0"
 rand = "0.10.2"
+# `sync` only: the domain needs a broadcast channel to tell watchers a list changed.
+# Not "full" -- nothing in here starts a runtime or opens a socket.
+tokio = { version = "1.53.1", features = ["sync"] }
 
 [features]
 # Exposes the migrated in-memory `pool` fixture so the transports can drive their

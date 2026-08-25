@@ -478,6 +478,75 @@ async fn a_stranger_cannot_tag_my_item_from_the_page(
     );
 }
 
+/// A change made anywhere reaches a browser left open on the list.
+///
+/// Driven through the real routes rather than the notifier directly: the thing worth
+/// proving is that the browser's own stream is wired to the same changes the API
+/// announces, since the two transports build their state separately.
+#[rstest]
+#[tokio::test]
+async fn a_change_reaches_a_browser_watcher(#[future(awt)] pool: SqlitePool) {
+    use futures::StreamExt;
+
+    let (app, cookie) = signed_in(&pool, "google-oauth2|watcher").await;
+    post(&app, "/lists", &cookie, "name=Groceries").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+
+    // Not `get`, which collects the whole body: an event stream has no end.
+    let watching = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/lists/{list_id}/events"))
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(watching.status(), StatusCode::OK);
+    let mut stream = watching.into_body().into_data_stream();
+
+    post_htmx(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &cookie,
+        "line=2+kg+apples",
+    )
+    .await;
+
+    let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+        .await
+        .expect("no event arrived within 5s")
+        .expect("the stream ended instead of sending")
+        .expect("the body errored");
+    let frame = String::from_utf8_lossy(&chunk).into_owned();
+    assert!(frame.contains("event: changed"), "got: {frame:?}");
+    assert!(frame.contains(&format!("data: {list_id}")), "got: {frame:?}");
+}
+
+/// Watching is a read, so it is authorised like one -- and the page that a watcher
+/// re-reads is too.
+#[rstest]
+#[tokio::test]
+async fn a_stranger_can_neither_watch_nor_re_read_my_list(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|owner").await;
+    post(&app, "/lists", &mine, "name=Groceries").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+
+    let (_, theirs) = signed_in(&pool, "google-oauth2|stranger").await;
+
+    for uri in [
+        format!("/lists/{list_id}/events"),
+        format!("/lists/{list_id}/items"),
+    ] {
+        let (status, _) = get(&app, &uri, &theirs).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri} leaked");
+    }
+}
+
 #[rstest]
 #[tokio::test]
 async fn a_list_can_be_renamed(#[future(awt)] pool: SqlitePool) {

@@ -9,6 +9,7 @@ struct ItemsView: View {
     let api: API
     let list: List
     @Environment(Identity.self) private var identity
+    @Environment(\.scenePhase) private var phase
 
     @State private var items: [Item] = []
     @State private var units: [Unit] = []
@@ -75,6 +76,12 @@ struct ItemsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
         .task { await load() }
+        .task { await watch() }
+        // Coming back from the background is the one gap the stream cannot cover:
+        // iOS tears the connection down and the reconnect has not happened yet.
+        .onChange(of: phase) { _, now in
+            if now == .active { Task { await load() } }
+        }
         .sheet(item: $editing) { item in
             ItemEditor(item: item, units: units) { name, amount, unitID in
                 await attempt {
@@ -161,6 +168,39 @@ struct ItemsView: View {
 
     private func clearDone() async {
         await attempt { try await api.clearDone(on: list) }
+    }
+
+    /// Keeps this screen in step with the same list open somewhere else.
+    ///
+    /// Reconnects for as long as the screen is up, because a stream that ends is
+    /// indistinguishable, from here, from a list where nothing is happening -- and
+    /// silently showing a stale list is exactly what this is for. Each reconnect
+    /// re-reads: whatever changed while the connection was down was never sent.
+    private func watch() async {
+        var reconnecting = false
+
+        while !Task.isCancelled {
+            if reconnecting { await load() }
+
+            do {
+                for try await _ in try await api.changes(on: list) {
+                    await load()
+                }
+            } catch let problem as APIError {
+                // A stream refused for want of a token is not a network hiccup, and
+                // retrying it forever would hammer the server while signed out.
+                if case .unauthorized = problem {
+                    identity.signOut()
+                    return
+                }
+            } catch {}
+
+            // Losing the connection is ordinary -- a tunnel, a lock screen, a server
+            // restart -- so it is not shown. Waiting keeps a server that is refusing
+            // everything from being asked as fast as the loop can go round.
+            reconnecting = true
+            try? await Task.sleep(for: .seconds(3))
+        }
     }
 
     /// Runs something that changes the list, then reloads.

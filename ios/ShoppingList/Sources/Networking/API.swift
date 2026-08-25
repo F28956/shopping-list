@@ -115,6 +115,65 @@ actor API {
         _ = try await send("DELETE", "/api/lists/\(list.id)/items/\(item.id)", nil)
     }
 
+    // MARK: - Watching
+
+    /// A stream that yields once each time this list changes anywhere.
+    ///
+    /// It yields nothing but the fact of the change. Carrying the rows would make the
+    /// phone a second source of truth for order and content, and one dropped event
+    /// would leave it confidently disagreeing with the browser; a screen that is only
+    /// told "re-read" cannot drift.
+    ///
+    /// Authorised once, when the connection opens. A token that expires mid-stream
+    /// does not close it, and does not need to: the stream carries no list content,
+    /// and every actual read still presents a fresh token.
+    func changes(on list: List) async throws -> AsyncThrowingStream<Void, Error> {
+        guard let url = URL(string: "/api/lists/\(list.id)/events", relativeTo: baseURL) else {
+            throw APIError.badInput("Bad address for events")
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        // The default is 60 seconds of silence, which would hang up on a quiet list.
+        // The server sends a keep-alive comment well inside this.
+        request.timeoutInterval = 3600
+        guard let token = await token() else { throw APIError.unauthorized }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: request)
+        } catch {
+            throw APIError.transport(error)
+        }
+
+        guard let http = response as? HTTPURLResponse else { throw APIError.server(0) }
+        switch http.statusCode {
+        case 200..<300: break
+        case 401: throw APIError.unauthorized
+        case 403: throw APIError.forbidden
+        case 404: throw APIError.notFound
+        case let code: throw APIError.server(code)
+        }
+
+        return AsyncThrowingStream { continuation in
+            let reading = Task {
+                do {
+                    for try await line in bytes.lines {
+                        // Keep-alives arrive as comments (":" first) and event names as
+                        // "event:", neither of which is news. A "data:" line is.
+                        if line.hasPrefix("data:") { continuation.yield(()) }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in reading.cancel() }
+        }
+    }
+
     // MARK: - Plumbing
 
     private func get<T: Decodable>(_ path: String) async throws -> T {

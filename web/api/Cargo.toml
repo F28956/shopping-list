@@ -19,6 +19,8 @@ strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 time = { version = "0.3.55", features = ["serde-well-known"] }
 tokio = { version = "1.53.1", features = ["full"] }
+# `sync` gives BroadcastStream, which is how the change notifier becomes an SSE body.
+tokio-stream = { version = "0.1.17", features = ["sync"] }
 tower-http = { version = "0.7.0", features = ["trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
@@ -35,6 +37,8 @@ test-support = []
 [dev-dependencies]
 # drives the real router in-process, without binding a port
 tower = { version = "0.5", features = ["util"] }
+# reads an SSE body a frame at a time, which a oneshot response cannot do
+futures = "0.3"
 http-body-util = "0.1"
 rstest = "0.26.1"
 domain = { path = "../domain", features = ["test-support"] }

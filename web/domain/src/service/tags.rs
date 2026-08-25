@@ -87,6 +87,7 @@ pub async fn attach(ctx: &Ctx, actor: &Actor, item_id: item::Id, tag_id: tag::Id
     let owner = actor.person()?;
     let item = items::editable(ctx, owner, item_id).await?;
     Tag::attach(&ctx.db, item_id, tag_id).await?;
+    ctx.changes.announce(item.list_id);
 
     // Filing something is the strongest signal about where it belongs, so the next
     // time it is added it arrives already filed. Best-effort: an item that has never
@@ -100,6 +101,7 @@ pub async fn detach(ctx: &Ctx, actor: &Actor, item_id: item::Id, tag_id: tag::Id
     let owner = actor.person()?;
     let item = items::editable(ctx, owner, item_id).await?;
     Tag::detach(&ctx.db, item_id, tag_id).await?;
+    ctx.changes.announce(item.list_id);
 
     // Unfiling is a signal too: stop putting it there.
     if let Ok(Some(entry)) = Entry::get(&ctx.db, item.list_id, &item.name).await

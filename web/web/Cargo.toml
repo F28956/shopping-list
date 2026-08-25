@@ -13,6 +13,8 @@ openidconnect = "4.0.1"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["full"] }
+# `sync` gives BroadcastStream, which is how the change notifier becomes an SSE body.
+tokio-stream = { version = "0.1.17", features = ["sync"] }
 tower-sessions = "0.15.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
@@ -27,6 +29,8 @@ async-trait = "0.1.92"
 test-support = []
 
 [dev-dependencies]
+# reads an SSE body a frame at a time, which a collected response cannot do
+futures = "0.3"
 domain = { path = "../domain", features = ["test-support"] }
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }

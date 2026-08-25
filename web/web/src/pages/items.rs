@@ -1,8 +1,13 @@
 //! What is on one list.
 
+use std::convert::Infallible;
+use std::time::Duration;
+
 use axum::extract::{Form, Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
+use axum::response::sse::{Event, KeepAlive, Sse};
+use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use domain::models::item::{self, Amount, Name};
 use domain::models::list::Role;
 use domain::models::{Direction, OrderBy, Paging, list, tag, unit};
@@ -323,6 +328,50 @@ fn group_by_category(b: &Board) -> Vec<(String, Vec<&item::Item>)> {
     groups.into_iter().map(|(_, h, i)| (h, i)).collect()
 }
 
+/// Just the list region, for a client that has been told it is out of date.
+///
+/// The same fragment the mutating routes return, so a screen refreshed by an event
+/// and a screen refreshed by its own edit cannot come out different.
+pub async fn fragment_only(
+    session: Session,
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Markup, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+    let list = lists::get(&s.ctx, &actor, list::Id(id)).await?;
+    let b = board(&s, &actor, list.id).await?;
+    Ok(fragment(list.id, &b, None))
+}
+
+/// Says when this list changed, so a browser left open stops showing what has gone.
+///
+/// The browser's own route rather than the API's: `/api` deliberately has no session
+/// layer, so a cookie cannot authenticate there, and `EventSource` cannot set an
+/// Authorization header. Same notifier underneath, so a phone and a browser hear the
+/// same changes.
+pub async fn events(
+    session: Session,
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+    let list_id = list::Id(id);
+    lists::get(&s.ctx, &actor, list_id).await?;
+
+    let watching = BroadcastStream::new(s.ctx.changes.watch());
+    let stream = watching.filter_map(move |heard| match heard {
+        Ok(changed) if changed.list_id == list_id => Some(Ok(Event::default()
+            .event("changed")
+            .data(changed.list_id.0.to_string()))),
+        // Lagging means events were dropped. For a nudge that is the same news as one
+        // arriving, and staying quiet would leave the page silently stale.
+        Err(_) => Some(Ok(Event::default().event("changed").data(id.to_string()))),
+        Ok(_) => None,
+    });
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
 pub async fn show(
     session: Session,
     State(s): State<AppState>,
@@ -348,6 +397,12 @@ pub async fn show(
             h2 style="font-size:1.1rem;margin:.5rem 0 1rem" { (list.name.0) }
 
             (fragment(list.id, &b, None))
+
+            // Outside `#items` on purpose: this is what app.js reads to open the
+            // event stream, and it must not be replaced by the swaps it triggers.
+            div id="live" hidden
+                data-events={ "/lists/" (list.id.0) "/events" }
+                data-items={ "/lists/" (list.id.0) "/items" } {}
 
             // One field. "2 kg apples" is parsed into the three the model wants —
             // see domain::quick_add — and the editor is there for anything it reads
