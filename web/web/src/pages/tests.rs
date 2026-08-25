@@ -1064,10 +1064,13 @@ async fn choosing_a_tag_adds_it(
 
 /// One field, read the way a person writes it.
 #[rstest]
+// Names come back capitalised: that happens where they are stored, so every client
+// shows the same spelling rather than each deciding for itself.
 #[case::just_a_name("line=Milk", "Milk", None)]
-#[case::amount_and_unit("line=2+kg+apples", "apples", Some("2 kg"))]
-#[case::no_space("line=500g+flour", "flour", Some("500 g"))]
-#[case::bare_amount("line=6+eggs", "eggs", Some("6"))]
+#[case::amount_and_unit("line=2+kg+apples", "Apples", Some("2 kg"))]
+#[case::no_space("line=500g+flour", "Flour", Some("500 g"))]
+#[case::bare_amount("line=6+eggs", "Eggs", Some("6"))]
+#[case::spelled_deliberately("line=iPhone+charger", "iPhone charger", None)]
 #[tokio::test]
 async fn quick_add_reads_the_line(
     #[with(fixtures::UNITS)]
@@ -1088,7 +1091,13 @@ async fn quick_add_reads_the_line(
     );
 
     let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
-    assert!(body.contains(name), "{form} did not yield {name}: {body}");
+    // Matched inside the row's own element, not anywhere on the page: the add
+    // field's placeholder contains "2 kg apples", and a bare `contains` was passing
+    // on that rather than on the item.
+    assert!(
+        body.contains(&format!("class=\"grow\">{name}")),
+        "{form} did not yield {name}: {body}"
+    );
     match measure {
         Some(m) => assert!(
             body.contains(&format!("class=\"amount\">{m}<")),
@@ -1123,17 +1132,101 @@ async fn the_history_is_my_own(#[future(awt)] pool: SqlitePool) {
     let (_, body) = get(&app2, "/", &theirs).await;
     let their_list = first_list_id(&body);
 
-    let (_, mine_page) = get(&app, &format!("/lists/{my_list}"), &mine).await;
+    // Typed into my own list, it is offered.
+    let (status, offered) = get(
+        &app,
+        &format!("/lists/{my_list}/suggestions?line=sour"),
+        &mine,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     assert!(
-        mine_page.contains("<option value=\"Sourdough\">"),
-        "my own history is not offered: {mine_page}"
+        offered.contains("<option value=\"Sourdough\">"),
+        "my own history is not offered: {offered}"
     );
 
-    let (_, their_page) = get(&app2, &format!("/lists/{their_list}"), &theirs).await;
+    // On somebody else's list, it is not -- their list has its own memory.
+    let (_, theirs_offered) = get(
+        &app2,
+        &format!("/lists/{their_list}/suggestions?line=sour"),
+        &theirs,
+    )
+    .await;
     assert!(
-        !their_page.contains("Sourdough"),
-        "my shopping leaked into someone else's suggestions: {their_page}"
+        !theirs_offered.contains("Sourdough"),
+        "my shopping leaked into someone else's suggestions: {theirs_offered}"
     );
+
+    // And asking about my list from their session is a 404, not a peek.
+    let (status, _) = get(
+        &app,
+        &format!("/lists/{my_list}/suggestions?line=sour"),
+        &theirs,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// Nothing typed, nothing offered. A datalist handed over in full is shown in full
+/// the moment the field is focused, which is a second list on top of the real one.
+#[rstest]
+#[tokio::test]
+async fn suggestions_wait_until_something_is_typed(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|patient").await;
+    post(&app, "/lists", &mine, "name=Mine").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+    post(&app, &format!("/lists/{list_id}/items"), &mine, "line=Sourdough").await;
+
+    let (_, page) = get(&app, &format!("/lists/{list_id}"), &mine).await;
+    assert!(
+        !page.contains("<option value=\"Sourdough\">"),
+        "the page arrived with the whole history in it: {page}"
+    );
+
+    for uri in [
+        format!("/lists/{list_id}/suggestions"),
+        format!("/lists/{list_id}/suggestions?line="),
+        format!("/lists/{list_id}/suggestions?line=%20%20"),
+    ] {
+        let (status, offered) = get(&app, &uri, &mine).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!offered.contains("<option"), "{uri} offered something");
+    }
+}
+
+/// Typed letters need not be the start of the word, or even next to each other --
+/// the matching is the service's, so this is the browser reaching the same rules the
+/// phone does.
+#[rstest]
+#[tokio::test]
+async fn suggestions_are_matched_loosely(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|fuzzy").await;
+    post(&app, "/lists", &mine, "name=Mine").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+    post(&app, &format!("/lists/{list_id}/items"), &mine, "line=Sourdough").await;
+
+    for typed in ["srdgh", "dough", "SOUR"] {
+        let (_, offered) = get(
+            &app,
+            &format!("/lists/{list_id}/suggestions?line={typed}"),
+            &mine,
+        )
+        .await;
+        assert!(
+            offered.contains("Sourdough"),
+            "{typed:?} did not find it: {offered}"
+        );
+    }
+
+    let (_, offered) = get(
+        &app,
+        &format!("/lists/{list_id}/suggestions?line=bread"),
+        &mine,
+    )
+    .await;
+    assert!(!offered.contains("<option"), "matched something unrelated");
 }
 
 /// Items sit under their category, and the categories run in shop order rather than

@@ -210,6 +210,7 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
             get(pages::items::fragment_only).post(pages::items::create),
         )
         .route("/lists/{id}/events", get(pages::items::events))
+        .route("/lists/{id}/suggestions", get(pages::items::suggestions))
         .route("/lists/{id}/clear-done", post(pages::items::clear_done))
         .route("/lists/{id}/share", get(pages::sharing::show))
         .route("/lists/{id}/invites", post(pages::sharing::invite))

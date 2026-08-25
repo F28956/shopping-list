@@ -13,33 +13,30 @@ struct ItemsView: View {
 
     @State private var items: [Item] = []
     @State private var units: [Unit] = []
-    /// What this list has bought before, best guess first. The order is the server's
-    /// -- recency and frequency, decayed -- so it is shown as given, never re-sorted.
-    @State private var history: [String] = []
+    /// What the server offered for what is currently typed. Shown in the order it
+    /// came in: the ranking and the matching are both its business.
+    @State private var offered: [String] = []
+    /// Cancelled on every keystroke, so a slow answer for `mil` cannot arrive after
+    /// a fast one for `milk` and put the wrong list back.
+    @State private var asking: Task<Void, Never>?
     @State private var line = ""
-    @State private var editing: Item?
+    @State private var tags: [Tag] = []
+    @State private var editing: Editing?
     @State private var confirmingClear = false
     @State private var error: String?
     @State private var loaded = false
     @FocusState private var typing: Bool
 
+    /// An item and what it is already filed under, fetched before the sheet opens so
+    /// the editor never renders a tag section it is about to change under your thumb.
+    struct Editing: Identifiable {
+        let item: Item
+        let attached: [Tag]
+        var id: Int64 { item.id }
+    }
+
     private var outstanding: [Item] { items.filter { !$0.isDone } }
     private var done: [Item] { items.filter(\.isDone) }
-
-    /// The suggestions worth showing for what has been typed so far.
-    ///
-    /// Prefix, not substring: typing `milk` should not offer `almond milk` above the
-    /// thing you are plainly asking for. With nothing typed it offers the top of the
-    /// list, which is the useful case in a shop -- the same six things every week.
-    private var offered: [String] {
-        let typed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-        let matching = typed.isEmpty
-            ? history
-            : history.filter { $0.lowercased().hasPrefix(typed) && $0.lowercased() != typed }
-
-        return Array(matching.prefix(6))
-    }
 
     /// Rows print a unit, the editor picks one. Built here rather than fetched twice.
     private var unitNames: [Int64: String] {
@@ -117,6 +114,32 @@ struct ItemsView: View {
                 }
             }
         }
+        .onChange(of: line) { _, typed in
+            asking?.cancel()
+            let wanted = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Nothing typed, nothing offered -- and nothing asked for either.
+            guard !wanted.isEmpty else {
+                offered = []
+                return
+            }
+
+            asking = Task {
+                // Long enough that a fast typist makes one request, not eight.
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return }
+
+                let found = (try? await api.suggestions(matching: wanted, on: list)) ?? []
+                guard !Task.isCancelled else { return }
+
+                // Never the thing already typed in full: offering it back is a row
+                // that does nothing.
+                offered = Array(
+                    found.filter { $0.caseInsensitiveCompare(wanted) != .orderedSame }
+                        .prefix(6)
+                )
+            }
+        }
         .navigationTitle(list.name)
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
@@ -127,11 +150,14 @@ struct ItemsView: View {
         .onChange(of: phase) { _, now in
             if now == .active { Task { await load() } }
         }
-        .sheet(item: $editing) { item in
-            ItemEditor(item: item, units: units) { name, amount, unitID in
-                await attempt {
-                    try await api.update(item, on: list, name: name, amount: amount, unitID: unitID)
-                }
+        .sheet(item: $editing) { target in
+            ItemEditor(
+                item: target.item,
+                units: units,
+                tags: tags,
+                attached: target.attached
+            ) { edit in
+                await attempt { try await apply(edit, to: target) }
             }
         }
         // Asked rather than assumed: this is the one control on the screen that takes
@@ -181,7 +207,7 @@ struct ItemsView: View {
             }
 
             Button {
-                editing = item
+                Task { await beginEditing(item) }
             } label: {
                 Label("Edit", systemImage: "pencil")
             }
@@ -201,6 +227,44 @@ struct ItemsView: View {
         typing = true
 
         await attempt { try await api.add(typed, to: list) }
+    }
+
+    /// Opens the editor, once we know what the item is already filed under.
+    private func beginEditing(_ item: Item) async {
+        do {
+            editing = Editing(item: item, attached: try await api.tags(on: item, in: list))
+        } catch let problem as APIError {
+            if case .unauthorized = problem {
+                identity.signOut()
+            } else {
+                error = problem.localizedDescription
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Saves an edit: the fields, then the tags that changed.
+    ///
+    /// Tags have their own routes rather than being part of the update, so this is
+    /// the diff. Only what changed is sent -- re-attaching a tag an item already has
+    /// would be a conflict, and detaching one it never had a miss.
+    private func apply(_ edit: ItemEdit, to target: Editing) async throws {
+        try await api.update(
+            target.item,
+            on: list,
+            name: edit.name,
+            amount: edit.amount,
+            unitID: edit.unitID
+        )
+
+        let before = Set(target.attached.map(\.id))
+        for tag in tags where edit.tagIDs.contains(tag.id) && !before.contains(tag.id) {
+            try await api.attach(tag, to: target.item, on: list)
+        }
+        for tag in target.attached where !edit.tagIDs.contains(tag.id) {
+            try await api.detach(tag, from: target.item, on: list)
+        }
     }
 
     private func toggle(_ item: Item) async {
@@ -272,8 +336,8 @@ struct ItemsView: View {
         do {
             async let items = api.items(on: list)
             async let units = api.units()
-            async let history = api.suggestions(on: list)
-            (self.items, self.units, self.history) = try await (items, units, history)
+            async let tags = api.tags()
+            (self.items, self.units, self.tags) = try await (items, units, tags)
             error = nil
         } catch let problem as APIError {
             if case .unauthorized = problem {

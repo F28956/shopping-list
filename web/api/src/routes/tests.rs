@@ -642,7 +642,7 @@ async fn a_typed_line_is_read_the_way_a_person_means_it(
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(item["name"], "apples", "the quantity is not part of the name");
+    assert_eq!(item["name"], "Apples", "the quantity is not part of the name");
     assert_eq!(item["amount"], 2.0);
     assert!(!item["unit_id"].is_null(), "kg was recognised as the unit");
 }

@@ -39,6 +39,21 @@ struct Unit: Identifiable, Decodable, Hashable {
     let name: String
 }
 
+struct Tag: Identifiable, Decodable, Hashable {
+    let id: Int64
+    let name: String
+    let emoji: String?
+    /// Where this falls when a list is grouped: the order of the shop, not the
+    /// alphabet. Sorting by it is using what the server sends, not second-guessing
+    /// it -- the field exists precisely so every client agrees on the order.
+    let sortOrder: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, emoji
+        case sortOrder = "sort_order"
+    }
+}
+
 /// One page of rows, plus what a caller needs to walk the rest.
 struct Page<T: Decodable>: Decodable {
     let items: [T]

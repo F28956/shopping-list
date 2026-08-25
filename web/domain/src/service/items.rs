@@ -10,6 +10,7 @@ use crate::models::user::User;
 use crate::models::{OffsetPage, OrderBy, Paging, list, tag, unit};
 
 use super::{Actor, Ctx, Result, lists};
+use crate::fuzzy;
 use crate::history_rank::{self, Candidate};
 use crate::quick_add;
 
@@ -169,11 +170,17 @@ pub async fn forget(ctx: &Ctx, actor: &Actor, list_id: list::Id, name: Name) -> 
 ///
 /// The list's memory, not the actor's: everyone sharing it sees and feeds the same
 /// one, which is the point of keying history on the list.
+///
+/// `query` is what has been typed so far, matched loosely — see [`crate::fuzzy`]. The
+/// matching happens here rather than in a transport so the phone and the browser
+/// cannot offer different suggestions for the same letters. `None` is the whole list,
+/// in rank order.
 pub async fn suggestions(
     ctx: &Ctx,
     actor: &Actor,
     list_id: list::Id,
     limit: i64,
+    query: Option<&str>,
 ) -> Result<Vec<Name>> {
     lists::readable(ctx, actor.person()?, list_id).await?;
 
@@ -195,7 +202,21 @@ pub async fn suggestions(
         now,
     );
 
-    Ok(ranked.into_iter().map(Name).collect())
+    let Some(query) = query.map(str::trim).filter(|q| !q.is_empty()) else {
+        return Ok(ranked.into_iter().map(Name).collect());
+    };
+
+    // Scored, then ranked: how well it matches what was typed decides the order, and
+    // how often it is bought breaks the ties. `position` is the rank order, so a
+    // stable sort on it keeps the more-used of two equal matches first.
+    let mut matches: Vec<(i32, usize, String)> = ranked
+        .into_iter()
+        .enumerate()
+        .filter_map(|(rank, name)| fuzzy::score(query, &name).map(|s| (s, rank, name)))
+        .collect();
+    matches.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+
+    Ok(matches.into_iter().map(|(_, _, name)| Name(name)).collect())
 }
 
 /// Clears everything ticked off one of the actor's lists, returning how many went.

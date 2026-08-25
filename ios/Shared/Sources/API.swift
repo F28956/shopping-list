@@ -70,13 +70,26 @@ actor API {
         return page.items
     }
 
-    /// What gets bought on this list, best guess first.
+    /// Every tag, in the order a shop is walked.
+    func tags() async throws -> [Tag] {
+        let page: Page<Tag> = try await get("/api/tags?order_by=name&size=200")
+        return page.items.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
+    }
+
+    /// What this item is filed under. A bare array, not a page: an item has few.
+    func tags(on item: Item, in list: List) async throws -> [Tag] {
+        try await get("/api/lists/\(list.id)/items/\(item.id)/tags")
+    }
+
+    /// What gets bought on this list that matches what has been typed, best first.
     ///
-    /// The list's memory, not this person's: everyone sharing it feeds and sees the
-    /// same one. The ranking is the server's -- recency and frequency with a decay --
-    /// so the phone shows them in the order it is given and does not re-sort.
-    func suggestions(on list: List) async throws -> [String] {
-        try await get("/api/lists/\(list.id)/history")
+    /// Matched on the server, not here. The rules are loose -- letters need not be
+    /// adjacent or at the start -- and a second implementation of them in Swift would
+    /// agree with the browser only until one of the two was changed. The order is the
+    /// server's too, so this shows what it is given and does not re-sort.
+    func suggestions(matching typed: String, on list: List) async throws -> [String] {
+        let query = typed.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+        return try await get("/api/lists/\(list.id)/history?q=\(query)")
     }
 
     // MARK: - Writing
@@ -114,6 +127,22 @@ actor API {
             "unit_id": unitID.map { $0 as Any } ?? NSNull(),
         ]
         _ = try await send("PUT", "/api/lists/\(list.id)/items/\(item.id)", body)
+    }
+
+    func attach(_ tag: Tag, to item: Item, on list: List) async throws {
+        _ = try await send(
+            "POST",
+            "/api/lists/\(list.id)/items/\(item.id)/tags",
+            ["tag_id": tag.id]
+        )
+    }
+
+    func detach(_ tag: Tag, from item: Item, on list: List) async throws {
+        _ = try await send(
+            "DELETE",
+            "/api/lists/\(list.id)/items/\(item.id)/tags/\(tag.id)",
+            nil
+        )
     }
 
     /// Empties the trolley: everything ticked off, in one request.

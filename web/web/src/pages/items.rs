@@ -3,7 +3,7 @@
 use std::convert::Infallible;
 use std::time::Duration;
 
-use axum::extract::{Form, Path, State};
+use axum::extract::{Form, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -54,8 +54,6 @@ struct Board {
     /// How many are on this list in total, and whether the page holds them all.
     total: i64,
     truncated: bool,
-    /// What this person has bought before, for the quick-add suggestions.
-    suggestions: Vec<item::Name>,
     unit_names: std::collections::HashMap<i64, String>,
     tags_by_item: std::collections::HashMap<i64, Vec<tag::Tag>>,
     all_tags: Vec<tag::Tag>,
@@ -80,7 +78,6 @@ async fn board(s: &AppState, actor: &Actor, list_id: list::Id) -> Result<Board, 
         truncated: page.has_more,
         items: page.items,
         role: lists::role(&s.ctx, actor, list_id).await?,
-        suggestions: items::suggestions(&s.ctx, actor, list_id, 100).await?,
         unit_names: unit_lookup(s, actor).await?,
         // One query for the whole page rather than one per item.
         tags_by_item: tags::for_list(&s.ctx, actor, list_id).await?,
@@ -372,6 +369,48 @@ pub async fn events(
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
+/// The options a browser offers under the add field.
+fn suggestion_list(names: &[item::Name]) -> Markup {
+    html! {
+        datalist id="item-history" {
+            @for name in names { option value=(name.0) {} }
+        }
+    }
+}
+
+/// The suggestions for what has been typed so far.
+///
+/// A route rather than filtering in JavaScript: the matching lives in the service,
+/// so the browser and the phone offer the same things for the same letters. It costs
+/// a request per keystroke-ish -- htmx debounces it -- which is the price of not
+/// having a second matcher here to drift from the first.
+pub async fn suggestions(
+    session: Session,
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    Query(typed): Query<Typed>,
+) -> Result<Markup, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+
+    // Nothing typed, nothing offered.
+    let Some(query) = typed.line.as_deref().map(str::trim).filter(|q| !q.is_empty()) else {
+        return Ok(suggestion_list(&[]));
+    };
+
+    let names = items::suggestions(&s.ctx, &actor, list::Id(id), 100, Some(query)).await?;
+    Ok(suggestion_list(&names))
+}
+
+/// What has been typed into the add field so far.
+///
+/// Named `line` because that is the input's own name, and htmx sends a field under
+/// its name. The API calls the same thing `q`; they are different conventions on
+/// different transports, and the matching they both reach is the one in the service.
+#[derive(serde::Deserialize)]
+pub struct Typed {
+    pub line: Option<String>,
+}
+
 pub async fn show(
     session: Session,
     State(s): State<AppState>,
@@ -413,13 +452,17 @@ pub async fn show(
                  hx-post={ "/lists/" (list.id.0) "/items" }
                  hx-target="#items" hx-swap="outerHTML" {
                 input type="text" name="line" placeholder="Add an item — try 2 kg apples"
-                      required maxlength="200" autocomplete="off" list="item-history";
+                      required maxlength="200" autocomplete="off" list="item-history"
+                      hx-get={ "/lists/" (list.id.0) "/suggestions" }
+                      hx-trigger="keyup changed delay:150ms"
+                      hx-target="#item-history" hx-swap="outerHTML";
                 button class="primary" { "Add" }
             }
 
-            datalist id="item-history" {
-                @for name in &b.suggestions { option value=(name.0) {} }
-            }
+            // Empty until something is typed. A datalist the browser has been given
+            // in full is shown in full the moment the field is focused, which is a
+            // second list on top of the one you came to read.
+            (suggestion_list(&[]))
             }
         },
     ))

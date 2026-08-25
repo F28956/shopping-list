@@ -6,7 +6,7 @@
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::get,
 };
@@ -23,11 +23,21 @@ pub fn router() -> Router<AppState> {
         .route("/{name}", axum::routing::delete(forget))
 }
 
+/// What has been typed so far, if anything.
+#[derive(Debug, serde::Deserialize)]
+pub struct Typed {
+    pub q: Option<String>,
+}
+
 /// The suggestions this person would be offered, in the order they would appear.
+///
+/// `?q=` narrows them, matched loosely by the service — so the phone and the browser
+/// offer the same things for the same letters. Without it, the whole list.
 async fn list(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(list_id): Path<i64>,
+    Query(typed): Query<Typed>,
 ) -> Result<Json<Vec<item::Name>>, AppError> {
     Ok(Json(
         items::suggestions(
@@ -35,6 +45,7 @@ async fn list(
             &user.actor(),
             list::Id(list_id),
             domain::service::PAGE_MAX,
+            typed.q.as_deref(),
         )
         .await?,
     ))

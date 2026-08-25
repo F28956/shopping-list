@@ -13,6 +13,7 @@ timestamp!(CreatedAt);
 
 // An item name is free text a person reads back, so only the padding comes off
 trimmed!(Name);
+capitalised!(Name);
 
 /// The longest name `items.name` accepts, in characters — keep in step with the
 /// `CHECK` in the init migration. Anything longer is [`Error::InvalidInput`].
@@ -80,7 +81,7 @@ impl Item {
         amount: Amount,
         unit_id: Option<unit::Id>,
     ) -> Result<Item> {
-        let name = name.trimmed();
+        let name = name.trimmed().capitalised();
 
         let item = sqlx::query_as!(
             Item,
@@ -119,7 +120,7 @@ impl Item {
         amount: Amount,
         unit_id: Option<unit::Id>,
     ) -> Result<Item> {
-        let name = name.trimmed();
+        let name = name.trimmed().capitalised();
 
         let item = sqlx::query_as!(
             Item,

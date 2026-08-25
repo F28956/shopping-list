@@ -60,6 +60,22 @@ macro_rules! trimmed {
     )*};
 }
 
+/// Gives each [`string!`] type a `capitalised` method: the first letter upper-cased,
+/// so a list reads as a list rather than as a transcript of typing.
+///
+/// A first word that already carries a capital is left alone. `iPhone charger` and
+/// `BBQ sauce` are spelled that way on purpose, and "capitalise" would spell them
+/// `IPhone charger` and `BBQ sauce` — one of those is worse than doing nothing.
+macro_rules! capitalised {
+    ($($t:ident),* $(,)?) => {$(
+        impl $t {
+            pub fn capitalised(self) -> Self {
+                Self($crate::models::capitalise(&self.0))
+            }
+        }
+    )*};
+}
+
 macro_rules! i64 {
 ($($t:ident),* $(,)?) => {$(
     #[derive(Debug, Clone, Copy, PartialEq, Ord, PartialOrd, Eq, Hash, sqlx::Type, serde::Serialize)]

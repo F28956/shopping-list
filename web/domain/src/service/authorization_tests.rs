@@ -368,7 +368,7 @@ async fn suggestions_are_my_own_history(#[future(awt)] pool: SqlitePool) {
     .await
     .unwrap();
 
-    let mine = items::suggestions(&s.ctx, &s.mine, s.list.id, 50)
+    let mine = items::suggestions(&s.ctx, &s.mine, s.list.id, 50, None)
         .await
         .unwrap();
 
@@ -475,7 +475,7 @@ async fn history_survives_clearing_the_list(#[future(awt)] pool: SqlitePool) {
 
     items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap();
 
-    let after = items::suggestions(&s.ctx, &s.mine, s.list.id, 50)
+    let after = items::suggestions(&s.ctx, &s.mine, s.list.id, 50, None)
         .await
         .unwrap();
     assert!(
@@ -633,7 +633,7 @@ async fn spelling_does_not_split_the_memory(#[future(awt)] pool: SqlitePool) {
         .await
         .unwrap();
 
-    let suggestions = items::suggestions(&s.ctx, &s.mine, s.list.id, 50)
+    let suggestions = items::suggestions(&s.ctx, &s.mine, s.list.id, 50, None)
         .await
         .unwrap();
     let milks: Vec<_> = suggestions
@@ -645,8 +645,10 @@ async fn spelling_does_not_split_the_memory(#[future(awt)] pool: SqlitePool) {
         1,
         "one item became several memories: {suggestions:?}"
     );
-    // shown back the way it was last written
-    assert_eq!(milks[0].0, "milk");
+    // Shown back the way it was last stored, which is capitalised: names are
+    // capitalised on the way in, so the memory carries the same spelling the list
+    // does rather than a transcript of the last person's typing.
+    assert_eq!(milks[0].0, "Milk");
 }
 
 /// A typo can be taken back.
@@ -662,7 +664,7 @@ async fn a_mistake_can_be_forgotten(#[future(awt)] pool: SqlitePool) {
         .await
         .unwrap();
 
-    let after = items::suggestions(&s.ctx, &s.mine, s.list.id, 50)
+    let after = items::suggestions(&s.ctx, &s.mine, s.list.id, 50, None)
         .await
         .unwrap();
     assert!(!after.iter().any(|n| n.0 == "Mlik"), "{after:?}");
@@ -782,7 +784,7 @@ async fn history_is_private(#[future(awt)] pool: SqlitePool) {
         .await
         .unwrap();
 
-    let mine = items::suggestions(&s.ctx, &s.mine, s.list.id, 50)
+    let mine = items::suggestions(&s.ctx, &s.mine, s.list.id, 50, None)
         .await
         .unwrap();
 
@@ -897,7 +899,7 @@ async fn a_viewer_may_only_read(#[future(awt)] pool: SqlitePool) {
             .is_ok()
     );
     assert!(
-        items::suggestions(&s.ctx, &s.theirs, s.list.id, 50)
+        items::suggestions(&s.ctx, &s.theirs, s.list.id, 50, None)
             .await
             .is_ok()
     );
@@ -954,7 +956,7 @@ async fn history_is_shared_with_the_list(#[future(awt)] pool: SqlitePool) {
         .await
         .unwrap();
 
-    let theirs = items::suggestions(&s.ctx, &s.theirs, s.list.id, 50)
+    let theirs = items::suggestions(&s.ctx, &s.theirs, s.list.id, 50, None)
         .await
         .unwrap();
 
