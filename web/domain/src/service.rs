@@ -10,6 +10,7 @@
 #[cfg(test)]
 mod authorization_tests;
 
+pub mod identity;
 pub mod items;
 pub mod lists;
 pub mod notes;

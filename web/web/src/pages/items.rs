@@ -198,10 +198,9 @@ fn item_row(list_id: list::Id, b: &Board, i: &item::Item, open: Option<i64>) -> 
                     }
                     button class="primary" { "Save" }
                     // A label, not a button: it unticks the switch and so puts the row
-                    // back, with no JavaScript needed. The hx-on is only there to drop
-                    // unsaved typing, and its absence degrades to leaving it in place.
-                    label class="cancel" for=(format!("panel-{}", i.id.0))
-                          hx-on:click="this.closest('form').reset()" { "Cancel" }
+                    // back, with no JavaScript needed. app.js additionally drops the
+                    // unsaved typing; without it the field simply keeps what was typed.
+                    label class="cancel" for=(format!("panel-{}", i.id.0)) { "Cancel" }
                 }
 
                 div class="tag-edit" {
@@ -323,8 +322,7 @@ pub async fn show(
             // people actually complain about is typing "Milk" again every week.
             form class="add" method="post" action={ "/lists/" (list.id.0) "/items" }
                  hx-post={ "/lists/" (list.id.0) "/items" }
-                 hx-target="#items" hx-swap="outerHTML"
-                 hx-on::after-request="this.reset()" {
+                 hx-target="#items" hx-swap="outerHTML" {
                 input type="text" name="line" placeholder="Add an item — try 2 kg apples"
                       required maxlength="200" autocomplete="off" list="item-history";
                 button class="primary" { "Add" }

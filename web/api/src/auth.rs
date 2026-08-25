@@ -1,6 +1,6 @@
 use axum::{extract::FromRequestParts, http::request::Parts};
-use domain::models::user::{self, User};
-use domain::service::Actor;
+use domain::models::user;
+use domain::service::{Actor, identity};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 
 use crate::error::AppError;
@@ -30,12 +30,12 @@ impl From<Claims> for (user::Sub, Option<user::Name>, Option<user::Email>) {
 /// is never applied to the routes that use it — on a shared origin the browser
 /// attaches session cookies to `/api/*` too, so a cookie must not be able to
 /// authenticate anything here.
-pub struct CurrentUser(pub User);
+pub struct CurrentUser(pub Actor);
 
 impl CurrentUser {
     /// The actor to hand to the service layer.
     pub fn actor(self) -> Actor {
-        Actor::User(self.0)
+        self.0
     }
 }
 
@@ -73,11 +73,10 @@ impl FromRequestParts<AppState> for CurrentUser {
         };
 
         let (sub, name, email) = claims.into();
-        // find_or_create, not create: this runs on every authenticated request, so it
-        // has to be idempotent. `create` would collide with `users.sub UNIQUE` the
-        // second time a returning person made a request.
-        let user = User::find_or_create(&state.ctx.db, sub, name, email).await?;
+        // The one place a transport may reach an identity: resolving it is what
+        // produces an actor, so it cannot take one.
+        let actor = identity::from_claims(&state.ctx, sub, name, email).await?;
 
-        Ok(CurrentUser(user))
+        Ok(CurrentUser(actor))
     }
 }

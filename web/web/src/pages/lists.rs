@@ -84,10 +84,10 @@ async fn current(s: &AppState, actor: &Actor) -> Result<Vec<List>, AppError> {
 }
 
 pub async fn index(session: Session, State(s): State<AppState>) -> Result<Markup, AppError> {
-    let Some(user) = auth::current_user(&session, &s.ctx).await? else {
+    let Some(actor) = auth::current_actor(&session, &s.ctx).await? else {
         return Ok(view::sign_in());
     };
-    let actor = Actor::User(user.clone());
+    let user = actor.person()?.clone();
     let lists = current(&s, &actor).await?;
 
     Ok(view::page(
@@ -97,8 +97,7 @@ pub async fn index(session: Session, State(s): State<AppState>) -> Result<Markup
             (fragment(&lists))
 
             form class="add" method="post" action="/lists"
-                 hx-post="/lists" hx-target="#lists" hx-swap="outerHTML"
-                 hx-on::after-request="this.reset()" {
+                 hx-post="/lists" hx-target="#lists" hx-swap="outerHTML" {
                 input type="text" name="name" placeholder="New list" required maxlength="128";
                 button class="primary" { "Add list" }
             }

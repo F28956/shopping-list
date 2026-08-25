@@ -10,7 +10,7 @@ use axum::{
     response::Redirect,
     routing::{get, post},
 };
-use domain::models::user::{self, User};
+use domain::models::user;
 use domain::service::Ctx;
 use openidconnect::{
     AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
@@ -22,6 +22,7 @@ use tower_sessions::{Expiry, Session, SessionManagerLayer, cookie::SameSite};
 
 pub mod assets;
 pub mod auth;
+pub mod csrf;
 pub mod error;
 pub mod htmx;
 pub mod pages;
@@ -100,8 +101,8 @@ async fn callback(
 
     // 5. Resolve the identity to a user, once. The session then outlives the id_token,
     //    which is good for about an hour and is not refreshed anywhere.
-    let user = User::find_or_create(
-        &s.ctx.db,
+    let actor = domain::service::identity::from_claims(
+        &s.ctx,
         user::Sub(claims.subject().to_string()),
         Some(name)
             .filter(|n: &String| !n.is_empty())
@@ -109,6 +110,7 @@ async fn callback(
         claims.email().map(|e| user::Email(e.to_string())),
     )
     .await?;
+    let user = actor.person()?.clone();
 
     // 6. New session id, then store who they are
     session.cycle_id().await?;
@@ -168,9 +170,21 @@ pub async fn session_store(ctx: &Ctx) -> anyhow::Result<sessions::SqliteSessions
 /// to anything else by accident: a router that has been merged with the API's is no
 /// longer safe to wrap in sessions, and this is the last point at which that is
 /// still obvious.
+/// Whether the session cookie may travel over plain HTTP.
+///
+/// `true` unless `SESSION_INSECURE=true` says otherwise, so the safe answer is the
+/// one you get by not thinking about it. A local run over http:// needs the exception;
+/// anything reachable from outside must not have it.
+pub fn cookie_secure() -> bool {
+    !matches!(
+        std::env::var("SESSION_INSECURE").as_deref(),
+        Ok("true") | Ok("1")
+    )
+}
+
 pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
     let session_layer = SessionManagerLayer::new(sessions)
-        .with_secure(false)
+        .with_secure(cookie_secure())
         .with_http_only(true)
         // Lax keeps the cookie off cross-site non-navigation requests. It is depth
         // behind the real rule, not the rule itself: /api never reads cookies at all.
@@ -181,6 +195,8 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
 
     Router::new()
         .route("/static/htmx.js", get(assets::htmx))
+        .route("/static/app.css", get(assets::css))
+        .route("/static/app.js", get(assets::app_js))
         .route("/", get(pages::lists::index))
         .route("/lists", post(pages::lists::create))
         .route("/lists/{id}/rename", post(pages::lists::rename))
@@ -216,5 +232,12 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
         .route("/auth/callback", get(callback))
         .route("/auth/logout", get(logout))
         .layer(session_layer)
+        // Applied here, with the session layer, because the two belong together: this
+        // is the router whose requests carry a cookie, and so the only one that can be
+        // made to act on somebody else's behalf.
+        .layer(axum::middleware::from_fn_with_state(
+            csrf::Origin::from_env(),
+            csrf::guard,
+        ))
         .with_state(state)
 }

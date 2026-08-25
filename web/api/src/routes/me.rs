@@ -12,8 +12,9 @@
 //! and note the person owns, and an irreversible DELETE deserves a confirmation flow
 //! designed on purpose rather than a route added in passing.
 
-use axum::{Json, Router, routing::get};
+use axum::{Json, Router, extract::State, routing::get};
 use domain::models::user::User;
+use domain::service::users;
 
 use crate::auth::CurrentUser;
 use crate::error::AppError;
@@ -27,6 +28,8 @@ pub fn router() -> Router<AppState> {
 ///
 /// There is no `/api/users/{id}`: nothing here needs one person to look another up,
 /// and an endpoint that could would be the first thing to leak an address.
-async fn me(user: CurrentUser) -> Result<Json<User>, AppError> {
-    Ok(Json(user.0))
+async fn me(State(state): State<AppState>, user: CurrentUser) -> Result<Json<User>, AppError> {
+    // Through the service, not straight off the extractor: this is the only route
+    // that could plausibly skip it, and the moment one does the rule stops being one.
+    Ok(Json(users::me(&state.ctx, &user.actor()).await?))
 }

@@ -1202,3 +1202,87 @@ async fn a_stranger_cannot_clear_my_list(#[future(awt)] pool: SqlitePool) {
         StatusCode::NOT_FOUND
     );
 }
+
+// ------------------------------------------------------------------ security
+
+/// The second layer under `SameSite=Lax`: a state-changing request that says it came
+/// from another site is refused, whatever cookie it carries.
+#[rstest]
+#[case::a_hostile_origin("origin", "https://evil.example", StatusCode::FORBIDDEN)]
+#[case::cross_site_fetch("sec-fetch-site", "cross-site", StatusCode::FORBIDDEN)]
+#[case::our_own_origin("origin", "http://localhost:8080", StatusCode::SEE_OTHER)]
+#[case::same_site_fetch("sec-fetch-site", "same-origin", StatusCode::SEE_OTHER)]
+#[case::a_typed_url("sec-fetch-site", "none", StatusCode::SEE_OTHER)]
+#[tokio::test]
+async fn a_cross_site_post_is_refused(
+    #[future(awt)] pool: SqlitePool,
+    #[case] header_name: &str,
+    #[case] header_value: &str,
+    #[case] expected: StatusCode,
+) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|victim").await;
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/lists")
+                .method("POST")
+                .header(header::COOKIE, cookie)
+                .header(header_name, header_value)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from("name=planted"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), expected, "{header_name}: {header_value}");
+}
+
+/// Reading is never refused — a link from anywhere still works.
+#[rstest]
+#[tokio::test]
+async fn a_cross_site_read_is_allowed(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|reader").await;
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/")
+                .header(header::COOKIE, cookie)
+                .header("sec-fetch-site", "cross-site")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+/// A page that needs `unsafe-inline` has a policy in name only, so the markup must
+/// carry no inline script or style for the header to be worth sending.
+#[rstest]
+#[tokio::test]
+async fn the_markup_has_nothing_a_strict_csp_would_block(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|csp").await;
+    post(&app, "/lists", &cookie, "name=Shop").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+
+    assert!(
+        !body.contains("<style"),
+        "an inline stylesheet remains: {body}"
+    );
+    assert!(
+        !body.contains("hx-on"),
+        "an inline event handler remains, which needs unsafe-inline: {body}"
+    );
+    assert!(
+        body.contains("/static/app.css"),
+        "the stylesheet is not served"
+    );
+    assert!(
+        body.contains("/static/app.js"),
+        "the behaviour is not served"
+    );
+}

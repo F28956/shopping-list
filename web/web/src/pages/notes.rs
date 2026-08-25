@@ -73,8 +73,7 @@ pub async fn index(session: Session, State(s): State<AppState>) -> Result<Markup
             (fragment(&notes))
 
             form class="add" method="post" action="/notes"
-                 hx-post="/notes" hx-target="#notes" hx-swap="outerHTML"
-                 hx-on::after-request="this.reset()" {
+                 hx-post="/notes" hx-target="#notes" hx-swap="outerHTML" {
                 input type="text" name="body" placeholder="Add a note" required maxlength="4096";
                 button class="primary" { "Add" }
             }

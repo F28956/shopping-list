@@ -8,11 +8,13 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::http::{HeaderName, HeaderValue, header};
 use axum::{Router, routing::get};
 use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode},
 };
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::{catch_panic::CatchPanicLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -74,6 +76,57 @@ fn app(api_state: ApiState, web_state: web::AppState, sessions: SqliteSessions) 
         .merge(web::router(web_state, sessions))
         .layer(CatchPanicLayer::new())
         .layer(TraceLayer::new_for_http())
+        .layer(security_headers())
+}
+
+/// The headers a browser needs to be told, since it assumes the worst otherwise.
+///
+/// The policy is strict on purpose, and the application was changed to fit it rather
+/// than the other way round: the stylesheet and the two behaviours that were inline
+/// `hx-on` attributes moved into served files, so `script-src` and `style-src` can
+/// both say `self` and nothing else. A CSP that has to allow `unsafe-inline` is
+/// mostly decoration.
+fn security_headers() -> tower::layer::util::Stack<
+    SetResponseHeaderLayer<HeaderValue>,
+    tower::layer::util::Stack<
+        SetResponseHeaderLayer<HeaderValue>,
+        tower::layer::util::Stack<
+            SetResponseHeaderLayer<HeaderValue>,
+            SetResponseHeaderLayer<HeaderValue>,
+        >,
+    >,
+> {
+    const CSP: &str = "default-src 'self'; \
+                       script-src 'self'; \
+                       style-src 'self'; \
+                       img-src 'self' data:; \
+                       form-action 'self'; \
+                       base-uri 'none'; \
+                       frame-ancestors 'none'";
+
+    tower::layer::util::Stack::new(
+        SetResponseHeaderLayer::overriding(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(CSP),
+        ),
+        tower::layer::util::Stack::new(
+            SetResponseHeaderLayer::overriding(
+                HeaderName::from_static("x-content-type-options"),
+                HeaderValue::from_static("nosniff"),
+            ),
+            tower::layer::util::Stack::new(
+                SetResponseHeaderLayer::overriding(
+                    header::REFERRER_POLICY,
+                    HeaderValue::from_static("same-origin"),
+                ),
+                // frame-ancestors above covers modern browsers; this covers the rest.
+                SetResponseHeaderLayer::overriding(
+                    HeaderName::from_static("x-frame-options"),
+                    HeaderValue::from_static("DENY"),
+                ),
+            ),
+        ),
+    )
 }
 
 /// Opens the database, deliberately refusing to create it.
@@ -198,5 +251,127 @@ mod tests {
             .unwrap();
 
         assert_eq!(status(&app, req).await, StatusCode::OK);
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use domain::models::pool;
+    use http_body_util::BodyExt;
+    use rstest::rstest;
+    use sqlx::SqlitePool;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    /// The headers are set on the composed router, so they are asserted there: a layer
+    /// applied to one half only would still look right in that half's own tests.
+    #[rstest]
+    #[case::csp("content-security-policy")]
+    #[case::nosniff("x-content-type-options")]
+    #[case::referrer("referrer-policy")]
+    #[case::framing("x-frame-options")]
+    #[tokio::test]
+    async fn every_response_carries_its_security_headers(
+        #[future(awt)] pool: SqlitePool,
+        #[case] name: &str,
+    ) {
+        let ctx = Ctx::new(pool);
+        let api_state = ApiState {
+            ctx: ctx.clone(),
+            auth: AuthMode::TrustTheToken,
+        };
+        let app = Router::new()
+            .route("/healthz", get(|| async { "ok" }))
+            .nest("/api", api::router().with_state(api_state))
+            .layer(security_headers());
+
+        for uri in ["/healthz", "/api/notes?order_by=id"] {
+            let res = app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert!(
+                res.headers().contains_key(name),
+                "{uri} came back without {name}"
+            );
+            let _ = res.into_body().collect().await;
+        }
+    }
+
+    /// A policy is only worth sending if it forbids inline script and style. One that
+    /// allows them is decoration.
+    #[rstest]
+    #[tokio::test]
+    async fn the_policy_forbids_inline_code(#[future(awt)] pool: SqlitePool) {
+        let _ = pool;
+        let app = Router::new()
+            .route("/healthz", get(|| async { "ok" }))
+            .layer(security_headers());
+
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let csp = res
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .expect("no policy")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        assert!(
+            !csp.contains("unsafe-inline"),
+            "the policy allows inline code: {csp}"
+        );
+        assert!(
+            !csp.contains("unsafe-eval"),
+            "the policy allows eval: {csp}"
+        );
+        assert!(
+            csp.contains("frame-ancestors 'none'"),
+            "framing is not forbidden: {csp}"
+        );
+        assert!(
+            csp.contains("base-uri 'none'"),
+            "a <base> could rewrite every URL on the page: {csp}"
+        );
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    /// The safe answer is the one you get by not thinking about it.
+    #[test]
+    fn the_session_cookie_is_secure_unless_told_otherwise() {
+        // SAFETY: nothing else in this test binary reads this variable, and it is
+        // removed again before the test ends.
+        unsafe { std::env::remove_var("SESSION_INSECURE") };
+        assert!(
+            web::cookie_secure(),
+            "an unset environment must mean secure"
+        );
+
+        unsafe { std::env::set_var("SESSION_INSECURE", "true") };
+        assert!(
+            !web::cookie_secure(),
+            "the local-development exception does not work"
+        );
+
+        unsafe { std::env::set_var("SESSION_INSECURE", "no") };
+        assert!(
+            web::cookie_secure(),
+            "only an explicit true may switch it off"
+        );
+
+        unsafe { std::env::remove_var("SESSION_INSECURE") };
     }
 }
