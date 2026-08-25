@@ -1,0 +1,239 @@
+# Three transports, one process
+
+One executable serves the browser, the HTTP API and — later — MCP, over a service
+layer that owns authorization. The browser reaches the database without HTTP; iOS
+keeps it.
+
+**Status:** built and in use. 438 tests. The credential for non-browser clients is the
+one open decision, and it blocks MCP.
+
+```
+  iOS ─────── HTTP bearer ──┐
+  MCP ─────── HTTP bearer ──┼─→  /api/*   ─┐
+  browser ─── cookie ───────┴─→  /*       ─┴─→  domain::service  ─→  models  ─→  SQLite
+                                                (owns authorization)
+```
+
+## Layout
+
+| Crate | Contains |
+|---|---|
+| `domain` | Models, service layer, `Actor`, `Ctx`, migrations, fixtures |
+| `api` | Bearer auth, JWKS, JSON routes, `ServiceError` → status mapping |
+| `web` | OIDC login, sessions, maud pages |
+| `server` | Config, pool, migrations, tracing, one listener, router composition |
+
+`api` and `web` are libraries exporting `router()`. Only `server` has a `main`.
+
+It is called `domain` rather than `core` because a package named `core` shadows the
+standard library's, and `use core::…` then resolves ambiguously.
+
+## Decisions
+
+### D1 · Authorization lives in the service layer
+
+Every service function takes an `&Actor` and enforces access itself. Transports
+authenticate — turning a bearer token or a cookie into an `Actor` — and never decide
+what that actor may touch.
+
+This is the load-bearing decision. The models are deliberately actor-agnostic:
+`Note::get` will hand you anybody's note, because a row does not know who is asking.
+With three transports, a check living in an HTTP handler is a check the browser path
+skips. Without D1 the in-process shortcut is an authorization bypass with extra steps.
+
+Three shapes of rule:
+
+- **Owner-scoped** (lists, notes). The owner comes from the actor, never from an
+  argument, so a caller cannot pass the wrong one.
+- **Reached through an owner** (items, tagging). An item id is not a capability: the
+  item's own row says nothing about who may touch it, so its list is consulted.
+  `lists::owned` is the single place that rule lives — when `list_members` grows
+  teeth, that is the one function that has to learn the difference between "owns" and
+  "can see".
+- **Shared reference data** (units, tags). Read by anyone, written only by
+  `Actor::System`, which no request can produce. `kg` is not anyone's kilogram.
+
+**Unauthorized reads as `NotFound`, never `Forbidden`.** `Forbidden` confirms the row
+exists, which tells someone holding a guessed id something true about another
+person's data. The distinction stays in the log line. A test asserts a forbidden note
+and a missing note are indistinguishable.
+
+### D2 · One listener, path-prefixed, boundary enforced by layering
+
+`/api/*` is bearer-authenticated JSON, `/mcp/*` arrives later, everything else is the
+cookie-authenticated web UI. One hostname, one certificate.
+
+This moves the security boundary off the network and into the router. Same origin
+means the browser **will** attach the session cookie to `/api/*`, including on
+requests triggered by another site. Three rules make that harmless:
+
+1. The session layer wraps the web router **only**, applied inside `web::router`
+   before merging — a router already merged with the API's is no longer safe to wrap,
+   and that is the last point at which it is still obvious.
+2. API handlers authenticate from `Authorization: Bearer` and nothing else. A request
+   carrying only a cookie is `401`, whatever the cookie says.
+3. The cookie is `SameSite=Lax` — depth behind the first two, not instead of them.
+
+> Mounting an API route under the session layer is a one-line mistake with **no
+> visible symptom**: the endpoint keeps working, it just also works for any website
+> that links to it. `server`'s tests drive a valid session cookie at an API route
+> through the composed router and require `401`.
+
+### D3 · The browser calls the service layer directly
+
+No `reqwest`, no `api_base`, no token replay. A maud handler calls
+`service::notes::list(&ctx, &actor, …)` and renders the result.
+
+### D4 · One pool, because SQLite
+
+SQLite is a single file with a single writer. Two processes on `data.db` means lock
+contention and reliance on `busy_timeout`. One process owning the pool removes a class
+of production problem that would not exist on Postgres — the strongest single argument
+for the merge, and the reason MCP will be HTTP rather than a stdio subprocess.
+
+### D5 · Sessions in SQLite
+
+The store is hand-written. `tower-sessions-sqlx-store` is built against sqlx 0.8 while
+this workspace is on 0.9, so its `Pool<Sqlite>` is a different type and cannot take our
+pool; pinning the workspace back a major version to borrow eighty lines was the worse
+trade. Expiry is enforced on load, not by a sweeper.
+
+The session table is created by the store rather than by a `domain` migration: the
+shape of a session row belongs to whichever transport keeps sessions, and neither the
+API nor MCP does.
+
+### D6 · The HTTP API stays under test on its own
+
+Once the browser stopped using HTTP, only iOS exercises that layer. Every route has a
+request-level test driving the real router in-process.
+
+`AuthMode` makes that possible: how a bearer token becomes an identity is a value
+rather than a hard-wired call. `AuthMode::TrustTheToken` is behind a `test-support`
+feature enabled only from dev-dependencies, so a release build contains no such
+variant — there is no flag that could switch it on, because there is no code for it to
+switch on.
+
+### D7 · Panics unwind
+
+`panic = "abort"` is absent from the release profile. Sharing a process means aborting
+would let a panic in one template handler take the iOS API down with it.
+`CatchPanicLayer` turns it into a 500 on the offending request.
+
+Note: profiles are only honoured at the workspace root. `api/Cargo.toml` used to carry
+its own, silently ignored, and cargo warned about it on every invocation.
+
+## The service layer
+
+```rust
+pub enum Actor {
+    User(user::User),   // a signed-in person
+    System,             // fixtures, migrations, maintenance; never from a request
+}
+
+pub struct Ctx { pub db: SqlitePool }
+
+pub async fn rename(ctx: &Ctx, actor: &Actor, id: list::Id, name: list::Name)
+    -> Result<list::List, ServiceError>
+```
+
+`ctx` first, `actor` second, then the operation's own arguments. Every function that
+touches a scoped resource **loads it, checks the actor against it, then acts** — in
+that order, with no shortcut for the "obviously mine" case.
+
+There is no `Anonymous` variant: a request without a verified identity never gets an
+`Actor` at all, so "not signed in" is a shape the service layer cannot be handed.
+
+| `ServiceError` | api | web | mcp |
+|---|---|---|---|
+| `NotFound` | 404 | 404 page | tool error |
+| `Conflict` / `InUse` | 409 | re-render with message | tool error |
+| `InvalidInput` | 400 | re-render with field error | tool error |
+| `Unauthenticated` | 401 | redirect to login | tool error |
+| `Internal` | 500 + log | 500 page + log | tool error + log |
+
+`web` keeps its own `AppError` rather than sharing the API's, because the right answer
+differs by transport — not-signed-in is a redirect here and a 401 there. Both map the
+same `ServiceError` underneath, so whose fault a failure was is decided once.
+
+**Every scoped operation has a test where the actor is the wrong user and the expected
+result is `NotFound`.** They live together in `service/authorization_tests.rs` so the
+coverage is countable: an operation missing from that file has not been checked.
+
+## Reference data
+
+Units and tags belong to nobody and are written only by `Actor::System`, which no
+request can produce — so a migration is the only way they arrive. That makes adding or
+renaming one a schema change on purpose: renaming `kg` renames it on every list in the
+system.
+
+The API exposes them read-only, with no `POST`/`PUT`/`DELETE` at all. A write route
+could only ever refuse, and a route that exists and always says no is worse than one
+that does not exist. Tests assert `405`, so adding one later is deliberate.
+
+The test `pool` fixture clears both tables after migrating: tests need control of their
+own baseline, and the fixtures stamp `created_at` with staggered offsets that
+production has no reason to carry.
+
+## Testing
+
+Mutation testing, not just green ticks. Each rule was broken to confirm the suite
+notices:
+
+| Mutation | Caught by |
+|---|---|
+| Drop an ORDER BY `CASE` arm | ordering + `every_field_changes_the_order` |
+| Swap `LIMIT`/`OFFSET` | most of the paging suite |
+| Stop normalising before writes | 20 tests across three models |
+| Report every FK failure as `InUse` | 4 dangling-reference tests |
+| Let a cookie authenticate `/api` | composed-router boundary tests |
+| Drop `lists::owned`'s ownership check | 5 domain, plus api and web |
+
+That last exercise found a hole in a **test** rather than the code: the API's
+cross-user walk covered `GET`, `POST` and `DELETE` on an item and silently omitted
+`PUT`. A list of verbs goes stale when a route is added; `Field::VARIANTS` solved the
+equivalent problem for ordering, but there is no such trick for routes.
+
+## Traps worth knowing
+
+- **A `CHECK` on a nullable column flips sqlx's inference to NOT NULL**, and a
+  `#[sqlx(transparent)]` newtype then decodes NULL as `Some(Email(""))` rather than
+  `None` — silently. Every nullable column carries an explicit `?:` annotation.
+- **`DATABASE_URL` is resolved against the current working directory**, by the query
+  macros at compile time (CWD = workspace root) and by the binary at run time (CWD =
+  wherever you launched it). Use an absolute `sqlite:///` path. `create_if_missing` is
+  off, so a wrong path fails to start rather than silently serving an empty database.
+- **SQLite's `lower()` and `COLLATE NOCASE` fold ASCII only.** Normalisation happens in
+  Rust, where `to_lowercase` is Unicode-aware. The schema's `CHECK`s are a backstop
+  against writers that bypass the model, not the enforcement point.
+- **`ON DELETE RESTRICT` surfaces as SQLITE_CONSTRAINT_TRIGGER (1811)**, not the
+  foreign-key code sqlx maps. A blocked delete and a dangling reference are different
+  failures and must not collapse into one error.
+
+## Open
+
+**The credential for non-browser clients.** iOS and MCP both need it, both are badly
+served by a one-hour Google ID token, and neither should invent its own answer. That
+means a tokens table, a service, a way to mint one from the web UI, and revocation.
+MCP's transport is already decided: streamable HTTP at `/mcp`, nested outside the
+session layer for the same reason `/api` is.
+
+**Profile editing.** `users::update_profile` exists and is tested but is not wired.
+Authentication resolves the identity through `User::find_or_create` on every request,
+which coalesces the provider's claims over what is stored — so a self-chosen name
+would be overwritten by the next request. `a_login_overwrites_a_self_chosen_name`
+asserts exactly that, so deciding which side wins will break something loud.
+
+**Closing an account.** `users::close_account` cascades away every list, item and note.
+An irreversible `DELETE` deserves a confirmation flow designed on purpose.
+
+**Sharing.** `list_members` and `Role` map the schema; nothing operates on them.
+Answering it means deciding what a `viewer` may do.
+
+## Recorded, not taken
+
+The item-with-tags projection that predated this work paged by **keyset**
+(`WHERE id > ? ORDER BY id LIMIT ?`) rather than by offset. Keyset paging does not
+drift when rows are inserted mid-scroll and does not make the database count past the
+rows it skips. The pattern here is offset paging throughout — `Paging`, `OffsetPage`
+and every ordering test are built on it — and mixing the two would mean two answers to
+the same question. Worth revisiting only if a list gets long enough to matter.
