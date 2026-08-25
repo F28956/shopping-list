@@ -37,8 +37,12 @@ async fn main() -> anyhow::Result<()> {
 
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL is not set");
     tracing::info!("db url {}", db_url);
+    // No create_if_missing. DATABASE_URL is a relative path resolved against the
+    // current working directory, so launching from the wrong one used to mint a fresh
+    // empty database and migrate it — leaving the app running happily against nothing.
+    // Failing to open is a far better symptom than silently serving an empty database.
+    // First-time setup: `cd web/api && sqlx database create && sqlx migrate run`.
     let opts = SqliteConnectOptions::from_str(&db_url)?
-        .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .busy_timeout(Duration::from_secs(5))
         .foreign_keys(true);

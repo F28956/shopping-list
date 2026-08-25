@@ -24,19 +24,15 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [dev-dependencies]
 rstest = "0.26.1"
+# only for the concurrency test on User::find_or_create
+futures = "0.3"
 
 
-[profile.release]
-lto = "thin"
-codegen-units = 1
-strip = true
-panic = "abort"
+# No [profile.*] here. Cargo only honours profiles at the workspace root, so these
+# were being silently ignored — and printing a warning on every cargo invocation to
+# say so. They live in ../Cargo.toml.
 
 [lints.rust]
 dead_code = "allow"
 unused_variables = "allow"
 unused = "allow"
-
-[profile.test]
-split-debuginfo = "packed"
-debug = "full"

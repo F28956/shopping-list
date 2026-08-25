@@ -6,4 +6,8 @@ resolver = "2"
 lto = "thin"
 codegen-units = 1
 strip = true
-panic = "abort"
+# `panic = "abort"` is deliberately absent. The api, web and (later) mcp transports
+# share one process, so aborting on panic would make a panic in any one of them a
+# total outage for the others. Unwinding lets axum's catch-panic layer turn it into a
+# 500 on the offending request and leave every other transport serving. That layer is
+# tower_http::catch_panic::CatchPanicLayer, which needs the `catch-panic` feature.

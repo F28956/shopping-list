@@ -49,7 +49,10 @@ impl FromRequestParts<AppState> for CurrentUser {
         let claims = decode::<GoogleClaims>(token, &DecodingKey::from_jwk(&jwk)?, &v)?.claims;
 
         let (sub, name, email) = claims.into();
-        let user = User::create(&state.db, sub, name, email).await?;
+        // find_or_create, not create: this runs on every authenticated request, so it
+        // has to be idempotent. `create` would collide with `users.sub UNIQUE` the
+        // second time a returning person made a request.
+        let user = User::find_or_create(&state.db, sub, name, email).await?;
 
         Ok(CurrentUser(user))
     }

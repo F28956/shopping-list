@@ -107,6 +107,55 @@ impl User {
         Ok(user)
     }
 
+    /// Resolves the user behind a verified identity, creating them on first sight.
+    ///
+    /// This is what authentication calls on every request, so it has to be idempotent:
+    /// [`User::create`] is not, and using it here means the second request from a
+    /// returning person collides with `users.sub UNIQUE` and fails.
+    ///
+    /// One statement, so two requests arriving together cannot race into two rows —
+    /// the loser of the insert takes the `DO UPDATE` branch and gets the same row
+    /// back. `created_at` is left alone, so it keeps meaning "first seen".
+    ///
+    /// The provider's claims win where it sent them and lose where it did not:
+    /// `coalesce` refreshes a name or address that has changed since last login, and
+    /// keeps the stored one when this token carries neither. Clearing a profile field
+    /// is [`User::update`]'s job — signing in must never wipe it.
+    pub async fn find_or_create(
+        pool: &sqlx::SqlitePool,
+        sub: Sub,
+        name: Option<Name>,
+        email: Option<Email>,
+    ) -> Result<User> {
+        let sub = sub.trimmed();
+        let name = name.map(Name::trimmed);
+        let email = email.map(Email::normalized);
+
+        let user = sqlx::query_as!(
+            User,
+            r#"
+            INSERT INTO users (sub, email, name)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(sub) DO UPDATE SET
+                email = coalesce(?2, users.email),
+                name  = coalesce(?3, users.name)
+            RETURNING
+                id          as "id!: Id",
+                sub         as "sub: Sub",
+                email       as "email?: Email",
+                name        as "name?: Name",
+                created_at  as "created_at!: CreatedAt"
+            "#,
+            sub,
+            email,
+            name,
+        )
+        .fetch_one(pool)
+        .await?;
+
+        Ok(user)
+    }
+
     /// Replaces a user's profile.
     ///
     /// Both columns are written every time, so `None` clears rather than keeps —
@@ -474,6 +523,145 @@ mod tests {
 
         assert_ne!(first.id, second.id, "two subs, two users");
         assert_eq!(count(&pool).await?, 2);
+        Ok(())
+    }
+
+    // -------------------------------------------------------- find_or_create
+
+    /// The property that authentication depends on: calling it twice for the same
+    /// person yields one user, not a `Conflict`.
+    #[rstest]
+    #[tokio::test]
+    async fn find_or_create_is_idempotent(#[future(awt)] pool: SqlitePool) -> Result<()> {
+        let sub = Sub("google-oauth2|110583927461028374651".into());
+
+        let first = User::find_or_create(&pool, sub.clone(), None, None).await?;
+        let again = User::find_or_create(&pool, sub, None, None).await?;
+
+        assert_eq!(first.id, again.id, "the same person, not a second row");
+        assert_eq!(again.created_at, first.created_at, "created_at means first seen");
+        assert_eq!(count(&pool).await?, 1);
+        Ok(())
+    }
+
+    /// Ten simultaneous first-time logins must still produce one user. The insert and
+    /// the update are one statement, so the losers of the race take the `DO UPDATE`
+    /// branch rather than failing.
+    #[rstest]
+    #[tokio::test]
+    async fn find_or_create_survives_a_race(#[future(awt)] pool: SqlitePool) -> Result<()> {
+        let sub = Sub("github|9001".into());
+
+        let calls = (0..10).map(|_| User::find_or_create(&pool, sub.clone(), None, None));
+        let users = futures::future::try_join_all(calls).await?;
+
+        let first = users[0].id;
+        assert!(users.iter().all(|u| u.id == first), "raced into more than one user");
+        assert_eq!(count(&pool).await?, 1);
+        Ok(())
+    }
+
+    /// A profile that changed at the provider since last login follows the person in.
+    #[rstest]
+    #[tokio::test]
+    async fn find_or_create_refreshes_a_changed_profile(
+        #[future(awt)] pool: SqlitePool,
+    ) -> Result<()> {
+        let sub = Sub("auth0|abc".into());
+        User::find_or_create(
+            &pool,
+            sub.clone(),
+            Some(Name("Ana López".into())),
+            Some(Email("ana@example.com".into())),
+        )
+        .await?;
+
+        let after = User::find_or_create(
+            &pool,
+            sub,
+            Some(Name("Ana María López".into())),
+            Some(Email("  Ana.Lopez@Example.COM ".into())),
+        )
+        .await?;
+
+        assert_eq!(after.name, Some(Name("Ana María López".into())));
+        assert_eq!(
+            after.email,
+            Some(Email("ana.lopez@example.com".into())),
+            "normalised on the way in, like any other write"
+        );
+        Ok(())
+    }
+
+    /// A token that carries no name or address must not wipe the stored profile —
+    /// providers withhold claims, and signing in is not an edit.
+    #[rstest]
+    #[tokio::test]
+    async fn find_or_create_keeps_what_the_token_omits(
+        #[future(awt)] pool: SqlitePool,
+    ) -> Result<()> {
+        let sub = Sub("apple|001482".into());
+        let before = User::find_or_create(
+            &pool,
+            sub.clone(),
+            Some(Name("Sofía Ruiz".into())),
+            Some(Email("sofia@example.es".into())),
+        )
+        .await?;
+
+        let after = User::find_or_create(&pool, sub, None, None).await?;
+
+        assert_eq!(after.name, before.name, "a withheld claim must not clear the name");
+        assert_eq!(after.email, before.email, "nor the address");
+        Ok(())
+    }
+
+    /// `sub` is the identity, and its case is significant — the same rule
+    /// [`User::create`] follows.
+    #[rstest]
+    #[tokio::test]
+    async fn find_or_create_treats_sub_case_as_significant(
+        #[future(awt)] pool: SqlitePool,
+    ) -> Result<()> {
+        let one = User::find_or_create(&pool, Sub("github|Casey".into()), None, None).await?;
+        let two = User::find_or_create(&pool, Sub("github|casey".into()), None, None).await?;
+
+        assert_ne!(one.id, two.id, "two subs, two people");
+        assert_eq!(count(&pool).await?, 2);
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::empty_sub(Sub("".into()), Err(Error::InvalidInput))]
+    #[case::whitespace_only_sub(Sub("   ".into()), Err(Error::InvalidInput))]
+    #[case::sub_over_the_limit(Sub("s".repeat(MAX_SUB + 1)), Err(Error::InvalidInput))]
+    #[tokio::test]
+    async fn find_or_create_validates_like_create(
+        #[future(awt)] pool: SqlitePool,
+        #[case] sub: Sub,
+        #[case] expected: Result<()>,
+    ) -> Result<()> {
+        let got = User::find_or_create(&pool, sub, None, None).await.map(|_| ());
+
+        assert_eq!(got, expected);
+        assert_eq!(count(&pool).await?, 0);
+        Ok(())
+    }
+
+    /// It finds people who arrived by other routes, not only ones it created.
+    #[rstest]
+    #[tokio::test]
+    async fn find_or_create_finds_a_seeded_user(
+        #[with(seeds!("fixtures/users.sql"))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) -> Result<()> {
+        let existing = any_user(&pool).await?;
+
+        let found = User::find_or_create(&pool, existing.sub.clone(), None, None).await?;
+
+        assert_eq!(found, existing, "same row, unchanged");
+        assert_eq!(count(&pool).await?, SEEDED, "no row added");
         Ok(())
     }
 
