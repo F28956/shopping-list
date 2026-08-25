@@ -23,6 +23,11 @@ one open decision, and it blocks MCP.
 | `web` | OIDC login, sessions, maud pages |
 | `server` | Config, pool, migrations, tracing, one listener, router composition |
 
+Outside the Cargo workspace, `ios/` holds a SwiftUI app over the same API — a client
+and nothing more. Every rule about who may see or change what lives in
+`domain::service`, so the phone gets the same answers as the browser because it asks
+the same questions. See `ios/README.md`.
+
 `api` and `web` are libraries exporting `router()`. Only `server` has a `main`.
 
 It is called `domain` rather than `core` because a package named `core` shadows the
@@ -263,11 +268,11 @@ equivalent problem for ordering, but there is no such trick for routes.
 
 ## Open
 
-**The credential for non-browser clients.** iOS and MCP both need it, both are badly
-served by a one-hour Google ID token, and neither should invent its own answer. That
-means a tokens table, a service, a way to mint one from the web UI, and revocation.
-MCP's transport is already decided: streamable HTTP at `/mcp`, nested outside the
-session layer for the same reason `/api` is.
+**The credential for MCP.** iOS took the other road: Google's iOS SDK holds the
+credential and refreshes it, so the phone sends an ordinary Google ID token and the
+API simply accepts a second audience — one identity provider issues a different client
+id per platform. That leaves MCP, which has no SDK to lean on and no person present to
+sign in, still wanting a token this application issues and can revoke.
 
 **Profile editing.** `users::update_profile` exists and is tested but is not wired.
 Authentication resolves the identity through `User::find_or_create` on every request,

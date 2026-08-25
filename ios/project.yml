@@ -1,0 +1,78 @@
+# Generated into an .xcodeproj by XcodeGen: `xcodegen generate` in this directory.
+#
+# The project file is derived rather than committed. A .pbxproj is a generated
+# artefact that reviews terribly and conflicts worse; this is the description of it,
+# which is neither.
+name: ShoppingList
+options:
+  bundleIdPrefix: com.rimantas
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+packages:
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    from: "7.1.0"
+
+targets:
+  ShoppingList:
+    type: application
+    platform: iOS
+    sources:
+      - path: ShoppingList/Sources
+    dependencies:
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: GoogleSignIn
+        product: GoogleSignInSwift
+    info:
+      path: ShoppingList/Info.plist
+      properties:
+        CFBundleDisplayName: Shopping
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # Where the app looks for the server and which Google client it is. Both are
+        # read at runtime from the bundle so that pointing the app at a different
+        # server is a build setting rather than a code change.
+        ShoppingListAPIBaseURL: $(SHOPPING_LIST_API_BASE_URL)
+        GIDClientID: $(GOOGLE_IOS_CLIENT_ID)
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - $(GOOGLE_IOS_REVERSED_CLIENT_ID)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rimantas.shoppinglist
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        # Overridden by ios/Config.xcconfig when it exists — see the README. The
+        # defaults let the project build and run against a simulator without any of
+        # the Google console work being done first.
+        SHOPPING_LIST_API_BASE_URL: http://localhost:8080
+        GOOGLE_IOS_CLIENT_ID: ""
+        GOOGLE_IOS_REVERSED_CLIENT_ID: ""
+
+  ShoppingListTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ShoppingListTests
+    dependencies:
+      - target: ShoppingList
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rimantas.shoppinglist.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+
+schemes:
+  ShoppingList:
+    build:
+      targets:
+        ShoppingList: all
+        ShoppingListTests: [test]
+    test:
+      targets:
+        - ShoppingListTests
