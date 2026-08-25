@@ -69,6 +69,22 @@ pub async fn set_done(ctx: &Ctx, actor: &Actor, id: item::Id, done: bool) -> Res
     Ok(Item::set_done(&ctx.db, id, done).await?)
 }
 
+/// What this person has bought before, for a quick-add suggestion list.
+///
+/// Their own history only — the owner comes from the actor, so there is no way to ask
+/// what somebody else buys.
+pub async fn suggestions(ctx: &Ctx, actor: &Actor, limit: i64) -> Result<Vec<Name>> {
+    let owner = actor.person()?;
+    Ok(Item::suggestions(&ctx.db, owner.id, limit.clamp(0, 200)).await?)
+}
+
+/// Clears everything ticked off one of the actor's lists, returning how many went.
+pub async fn clear_done(ctx: &Ctx, actor: &Actor, list_id: list::Id) -> Result<u64> {
+    let owner = actor.person()?;
+    lists::owned(ctx, owner, list_id).await?;
+    Ok(Item::delete_done(&ctx.db, list_id).await?)
+}
+
 pub async fn delete(ctx: &Ctx, actor: &Actor, id: item::Id) -> Result<()> {
     owned(ctx, actor.person()?, id).await?;
     Ok(Item::delete(&ctx.db, id).await?)

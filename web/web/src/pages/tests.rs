@@ -191,8 +191,12 @@ async fn lists_and_items_render_and_change(#[future(awt)] pool: SqlitePool) {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Nothing on this list yet"), "{body}");
     assert!(
-        body.contains("<option value=\"\">unit</option>"),
-        "no unit picker: {body}"
+        body.contains("name=\"line\""),
+        "the quick-add field is missing: {body}"
+    );
+    assert!(
+        body.contains("list=\"item-history\""),
+        "the quick-add field is not backed by history: {body}"
     );
 
     // add an item with a unit
@@ -201,7 +205,7 @@ async fn lists_and_items_render_and_change(#[future(awt)] pool: SqlitePool) {
             &app,
             &format!("/lists/{list_id}/items"),
             &cookie,
-            "name=Apples&amount=2&unit_id="
+            "line=2+Apples"
         )
         .await,
         StatusCode::SEE_OTHER
@@ -274,7 +278,7 @@ async fn one_persons_list_is_not_on_anothers_screen(#[future(awt)] pool: SqliteP
             &app2,
             &format!("/lists/{list_id}/items"),
             &theirs,
-            "name=smuggled"
+            "line=smuggled"
         )
         .await,
         StatusCode::NOT_FOUND
@@ -352,7 +356,7 @@ async fn tagging_an_item_from_the_page(
         &app,
         &format!("/lists/{list_id}/items"),
         &cookie,
-        "name=Bagels&amount=1&unit_id=",
+        "line=Bagels",
     )
     .await;
 
@@ -381,9 +385,15 @@ async fn tagging_an_item_from_the_page(
     );
 
     let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    // The first tag names the group the item now sits under rather than repeating as
+    // a chip beside it; the removable chip in the edit panel is the one to look for.
     assert!(
-        body.contains("class=\"chip\""),
-        "the tag chip did not render: {body}"
+        body.contains("class=\"chip removable\""),
+        "the tag did not attach: {body}"
+    );
+    assert!(
+        body.contains("class=\"group-heading\""),
+        "the item is not grouped under its tag: {body}"
     );
     let offered = body.matches(&format!("value=\"{tag_id}\"")).count();
     assert_eq!(
@@ -424,7 +434,7 @@ async fn a_stranger_cannot_tag_my_item_from_the_page(
         &app,
         &format!("/lists/{list_id}/items"),
         &mine,
-        "name=Secret&amount=1&unit_id=",
+        "line=Secret",
     )
     .await;
     let (_, body) = get(&app, &format!("/lists/{list_id}"), &mine).await;
@@ -491,7 +501,7 @@ async fn an_item_can_be_edited(#[future(awt)] pool: SqlitePool) {
         &app,
         &format!("/lists/{list_id}/items"),
         &cookie,
-        "name=Milk&amount=1&unit_id=",
+        "line=Milk",
     )
     .await;
 
@@ -539,7 +549,7 @@ async fn editing_leaves_the_rest_of_the_item_alone(#[future(awt)] pool: SqlitePo
         &app,
         &format!("/lists/{list_id}/items"),
         &cookie,
-        "name=Rolls&amount=6&unit_id=",
+        "line=6+Rolls",
     )
     .await;
     let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
@@ -587,7 +597,7 @@ async fn a_stranger_cannot_edit_my_things(
         &app,
         &format!("/lists/{list_id}/items"),
         &mine,
-        "name=Thing&amount=1&unit_id=",
+        "line=Thing",
     )
     .await;
     let (_, body) = get(&app, &format!("/lists/{list_id}"), &mine).await;
@@ -660,7 +670,7 @@ async fn htmx_item_actions_return_the_board(#[future(awt)] pool: SqlitePool) {
         &app,
         &format!("/lists/{list_id}/items"),
         &cookie,
-        "name=Bagels&amount=6&unit_id=",
+        "line=6+Bagels",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -717,7 +727,7 @@ async fn htmx_does_not_bypass_ownership(#[future(awt)] pool: SqlitePool) {
         &app2,
         &format!("/lists/{list_id}/items"),
         &theirs,
-        "name=smuggled&amount=1&unit_id=",
+        "line=smuggled",
     )
     .await;
 
@@ -768,7 +778,7 @@ async fn the_panel_opens_and_closes_with_the_work(
         &app,
         &format!("/lists/{list_id}/items"),
         &cookie,
-        "name=Bagels&amount=1&unit_id=",
+        "line=Bagels",
     )
     .await;
     let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
@@ -850,7 +860,7 @@ async fn an_item_being_edited_offers_a_way_out(#[future(awt)] pool: SqlitePool) 
         &app,
         &format!("/lists/{list_id}/items"),
         &cookie,
-        "name=Bagels&amount=1&unit_id=",
+        "line=Bagels",
     )
     .await;
 
@@ -911,7 +921,7 @@ async fn choosing_a_tag_adds_it(
         &app,
         &format!("/lists/{list_id}/items"),
         &cookie,
-        "name=Bagels&amount=1&unit_id=",
+        "line=Bagels",
     )
     .await;
     let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
@@ -959,5 +969,236 @@ async fn choosing_a_tag_adds_it(
         first_tag_option(&after),
         Some(tag_id),
         "the picker still offers a tag already on the item"
+    );
+}
+
+// ------------------------------------------------------- quick add & grouping
+
+/// One field, read the way a person writes it.
+#[rstest]
+#[case::just_a_name("line=Milk", "Milk", None)]
+#[case::amount_and_unit("line=2+kg+apples", "apples", Some("2 kg"))]
+#[case::no_space("line=500g+flour", "flour", Some("500 g"))]
+#[case::bare_amount("line=6+eggs", "eggs", Some("6"))]
+#[tokio::test]
+async fn quick_add_reads_the_line(
+    #[with(fixtures::UNITS)]
+    #[future(awt)]
+    pool: SqlitePool,
+    #[case] form: &str,
+    #[case] name: &str,
+    #[case] measure: Option<&str>,
+) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|quick").await;
+    post(&app, "/lists", &cookie, "name=Shop").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+
+    assert_eq!(
+        post(&app, &format!("/lists/{list_id}/items"), &cookie, form).await,
+        StatusCode::SEE_OTHER
+    );
+
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    assert!(body.contains(name), "{form} did not yield {name}: {body}");
+    match measure {
+        Some(m) => assert!(
+            body.contains(&format!("class=\"amount\">{m}<")),
+            "{form} should show {m}: {body}"
+        ),
+        // One of something unmeasured prints nothing, because "1" is not information.
+        None => assert!(
+            !body.contains("class=\"amount\""),
+            "a plain item printed an amount: {body}"
+        ),
+    }
+}
+
+/// The quick-add field offers what this person has bought before, and nobody else's.
+#[rstest]
+#[tokio::test]
+async fn the_history_is_my_own(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|shopper-a").await;
+    post(&app, "/lists", &mine, "name=Mine").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let my_list = first_list_id(&body);
+    post(
+        &app,
+        &format!("/lists/{my_list}/items"),
+        &mine,
+        "line=Sourdough",
+    )
+    .await;
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|shopper-b").await;
+    post(&app2, "/lists", &theirs, "name=Theirs").await;
+    let (_, body) = get(&app2, "/", &theirs).await;
+    let their_list = first_list_id(&body);
+
+    let (_, mine_page) = get(&app, &format!("/lists/{my_list}"), &mine).await;
+    assert!(
+        mine_page.contains("<option value=\"Sourdough\">"),
+        "my own history is not offered: {mine_page}"
+    );
+
+    let (_, their_page) = get(&app2, &format!("/lists/{their_list}"), &theirs).await;
+    assert!(
+        !their_page.contains("Sourdough"),
+        "my shopping leaked into someone else's suggestions: {their_page}"
+    );
+}
+
+/// Items sit under their category, and the categories run in shop order rather than
+/// alphabetically — produce before dairy before frozen.
+#[rstest]
+#[tokio::test]
+async fn the_list_is_grouped_in_shop_order(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|walker").await;
+    post(&app, "/lists", &cookie, "name=Weekly").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+
+    // added in the wrong order on purpose
+    for line in ["line=peas", "line=milk", "line=apples"] {
+        post(&app, &format!("/lists/{list_id}/items"), &cookie, line).await;
+    }
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+
+    // Each item renders several URLs containing its id — toggle, edit, delete, tags —
+    // so take the distinct ones in the order they first appear.
+    let mut ids: Vec<i64> = Vec::new();
+    for (at, _) in body.match_indices("/items/") {
+        let id: i64 = body[at + 7..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .unwrap();
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    assert_eq!(ids.len(), 3, "expected three items, found {ids:?}");
+    let (peas, milk, apples) = (ids[0], ids[1], ids[2]);
+
+    let tag = |name: &str| -> i64 {
+        let at = body
+            .find(&format!(">{name}</option>"))
+            .expect("tag missing");
+        let v = body[..at].rfind("value=\"").unwrap() + 7;
+        body[v..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .unwrap()
+    };
+    // frozen sorts last of the three, produce first
+    for (item, tag_name) in [
+        (peas, "🧊 frozen"),
+        (milk, "🧀 dairy"),
+        (apples, "🥬 produce"),
+    ] {
+        assert_eq!(
+            post(
+                &app,
+                &format!("/lists/{list_id}/items/{item}/tags"),
+                &cookie,
+                &format!("tag_id={}", tag(tag_name)),
+            )
+            .await,
+            StatusCode::SEE_OTHER,
+            "could not tag {item} with {tag_name}"
+        );
+    }
+
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    // Look for the headings, not the words: every item's tag picker lists all 21 tag
+    // names alphabetically, so a bare search finds those instead.
+    let heading = |name: &str| {
+        body.find(&format!("class=\"group-heading\">🥬 {name}<"))
+            .or_else(|| body.find(&format!("class=\"group-heading\">🧀 {name}<")))
+            .or_else(|| body.find(&format!("class=\"group-heading\">🧊 {name}<")))
+            .unwrap_or_else(|| panic!("no {name} group in: {body}"))
+    };
+    let produce = heading("produce");
+    let dairy = heading("dairy");
+    let frozen = heading("frozen");
+    assert!(
+        produce < dairy && dairy < frozen,
+        "groups are not in shop order: produce {produce}, dairy {dairy}, frozen {frozen}"
+    );
+}
+
+/// Ticked items are collected out of the way, counted, and clearable in one go.
+#[rstest]
+#[tokio::test]
+async fn done_items_collect_and_clear(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|tidy").await;
+    post(&app, "/lists", &cookie, "name=Shop").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+    for line in ["line=Milk", "line=Bread"] {
+        post(&app, &format!("/lists/{list_id}/items"), &cookie, line).await;
+    }
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    assert!(
+        !body.contains("<details class=\"done-drawer\""),
+        "nothing is done yet: {body}"
+    );
+
+    let first = body[body.find("/items/").unwrap() + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse::<i64>()
+        .unwrap();
+    post(
+        &app,
+        &format!("/lists/{list_id}/items/{first}/toggle"),
+        &cookie,
+        "",
+    )
+    .await;
+
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    assert!(
+        body.contains("<details class=\"done-drawer\""),
+        "the done drawer is missing: {body}"
+    );
+    assert!(body.contains("1 done"), "the count is wrong: {body}");
+
+    assert_eq!(
+        post(&app, &format!("/lists/{list_id}/clear-done"), &cookie, "").await,
+        StatusCode::SEE_OTHER
+    );
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    assert!(
+        !body.contains("<details class=\"done-drawer\""),
+        "clearing left the drawer: {body}"
+    );
+    assert!(
+        body.contains("Bread"),
+        "clearing removed an outstanding item: {body}"
+    );
+}
+
+#[rstest]
+#[tokio::test]
+async fn a_stranger_cannot_clear_my_list(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|owner").await;
+    post(&app, "/lists", &mine, "name=Mine").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|stranger").await;
+
+    assert_eq!(
+        post(&app2, &format!("/lists/{list_id}/clear-done"), &theirs, "").await,
+        StatusCode::NOT_FOUND
     );
 }

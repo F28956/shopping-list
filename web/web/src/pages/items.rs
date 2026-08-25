@@ -15,6 +15,12 @@ use crate::htmx::swap_or_redirect;
 use crate::state::AppState;
 use crate::view;
 
+/// One line, read as a person means it — see [`domain::quick_add`].
+#[derive(serde::Deserialize)]
+pub struct QuickAddForm {
+    pub line: String,
+}
+
 #[derive(serde::Deserialize)]
 pub struct NewItem {
     pub name: String,
@@ -34,6 +40,8 @@ fn everything() -> Paging {
 /// Everything the item rows need, gathered once.
 struct Board {
     items: Vec<item::Item>,
+    /// What this person has bought before, for the quick-add suggestions.
+    suggestions: Vec<item::Name>,
     unit_names: std::collections::HashMap<i64, String>,
     tags_by_item: std::collections::HashMap<i64, Vec<tag::Tag>>,
     all_tags: Vec<tag::Tag>,
@@ -54,6 +62,7 @@ async fn board(s: &AppState, actor: &Actor, list_id: list::Id) -> Result<Board, 
         )
         .await?
         .items,
+        suggestions: items::suggestions(&s.ctx, actor, 100).await?,
         unit_names: unit_lookup(s, actor).await?,
         // One query for the whole page rather than one per item.
         tags_by_item: tags::on_list(&s.ctx, actor, list_id).await?,
@@ -89,129 +98,201 @@ fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
             @if b.items.is_empty() {
                 p class="empty" { "Nothing on this list yet." }
             } @else {
-                ul class="rows" {
-                    @for i in &b.items {
-                        @let on_item = b.tags_by_item.get(&i.id.0);
-                        @let item = format!("{base}/items/{}", i.id.0);
-                        li class=@if i.done_at.is_some() { "item done" } @else { "item" } {
-                            // The switch sits first so CSS can hide the row and show
-                            // the editor in its place: an item being edited is one
-                            // thing in one position, not a row with a drawer under it.
-                            input type="checkbox" class="panel-switch" hidden
-                                  id=(format!("panel-{}", i.id.0))
-                                  checked[open == Some(i.id.0)];
+                @let groups = group_by_category(b);
+                @for (heading, items) in &groups {
+                    section class="group" {
+                        h3 class="group-heading" { (heading) }
+                        ul class="rows" {
+                            @for i in items { (item_row(list_id, b, i, open)) }
+                        }
+                    }
+                }
 
-                            div class="view" {
-                                form class="inline" method="post" action={ (item) "/toggle" }
-                                     hx-post={ (item) "/toggle" }
-                                     hx-target="#items" hx-swap="outerHTML" {
-                                    button class="tick" title="Tick off" {
-                                        @if i.done_at.is_some() { "☑" } @else { "☐" }
-                                    }
-                                }
-
-                                span class="grow" {
-                                    (i.name.0)
-                                    // Tags are shown, not operated, out here: what an
-                                    // item is tagged is worth knowing at a glance;
-                                    // changing it is not worth a control on every row.
-                                    @for t in on_item.into_iter().flatten() {
-                                        span class="chip" {
-                                            @if let Some(e) = &t.emoji { (e.0) " " }
-                                            (t.name.0)
-                                        }
-                                    }
-                                }
-
-                                span class="amount" {
-                                    (trim_amount(i.amount))
-                                    @if let Some(u) = i.unit_id.and_then(|u| b.unit_names.get(&u.0)) {
-                                        " " (u)
-                                    }
-                                }
-
-                                label class="panel-toggle" for=(format!("panel-{}", i.id.0))
-                                      title="Edit" { "⋯" }
+                @let done = b.items.iter().filter(|i| i.done_at.is_some()).count();
+                @if done > 0 {
+                    // Ticked items are collected rather than left in place: a list you
+                    // are working through should show what is left, not what is behind
+                    // you. Still one click away, because "did I get that?" is a real
+                    // question in a shop.
+                    details class="done-drawer" {
+                        summary { "✓ " (done) " done" }
+                        ul class="rows" {
+                            @for i in b.items.iter().filter(|i| i.done_at.is_some()) {
+                                (item_row(list_id, b, i, open))
                             }
-
-                            div class="panel-body" {
-                                form class="add" method="post" action={ (item) "/edit" }
-                                     hx-post={ (item) "/edit" }
-                                     hx-target="#items" hx-swap="outerHTML" {
-                                    input type="text" name="name" value=(i.name.0)
-                                          required maxlength="128" aria-label="Item name";
-                                    input type="number" name="amount"
-                                          value=(trim_amount(i.amount))
-                                          min="0" step="any" style="width:5rem"
-                                          aria-label="Amount";
-                                    select name="unit_id" aria-label="Unit" {
-                                        option value="" selected[i.unit_id.is_none()] { "unit" }
-                                        @for (uid, uname) in &unit_names_sorted(&b.unit_names) {
-                                            option value=(uid)
-                                                   selected[i.unit_id.map(|u| u.0) == Some(*uid)] {
-                                                (uname)
-                                            }
-                                        }
-                                    }
-                                    button class="primary" { "Save" }
-                                    // A label, not a button: it unticks the switch and
-                                    // so puts the row back, with no JavaScript needed.
-                                    // The hx-on is only there to drop unsaved typing,
-                                    // and its absence degrades to leaving it in place.
-                                    label class="cancel" for=(format!("panel-{}", i.id.0))
-                                          hx-on:click="this.closest('form').reset()" { "Cancel" }
-                                }
-
-                                div class="tag-edit" {
-                                    @for t in on_item.into_iter().flatten() {
-                                        form class="inline" method="post"
-                                             action={ (item) "/tags/" (t.id.0) "/delete" }
-                                             hx-post={ (item) "/tags/" (t.id.0) "/delete" }
-                                             hx-target="#items" hx-swap="outerHTML" {
-                                            button class="chip removable" title="Remove tag" {
-                                                @if let Some(e) = &t.emoji { (e.0) " " }
-                                                (t.name.0) " ×"
-                                            }
-                                        }
-                                    }
-                                    // Choosing a tag is the whole action, so `change`
-                                    // fires it. The confirm button only exists for
-                                    // browsers that cannot post on their own, which is
-                                    // what <noscript> says precisely.
-                                    form class="inline" method="post" action={ (item) "/tags" }
-                                         hx-post={ (item) "/tags" }
-                                         hx-target="#items" hx-swap="outerHTML"
-                                         hx-trigger="change" {
-                                        select class="tag-add" name="tag_id" aria-label="Add a tag"
-                                               required {
-                                            option value="" disabled selected { "+ tag" }
-                                            @for t in &b.all_tags {
-                                                // only what is not already on it
-                                                @if !on_item.is_some_and(|ts| ts.iter().any(|x| x.id == t.id)) {
-                                                    option value=(t.id.0) {
-                                                        @if let Some(e) = &t.emoji { (e.0) " " }
-                                                        (t.name.0)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        noscript { button { "Add" } }
-                                    }
-                                }
-
-                                form class="inline" method="post" action={ (item) "/delete" }
-                                     hx-post={ (item) "/delete" }
-                                     hx-target="#items" hx-swap="outerHTML"
-                                     hx-confirm={ "Remove " (i.name.0) "?" } {
-                                    button class="danger" { "Remove item" }
-                                }
-                            }
+                        }
+                        form class="inline" method="post" action={ (base) "/clear-done" }
+                             hx-post={ (base) "/clear-done" }
+                             hx-target="#items" hx-swap="outerHTML"
+                             hx-confirm={ "Remove all " (done) " ticked items?" } {
+                            button class="danger" { "Clear done" }
                         }
                     }
                 }
             }
         }
     }
+}
+
+/// One item: what it is, what it is tagged, how much — and, behind the toggle,
+/// everything that changes it.
+fn item_row(list_id: list::Id, b: &Board, i: &item::Item, open: Option<i64>) -> Markup {
+    let base = format!("/lists/{}", list_id.0);
+    let item = format!("{base}/items/{}", i.id.0);
+    let on_item = b.tags_by_item.get(&i.id.0);
+
+    html! {
+        li class=@if i.done_at.is_some() { "item done" } @else { "item" } {
+            // The switch sits first so CSS can hide the row and show the editor in its
+            // place: an item being edited is one thing in one position, not a row with
+            // a drawer under it.
+            input type="checkbox" class="panel-switch" hidden
+                  id=(format!("panel-{}", i.id.0))
+                  checked[open == Some(i.id.0)];
+
+            div class="view" {
+                form class="inline" method="post" action={ (item) "/toggle" }
+                     hx-post={ (item) "/toggle" }
+                     hx-target="#items" hx-swap="outerHTML" {
+                    button class="tick" title="Tick off" {
+                        @if i.done_at.is_some() { "☑" } @else { "☐" }
+                    }
+                }
+
+                span class="grow" {
+                    (i.name.0)
+                    // Tags are shown, not operated, out here. Inside a category group
+                    // the heading already says the first one, so only the extras earn
+                    // their space.
+                    @for t in on_item.into_iter().flatten().skip(1) {
+                        span class="chip" {
+                            @if let Some(e) = &t.emoji { (e.0) " " }
+                            (t.name.0)
+                        }
+                    }
+                }
+
+                @if let Some(measure) = measure(i, &b.unit_names) {
+                    span class="amount" { (measure) }
+                }
+
+                label class="panel-toggle" for=(format!("panel-{}", i.id.0))
+                      title="Edit" { "⋯" }
+            }
+
+            div class="panel-body" {
+                form class="add" method="post" action={ (item) "/edit" }
+                     hx-post={ (item) "/edit" }
+                     hx-target="#items" hx-swap="outerHTML" {
+                    input type="text" name="name" value=(i.name.0)
+                          required maxlength="128" aria-label="Item name";
+                    input type="number" name="amount" value=(trim_amount(i.amount))
+                          min="0" step="any" style="width:5rem" aria-label="Amount";
+                    select name="unit_id" aria-label="Unit" {
+                        option value="" selected[i.unit_id.is_none()] { "unit" }
+                        @for (uid, uname) in &unit_names_sorted(&b.unit_names) {
+                            option value=(uid) selected[i.unit_id.map(|u| u.0) == Some(*uid)] {
+                                (uname)
+                            }
+                        }
+                    }
+                    button class="primary" { "Save" }
+                    // A label, not a button: it unticks the switch and so puts the row
+                    // back, with no JavaScript needed. The hx-on is only there to drop
+                    // unsaved typing, and its absence degrades to leaving it in place.
+                    label class="cancel" for=(format!("panel-{}", i.id.0))
+                          hx-on:click="this.closest('form').reset()" { "Cancel" }
+                }
+
+                div class="tag-edit" {
+                    @for t in on_item.into_iter().flatten() {
+                        form class="inline" method="post"
+                             action={ (item) "/tags/" (t.id.0) "/delete" }
+                             hx-post={ (item) "/tags/" (t.id.0) "/delete" }
+                             hx-target="#items" hx-swap="outerHTML" {
+                            button class="chip removable" title="Remove tag" {
+                                @if let Some(e) = &t.emoji { (e.0) " " }
+                                (t.name.0) " ×"
+                            }
+                        }
+                    }
+                    // Choosing a tag is the whole action, so `change` fires it. The
+                    // confirm button only exists for browsers that cannot post on
+                    // their own, which is what <noscript> says precisely.
+                    form class="inline" method="post" action={ (item) "/tags" }
+                         hx-post={ (item) "/tags" }
+                         hx-target="#items" hx-swap="outerHTML"
+                         hx-trigger="change" {
+                        select class="tag-add" name="tag_id" aria-label="Add a tag" required {
+                            option value="" disabled selected { "+ tag" }
+                            @for t in &b.all_tags {
+                                // only what is not already on it
+                                @if !on_item.is_some_and(|ts| ts.iter().any(|x| x.id == t.id)) {
+                                    option value=(t.id.0) {
+                                        @if let Some(e) = &t.emoji { (e.0) " " }
+                                        (t.name.0)
+                                    }
+                                }
+                            }
+                        }
+                        noscript { button { "Add" } }
+                    }
+                }
+
+                form class="inline" method="post" action={ (item) "/delete" }
+                     hx-post={ (item) "/delete" }
+                     hx-target="#items" hx-swap="outerHTML"
+                     hx-confirm={ "Remove " (i.name.0) "?" } {
+                    button class="danger" { "Remove item" }
+                }
+            }
+        }
+    }
+}
+
+/// How much of it, or nothing at all.
+///
+/// One of something unmeasured is the default and the commonest case, so printing
+/// "1" on most rows is noise dressed as information.
+fn measure(i: &item::Item, units: &std::collections::HashMap<i64, String>) -> Option<String> {
+    let unit = i.unit_id.and_then(|u| units.get(&u.0));
+    match (i.amount.0, unit) {
+        (1.0, None) => None,
+        (a, None) => Some(trim_amount(item::Amount(a))),
+        (a, Some(u)) => Some(format!("{} {u}", trim_amount(item::Amount(a)))),
+    }
+}
+
+/// The outstanding items, under their category heading, in the order the shop is laid
+/// out — see the `sort_order` migration for why that order and not the alphabet.
+///
+/// An item with several tags falls under its first, which `Tag::for_list` has already
+/// ordered by `sort_order`; an untagged one falls under "Other", last.
+fn group_by_category(b: &Board) -> Vec<(String, Vec<&item::Item>)> {
+    let mut groups: Vec<(i64, String, Vec<&item::Item>)> = Vec::new();
+
+    for i in b.items.iter().filter(|i| i.done_at.is_none()) {
+        let primary = b.tags_by_item.get(&i.id.0).and_then(|ts| ts.first());
+        let (order, heading) = match primary {
+            Some(t) => (
+                t.sort_order.0,
+                match &t.emoji {
+                    Some(e) => format!("{} {}", e.0, t.name.0),
+                    None => t.name.0.clone(),
+                },
+            ),
+            // Untagged sorts last, whatever the tags are numbered.
+            None => (i64::MAX, "Other".to_string()),
+        };
+
+        match groups.iter_mut().find(|(_, h, _)| *h == heading) {
+            Some((_, _, items)) => items.push(i),
+            None => groups.push((order, heading, vec![i])),
+        }
+    }
+
+    groups.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    groups.into_iter().map(|(_, h, i)| (h, i)).collect()
 }
 
 pub async fn show(
@@ -236,20 +317,21 @@ pub async fn show(
 
             (fragment(list.id, &b, None))
 
+            // One field. "2 kg apples" is parsed into the three the model wants —
+            // see domain::quick_add — and the editor is there for anything it reads
+            // wrongly. The datalist is this person's own history, because the thing
+            // people actually complain about is typing "Milk" again every week.
             form class="add" method="post" action={ "/lists/" (list.id.0) "/items" }
                  hx-post={ "/lists/" (list.id.0) "/items" }
                  hx-target="#items" hx-swap="outerHTML"
                  hx-on::after-request="this.reset()" {
-                input type="text" name="name" placeholder="Add an item" required maxlength="128";
-                input type="number" name="amount" value="1" min="0" step="any"
-                      style="width:5rem" aria-label="Amount";
-                select name="unit_id" aria-label="Unit" {
-                    option value="" { "unit" }
-                    @for (uid, uname) in &unit_names_sorted(&b.unit_names) {
-                        option value=(uid) { (uname) }
-                    }
-                }
+                input type="text" name="line" placeholder="Add an item — try 2 kg apples"
+                      required maxlength="200" autocomplete="off" list="item-history";
                 button class="primary" { "Add" }
+            }
+
+            datalist id="item-history" {
+                @for name in &b.suggestions { option value=(name.0) {} }
             }
         },
     ))
@@ -296,26 +378,50 @@ pub async fn create(
     State(s): State<AppState>,
     Path(id): Path<i64>,
     headers: HeaderMap,
-    Form(form): Form<NewItem>,
+    Form(form): Form<QuickAddForm>,
 ) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
 
-    let unit_id = form
-        .unit_id
-        .filter(|v| !v.is_empty())
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(unit::Id);
+    // The parser needs to know what counts as a unit, and that is the units table.
+    let units = units::list(
+        &s.ctx,
+        &actor,
+        everything(),
+        OrderBy {
+            field: unit::Field::Name,
+            direction: Direction::Ascending,
+        },
+    )
+    .await?;
+    let names: Vec<String> = units.items.iter().map(|u| u.name.0.clone()).collect();
+
+    let parsed = domain::quick_add::parse(&form.line, &names);
+    let unit_id = parsed
+        .unit
+        .and_then(|u| units.items.iter().find(|x| x.name.0 == u).map(|x| x.id));
 
     items::create(
         &s.ctx,
         &actor,
         list::Id(id),
-        Name(form.name),
-        Amount(form.amount.unwrap_or(1.0)),
+        Name(parsed.name),
+        Amount(parsed.amount),
         unit_id,
     )
     .await?;
 
+    swap(&s, &actor, &headers, list::Id(id), None).await
+}
+
+/// Clears everything already ticked off the list.
+pub async fn clear_done(
+    session: Session,
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+    items::clear_done(&s.ctx, &actor, list::Id(id)).await?;
     swap(&s, &actor, &headers, list::Id(id), None).await
 }
 

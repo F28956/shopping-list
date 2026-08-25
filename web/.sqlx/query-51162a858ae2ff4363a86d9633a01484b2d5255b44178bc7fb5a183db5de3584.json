@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            SELECT\n                it.item_id  as \"item_id: item::Id\",\n                t.id        as \"id: Id\",\n                t.name      as \"name: Name\",\n                t.colour    as \"colour?: Colour\",\n                t.emoji     as \"emoji?: Emoji\",\n                t.created_at as \"created_at: CreatedAt\"\n            FROM item_tags it\n            JOIN tags t  ON t.id = it.tag_id\n            JOIN items i ON i.id = it.item_id\n            WHERE i.list_id = ?1\n            ORDER BY it.item_id, t.name\n            ",
+  "query": "\n            SELECT\n                it.item_id  as \"item_id: item::Id\",\n                t.id        as \"id: Id\",\n                t.name      as \"name: Name\",\n                t.colour    as \"colour?: Colour\",\n                t.emoji     as \"emoji?: Emoji\",\n                t.created_at as \"created_at: CreatedAt\",\n                t.sort_order as \"sort_order: SortOrder\"\n            FROM item_tags it\n            JOIN tags t  ON t.id = it.tag_id\n            JOIN items i ON i.id = it.item_id\n            WHERE i.list_id = ?1\n            ORDER BY it.item_id, t.sort_order, t.name\n            ",
   "describe": {
     "columns": [
       {
@@ -68,6 +68,17 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "name": "sort_order: SortOrder",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "sort_order"
+          }
+        }
       }
     ],
     "parameters": {
@@ -79,8 +90,9 @@
       false,
       true,
       true,
+      false,
       false
     ]
   },
-  "hash": "1ef39b55e76f0a4bdec8899fedb4519da8eb127e21953dc4b620f10b874baa47"
+  "hash": "51162a858ae2ff4363a86d9633a01484b2d5255b44178bc7fb5a183db5de3584"
 }

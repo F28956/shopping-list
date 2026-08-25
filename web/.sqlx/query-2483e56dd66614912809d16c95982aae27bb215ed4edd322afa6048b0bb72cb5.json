@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM items WHERE list_id = ?1 AND done_at IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "2483e56dd66614912809d16c95982aae27bb215ed4edd322afa6048b0bb72cb5"
+}

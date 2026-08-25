@@ -49,6 +49,19 @@ button.chip.removable:hover { opacity: 1; border-color: currentColor; }
    the editor are siblings so CSS can show exactly one of the latter two: an item being
    edited is one thing in one position, not a row with a drawer hanging off it. */
 ul.rows li.item { display: block; }
+
+/* Categories give the list the shape of the shop, so it can be walked in one pass. */
+.group + .group { margin-top: 1.1rem; }
+.group-heading { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em;
+                 opacity: .55; margin: 0 0 .2rem; font-weight: 600; }
+
+/* What is already in the trolley is collected, not interleaved with what is not. */
+.done-drawer { margin-top: 1.4rem; }
+.done-drawer > summary { cursor: pointer; font-size: .8rem; opacity: .55;
+                         list-style: none; padding: .3rem 0; }
+.done-drawer > summary::-webkit-details-marker { display: none; }
+.done-drawer[open] > summary { opacity: 1; }
+.done-drawer .danger { margin-top: .6rem; font-size: .8rem; }
 .view { display: flex; align-items: center; gap: .5rem; }
 .panel-switch:checked ~ .view { display: none; }
 .panel-toggle { margin-left: auto; cursor: pointer; opacity: .45; user-select: none;

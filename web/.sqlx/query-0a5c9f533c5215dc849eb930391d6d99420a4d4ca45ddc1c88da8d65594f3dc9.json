@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n                SELECT\n                    id          as \"id: Id\",\n                    name        as \"name: Name\",\n                    colour      as \"colour?: Colour\",\n                    emoji       as \"emoji?: Emoji\",\n                    created_at  as \"created_at: CreatedAt\"\n                FROM tags\n                WHERE id = ?1 ",
+  "query": "\n            SELECT\n                t.id          as \"id: Id\",\n                t.name        as \"name: Name\",\n                t.colour      as \"colour?: Colour\",\n                t.emoji       as \"emoji?: Emoji\",\n                t.created_at  as \"created_at: CreatedAt\",\n                t.sort_order  as \"sort_order: SortOrder\"\n            FROM tags t\n            JOIN item_tags it ON it.tag_id = t.id\n            WHERE it.item_id = ?1\n            ORDER BY t.name COLLATE NOCASE, t.id\n            ",
   "describe": {
     "columns": [
       {
@@ -57,6 +57,17 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "name": "sort_order: SortOrder",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "sort_order"
+          }
+        }
       }
     ],
     "parameters": {
@@ -67,8 +78,9 @@
       false,
       true,
       true,
+      false,
       false
     ]
   },
-  "hash": "6356c1277bacb50fb11c7180b42fc4c01946df749bf29fa797c5be2a8e4f9c15"
+  "hash": "0a5c9f533c5215dc849eb930391d6d99420a4d4ca45ddc1c88da8d65594f3dc9"
 }

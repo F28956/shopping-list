@@ -6,6 +6,7 @@ use super::{item, list};
 
 // Scaffold Id, Name, Colour, Emoji and CreatedAt
 i64!(Id);
+i64!(SortOrder);
 string!(Name, Colour, Emoji);
 timestamp!(CreatedAt);
 
@@ -43,6 +44,9 @@ pub struct Tag {
     pub colour: Option<Colour>,
     pub emoji: Option<Emoji>,
     pub created_at: CreatedAt,
+    /// Where this tag falls when a list is grouped by category — the order of the
+    /// shop, not the alphabet. Set by migration alongside the tag itself.
+    pub sort_order: SortOrder,
 }
 
 /// How a caller asks for a single tag. Every variant must be able to identify at most
@@ -102,7 +106,8 @@ impl Tag {
                 name        as "name: Name",
                 colour      as "colour?: Colour",
                 emoji       as "emoji?: Emoji",
-                created_at  as "created_at!: CreatedAt"
+                created_at  as "created_at!: CreatedAt",
+                sort_order  as "sort_order: SortOrder"
             "#,
             name,
             colour,
@@ -139,7 +144,8 @@ impl Tag {
                 name        as "name: Name",
                 colour      as "colour?: Colour",
                 emoji       as "emoji?: Emoji",
-                created_at  as "created_at: CreatedAt"
+                created_at  as "created_at: CreatedAt",
+                sort_order  as "sort_order: SortOrder"
             "#,
             name,
             colour,
@@ -202,7 +208,8 @@ impl Tag {
             name        as "name: Name",
             colour      as "colour?: Colour",
             emoji       as "emoji?: Emoji",
-            created_at  as "created_at: CreatedAt"
+            created_at  as "created_at: CreatedAt",
+            sort_order  as "sort_order: SortOrder"
         FROM tags
         ORDER BY
             CASE
@@ -263,7 +270,8 @@ impl Tag {
                     name        as "name: Name",
                     colour      as "colour?: Colour",
                     emoji       as "emoji?: Emoji",
-                    created_at  as "created_at: CreatedAt"
+                    created_at  as "created_at: CreatedAt",
+                sort_order  as "sort_order: SortOrder"
                 FROM tags
                 WHERE id = ?1 "#,
                     v
@@ -281,7 +289,8 @@ impl Tag {
                     name        as "name: Name",
                     colour      as "colour?: Colour",
                     emoji       as "emoji?: Emoji",
-                    created_at  as "created_at: CreatedAt"
+                    created_at  as "created_at: CreatedAt",
+                sort_order  as "sort_order: SortOrder"
                 FROM tags
                 WHERE name = ?1 "#,
                     name
@@ -308,7 +317,8 @@ impl Tag {
                 t.name        as "name: Name",
                 t.colour      as "colour?: Colour",
                 t.emoji       as "emoji?: Emoji",
-                t.created_at  as "created_at: CreatedAt"
+                t.created_at  as "created_at: CreatedAt",
+                t.sort_order  as "sort_order: SortOrder"
             FROM tags t
             JOIN item_tags it ON it.tag_id = t.id
             WHERE it.item_id = ?1
@@ -334,7 +344,8 @@ impl Tag {
     ///
     /// One query rather than one per item: a list page needs the tags for everything
     /// on it, and asking per item turns a twenty-line list into twenty-one round
-    /// trips. Ordered by item then tag name so the caller can group without sorting.
+    /// trips. Ordered by item then by `sort_order`, so each item's first tag is the
+    /// one that decides which group it falls into when the list is grouped.
     pub async fn for_list(
         pool: &sqlx::SqlitePool,
         list_id: list::Id,
@@ -347,12 +358,13 @@ impl Tag {
                 t.name      as "name: Name",
                 t.colour    as "colour?: Colour",
                 t.emoji     as "emoji?: Emoji",
-                t.created_at as "created_at: CreatedAt"
+                t.created_at as "created_at: CreatedAt",
+                t.sort_order as "sort_order: SortOrder"
             FROM item_tags it
             JOIN tags t  ON t.id = it.tag_id
             JOIN items i ON i.id = it.item_id
             WHERE i.list_id = ?1
-            ORDER BY it.item_id, t.name
+            ORDER BY it.item_id, t.sort_order, t.name
             "#,
             list_id
         )
@@ -370,6 +382,7 @@ impl Tag {
                         colour: r.colour,
                         emoji: r.emoji,
                         created_at: r.created_at,
+                        sort_order: r.sort_order,
                     },
                 )
             })

@@ -5,6 +5,7 @@
 //! to the database.
 
 pub mod models;
+pub mod quick_add;
 pub mod service;
 
 /// The schema, embedded at compile time.

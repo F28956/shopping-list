@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id          as \"id: Id\",\n            name        as \"name: Name\",\n            colour      as \"colour?: Colour\",\n            emoji       as \"emoji?: Emoji\",\n            created_at  as \"created_at: CreatedAt\",\n            sort_order  as \"sort_order: SortOrder\"\n        FROM tags\n        ORDER BY\n            CASE\n                WHEN ?2 = 'ascending' THEN\n                    CASE ?1\n                        WHEN 'id' THEN id\n                        -- NOCASE is a backstop only. Names are normalised in Rust\n                        -- before they are written, and nothing in the schema enforces\n                        -- that, so a row written by anything other than this model\n                        -- (a fixture, a migration, a hand-run statement) may not be.\n                        WHEN 'name' THEN name COLLATE NOCASE\n                        WHEN 'colour' THEN colour\n                        WHEN 'emoji' THEN emoji\n                        WHEN 'created_at' THEN created_at\n                    END\n                END ASC NULLS LAST,\n            CASE\n                WHEN ?2 = 'descending' THEN\n                    CASE ?1\n                        WHEN 'id' THEN id\n                        WHEN 'name' THEN name COLLATE NOCASE\n                        WHEN 'colour' THEN colour\n                        WHEN 'emoji' THEN emoji\n                        WHEN 'created_at' THEN created_at\n                    END\n            END DESC NULLS LAST,\n            -- keeps paging deterministic when the sort key ties\n            id ASC\n        LIMIT ?3 OFFSET ?4\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name: Name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "colour?: Colour",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "colour"
+          }
+        }
+      },
+      {
+        "name": "emoji?: Emoji",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "emoji"
+          }
+        }
+      },
+      {
+        "name": "created_at: CreatedAt",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "sort_order: SortOrder",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "sort_order"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "7c89fda8abc99b56a6fd7cf1753e1a1dad6b9ebb684738638ddce4d9dc66dcf1"
+}

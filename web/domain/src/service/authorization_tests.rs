@@ -345,3 +345,103 @@ async fn the_system_owns_nothing(#[future(awt)] pool: SqlitePool) {
         Some(ServiceError::Unauthenticated)
     );
 }
+
+// -------------------------------------------------------------- new surfaces
+
+/// Suggestions come from the actor's own history and nobody else's.
+#[rstest]
+#[tokio::test]
+async fn suggestions_are_my_own_history(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    // the other person buys something distinctive
+    let theirs_list = lists::create(&s.ctx, &s.theirs, list::Name("Theirs".into()))
+        .await
+        .unwrap();
+    items::create(
+        &s.ctx,
+        &s.theirs,
+        theirs_list.id,
+        item::Name("Absinthe".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let mine = items::suggestions(&s.ctx, &s.mine, 50).await.unwrap();
+
+    assert!(
+        mine.iter().any(|n| n.0 == "Apples"),
+        "my own item is missing: {mine:?}"
+    );
+    assert!(
+        !mine.iter().any(|n| n.0 == "Absinthe"),
+        "another person's shopping leaked into my suggestions: {mine:?}"
+    );
+}
+
+#[rstest]
+#[tokio::test]
+async fn clearing_done_items_needs_the_list_to_be_mine(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    items::set_done(&s.ctx, &s.mine, s.item.id, true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        items::clear_done(&s.ctx, &s.theirs, s.list.id).await.err(),
+        Some(ServiceError::NotFound),
+        "a stranger cleared someone else's list"
+    );
+    assert!(
+        items::get(&s.ctx, &s.mine, s.item.id).await.is_ok(),
+        "the item was deleted anyway"
+    );
+
+    assert_eq!(
+        items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap(),
+        1
+    );
+    assert_eq!(
+        items::get(&s.ctx, &s.mine, s.item.id).await,
+        Err(ServiceError::NotFound)
+    );
+}
+
+/// Only the ticked ones go.
+#[rstest]
+#[tokio::test]
+async fn clearing_done_leaves_outstanding_items(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let still_needed = items::create(
+        &s.ctx,
+        &s.mine,
+        s.list.id,
+        item::Name("Bananas".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+    items::set_done(&s.ctx, &s.mine, s.item.id, true)
+        .await
+        .unwrap();
+
+    let gone = items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap();
+
+    assert_eq!(gone, 1);
+    assert!(items::get(&s.ctx, &s.mine, still_needed.id).await.is_ok());
+}
+
+/// Clearing a list with nothing ticked is a no-op, not an error: the button is
+/// allowed to be pressed twice.
+#[rstest]
+#[tokio::test]
+async fn clearing_nothing_is_not_an_error(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    assert_eq!(
+        items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap(),
+        0
+    );
+}

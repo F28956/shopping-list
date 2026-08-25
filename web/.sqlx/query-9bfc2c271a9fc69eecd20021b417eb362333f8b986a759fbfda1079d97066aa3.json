@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT i.name as \"name!: Name\"\n            FROM items i\n            JOIN lists l ON l.id = i.list_id\n            WHERE l.owner_id = ?1\n            GROUP BY i.name COLLATE NOCASE\n            ORDER BY count(*) DESC, i.name\n            LIMIT ?2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "name!: Name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9bfc2c271a9fc69eecd20021b417eb362333f8b986a759fbfda1079d97066aa3"
+}

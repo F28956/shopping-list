@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n                SELECT\n                    id          as \"id: Id\",\n                    name        as \"name: Name\",\n                    colour      as \"colour?: Colour\",\n                    emoji       as \"emoji?: Emoji\",\n                    created_at  as \"created_at: CreatedAt\"\n                FROM tags\n                WHERE name = ?1 ",
+  "query": "\n            UPDATE tags SET name = ?1, colour = ?2, emoji = ?3 WHERE id = ?4\n            RETURNING\n                id          as \"id: Id\",\n                name        as \"name: Name\",\n                colour      as \"colour?: Colour\",\n                emoji       as \"emoji?: Emoji\",\n                created_at  as \"created_at: CreatedAt\",\n                sort_order  as \"sort_order: SortOrder\"\n            ",
   "describe": {
     "columns": [
       {
@@ -57,18 +57,30 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "name": "sort_order: SortOrder",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "sort_order"
+          }
+        }
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 4
     },
     "nullable": [
       false,
       false,
-      true,
-      true,
+      false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "93202cebfe7d79700ed0d76d68549de30d1c08cab4b0ea0e754eaa37daf25575"
+  "hash": "07c85029302e343ad586515f65bd1bf9c22670f3606aed25628b08ac952e1296"
 }

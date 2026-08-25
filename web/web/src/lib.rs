@@ -187,6 +187,7 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
         .route("/lists/{id}/delete", post(pages::lists::delete))
         .route("/lists/{id}", get(pages::items::show))
         .route("/lists/{id}/items", post(pages::items::create))
+        .route("/lists/{id}/clear-done", post(pages::items::clear_done))
         // A browser form can only GET or POST, so ticking off and deleting are POSTs
         // to their own paths rather than PUT and DELETE on the item.
         .route(

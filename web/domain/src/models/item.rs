@@ -2,7 +2,7 @@ use time::OffsetDateTime;
 
 use super::{Error, Result};
 use super::{OffsetPage, OrderBy, Paging};
-use super::{list, unit};
+use super::{list, unit, user};
 
 // Scaffold Id, Name, Amount, DoneAt and CreatedAt
 i64!(Id);
@@ -263,6 +263,55 @@ impl Item {
         .await?;
 
         Ok(page.page_of(items, total))
+    }
+
+    /// The distinct item names this person has used before, most-used first.
+    ///
+    /// Retyping `Milk` every week is the complaint people actually have about list
+    /// apps, and every answer to it is already in this table. Scoped by owner rather
+    /// than by list: what you buy is a property of you, not of one list, and the
+    /// suggestion is most useful on a list that is still empty.
+    ///
+    /// Grouped `COLLATE NOCASE` so `milk` and `Milk` are one suggestion; the spelling
+    /// returned is whichever the database picked, since either is one the person has
+    /// typed themselves.
+    pub async fn suggestions(
+        pool: &sqlx::SqlitePool,
+        owner_id: user::Id,
+        limit: i64,
+    ) -> Result<Vec<Name>> {
+        Ok(sqlx::query_scalar!(
+            r#"
+            SELECT i.name as "name!: Name"
+            FROM items i
+            JOIN lists l ON l.id = i.list_id
+            WHERE l.owner_id = ?1
+            GROUP BY i.name COLLATE NOCASE
+            ORDER BY count(*) DESC, i.name
+            LIMIT ?2
+            "#,
+            owner_id,
+            limit
+        )
+        .fetch_all(pool)
+        .await?)
+    }
+
+    /// Removes everything already ticked off a list, and says how many went.
+    ///
+    /// One statement rather than a delete per item: clearing up after a shop is one
+    /// action to the person doing it, and twenty round trips is a visible pause.
+    pub async fn delete_done(pool: &sqlx::SqlitePool, list_id: list::Id) -> Result<u64> {
+        let result = sqlx::query!(
+            r#"DELETE FROM items WHERE list_id = ?1 AND done_at IS NOT NULL"#,
+            list_id
+        )
+        .execute(pool)
+        .await?;
+
+        // No rows is not a miss: clearing a list with nothing ticked is a no-op, not
+        // an error, and the button that calls this is allowed to be pressed twice.
+        Ok(result.rows_affected())
     }
 
     /// Fetches one item. A miss is [`Error::NotFound`], not `Ok(None)`.
