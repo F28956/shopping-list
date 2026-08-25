@@ -21,7 +21,14 @@ struct WatchItemsView: View {
     @State private var inFlight: Set<Int64> = []
 
     private var outstanding: [Item] { items.filter { !$0.isDone } }
-    private var categories: [ItemGroup] { grouped(outstanding, by: tags) }
+
+    /// Outstanding items in the order the shop is laid out, with no headings.
+    ///
+    /// The same grouping the phone and the browser use, flattened. Tags earn their
+    /// place here by putting the right things next to each other; a heading over each
+    /// run would cost a row apiece to say what the order already says, on a screen
+    /// with six of them.
+    private var ordered: [Item] { grouped(outstanding, by: tags).flatMap(\.items) }
     private var done: [Item] { items.filter(\.isDone) }
 
     var body: some View {
@@ -38,23 +45,7 @@ struct WatchItemsView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    ForEach(categories) { category in
-                        // Headings only when they separate something. On 208 points
-                        // a heading costs most of a row, and one that stands over the
-                        // whole list has bought nothing with it.
-                        if categories.count > 1 {
-                            Section {
-                                ForEach(category.items) { row($0) }
-                            } header: {
-                                Text(category.heading)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .textCase(nil)
-                            }
-                        } else {
-                            ForEach(category.items) { row($0) }
-                        }
-                    }
+                    ForEach(ordered) { row($0) }
 
                     if !done.isEmpty {
                         Section {
