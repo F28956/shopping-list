@@ -4,8 +4,9 @@ pub struct OrderBy<T> {
     pub direction: Direction,
 }
 
-#[derive(Debug, Clone, Copy, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, serde::Deserialize)]
 #[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum Direction {
     Ascending,
     Descending,
@@ -69,14 +70,16 @@ pub struct OffsetPage<T> {
     pub has_more: bool,
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+/// Test-only helpers. Public because the transports' request-level tests need the
+/// same migrated in-memory database the model tests use.
+#[cfg(any(test, feature = "test-support"))]
+pub mod tests {
     use rstest::fixture;
     use sqlx::SqlitePool;
 
     /// A migrated in-memory database, seeded with `seed` — see [`seeds!`].
     #[fixture]
-    pub(crate) async fn pool(#[default("")] seed: &'static str) -> SqlitePool {
+    pub async fn pool(#[default("")] seed: &'static str) -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::migrate!().run(&pool).await.unwrap();
         if !seed.is_empty() {

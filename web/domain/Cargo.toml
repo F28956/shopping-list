@@ -11,8 +11,15 @@ serde = { version = "1.0.229", features = ["derive"] }
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite", "migrate", "time"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
+# optional: only linked when `test-support` exposes the pool fixture to other crates
+rstest = { version = "0.26.1", optional = true }
 time = { version = "0.3.55", features = ["serde-well-known"] }
 tracing = "0.1.44"
+
+[features]
+# Exposes the migrated in-memory `pool` fixture so the transports can drive their
+# routers against a real database in tests. Not enabled by the default build.
+test-support = ["dep:rstest"]
 
 [dev-dependencies]
 futures = "0.3"

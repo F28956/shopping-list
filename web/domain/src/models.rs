@@ -14,5 +14,5 @@ pub use common::{Direction, OffsetPage, OrderBy, Paging};
 pub use error::Error;
 pub(in crate::models) use error::Result;
 
-#[cfg(test)]
-pub(crate) use common::tests::pool;
+#[cfg(any(test, feature = "test-support"))]
+pub use common::tests::pool;

@@ -1,13 +1,14 @@
 mod auth;
 mod error;
 mod jwks;
+mod routes;
 mod state;
 
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
+use axum::{Router, routing::get};
 use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode},
@@ -17,10 +18,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use time::OffsetDateTime;
 
-use crate::auth::CurrentUser;
 use crate::error::AppError;
+use domain::service::Ctx;
+
 use crate::jwks::Jwks;
-use crate::state::AppState;
+use crate::state::{AppState, AuthMode};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -50,19 +52,18 @@ async fn main() -> anyhow::Result<()> {
     domain::MIGRATOR.run(&db).await?;
 
     let state = AppState {
-        db,
-        jwks: Arc::new(Jwks::new(reqwest::Client::new())),
-        google_client_id: std::env::var("GOOGLE_CLIENT_ID")?,
+        ctx: Ctx::new(db),
+        auth: AuthMode::Google {
+            jwks: Arc::new(Jwks::new(reqwest::Client::new())),
+            client_id: std::env::var("GOOGLE_CLIENT_ID")?,
+        },
     };
 
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .route(
-            "/debug/jwks",
-            get(|State(s): State<AppState>| async move {
-                s.jwks.key("nonexistent").await.map(|_| "found")
-            }),
-        )
+        // Bearer-authenticated. Never wrapped in a session layer -- see the note on
+        // CurrentUser: on a shared origin a cookie must not authenticate anything here.
+        .nest("/api/notes", routes::notes::router())
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
