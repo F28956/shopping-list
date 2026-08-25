@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use openidconnect::{core::CoreClient, EndpointMaybeSet, EndpointNotSet, EndpointSet};
+use openidconnect::{EndpointMaybeSet, EndpointNotSet, EndpointSet, core::CoreClient};
 
 pub type OidcClient = CoreClient<
-    EndpointSet, // auth url - set by discovery
-    EndpointNotSet, //device auth
-    EndpointNotSet, // introspection
-    EndpointNotSet, // revocation
+    EndpointSet,      // auth url - set by discovery
+    EndpointNotSet,   //device auth
+    EndpointNotSet,   // introspection
+    EndpointNotSet,   // revocation
     EndpointMaybeSet, // token url
     EndpointMaybeSet, // userinfo
 >;
@@ -32,5 +32,5 @@ pub struct Note {
 
 #[derive(serde::Deserialize)]
 pub struct NoteForm {
-    pub body: String
+    pub body: String,
 }

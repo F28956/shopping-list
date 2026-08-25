@@ -64,10 +64,22 @@ CREATE TABLE items (
 CREATE INDEX items_by_list ON items(list_id, created_at);
 
 CREATE TABLE tags (
-    id     INTEGER PRIMARY KEY,
-    name   TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    colour TEXT,
-    emoji  TEXT
+    id         INTEGER PRIMARY KEY,
+    -- The model normalises names (trimmed, lowercased) before writing; these are a
+    -- backstop against writers that do not, not the enforcement point. SQLite cannot
+    -- case-fold beyond ASCII, so `name = lower(name)` is deliberately not asserted.
+    name       TEXT NOT NULL UNIQUE COLLATE NOCASE
+               CHECK (name <> '' AND name = trim(name) AND length(name) <= 64),
+    -- Presentation, not a key: the model trims these and leaves the case alone. A
+    -- colour is written as uppercase hex (`#00539F`) and an emoji must never be
+    -- case-folded at all, so unlike `name` there is deliberately no lower() here.
+    colour     TEXT CHECK (colour IS NULL
+                           OR (colour <> '' AND colour = trim(colour) AND length(colour) <= 32)),
+    -- length() counts characters, and an emoji may be several: `🛠️` is a base plus a
+    -- variation selector, and a flag or a family is more still.
+    emoji      TEXT CHECK (emoji IS NULL
+                           OR (emoji <> '' AND emoji = trim(emoji) AND length(emoji) <= 16)),
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE TABLE item_tags (

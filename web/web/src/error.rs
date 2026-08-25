@@ -1,6 +1,6 @@
 use axum::{
     http::StatusCode,
-    response::{IntoResponse,Response},
+    response::{IntoResponse, Response},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -12,7 +12,7 @@ pub enum AppError {
     Session(#[from] tower_sessions::session::Error),
 
     #[error("oidc: {0}")]
-    Oidc(String)
+    Oidc(String),
 }
 
 impl IntoResponse for AppError {

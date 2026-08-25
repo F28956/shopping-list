@@ -6,6 +6,7 @@ pub mod error;
 pub mod item;
 pub mod list;
 pub mod note;
+pub mod tag;
 pub mod unit;
 pub mod user;
 

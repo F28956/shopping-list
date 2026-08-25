@@ -1,32 +1,37 @@
+-- created_at is given explicitly: the column default is unixepoch(), so a single
+-- multi-row INSERT would stamp every row identically and any ordering assertion on
+-- created_at would hold whatever order came back. The offsets are deliberately out
+-- of id order, so ordering by created_at is distinguishable from ordering by id.
 INSERT INTO TAGS(
     name,
     colour,
-    emoji
+    emoji,
+    created_at
 ) VALUES
     -- shops
-    ( "tesco", "#00539F", "🛒" ),
-    ( "aldi", "#24A9E1", "🛒" ),
-    ( "b&q", "#FFA500", "🛠️" ),
-    ( "boots", "#005EB8", "💊" ),
+    ( "tesco", "#00539F", "🛒", unixepoch() - 14 ),
+    ( "aldi", "#24A9E1", "🛒", unixepoch() - 47 ),
+    ( "b&q", "#FFA500", "🛠️", unixepoch() - 3  ),
+    ( "boots", "#005EB8", "💊", unixepoch() - 71 ),
     -- categories
-    ( "produce", "#4CAF50", "🥬" ),
-    ( "fruits", "#008000", "🍎" ),
-    ( "dairy", "#FFF3C4", "🧀" ),
-    ( "bakery", "#C68642", "🥖" ),
-    ( "meat & fish", "#B03A2E", "🥩" ),
-    ( "frozen", "#7FDBFF", "🧊" ),
-    ( "drinks", "#8E44AD", "🥤" ),
-    ( "pantry", "#8D6E63", "🥫" ),
-    ( "baking", "#F5CBA7", "🧁" ),
-    ( "snacks", "#E67E22", "🍿" ),
-    ( "cleaning", "#00BCD4", "🧽" ),
-    ( "toiletries", "#EC407A", "🪥" ),
-    ( "household", "#607D8B", "🏠" ),
-    ( "diy", "#795548", "🔩" ),
-    ( "party", "#FF4081", "🎉" ),
+    ( "produce", "#4CAF50", "🥬", unixepoch() - 26 ),
+    ( "fruits", "#008000", "🍎", unixepoch() - 58 ),
+    ( "dairy", "#FFF3C4", "🧀", unixepoch() - 9  ),
+    ( "bakery", "#C68642", "🥖", unixepoch() - 35 ),
+    ( "meat & fish", "#B03A2E", "🥩", unixepoch() - 66 ),
+    ( "frozen", "#7FDBFF", "🧊", unixepoch() - 18 ),
+    ( "drinks", "#8E44AD", "🥤", unixepoch() - 52 ),
+    ( "pantry", "#8D6E63", "🥫", unixepoch() - 5  ),
+    ( "baking", "#F5CBA7", "🧁", unixepoch() - 41 ),
+    ( "snacks", "#E67E22", "🍿", unixepoch() - 74 ),
+    ( "cleaning", "#00BCD4", "🧽", unixepoch() - 22 ),
+    ( "toiletries", "#EC407A", "🪥", unixepoch() - 60 ),
+    ( "household", "#607D8B", "🏠", unixepoch() - 12 ),
+    ( "diy", "#795548", "🔩", unixepoch() - 44 ),
+    ( "party", "#FF4081", "🎉", unixepoch() - 30 ),
     -- workflow
-    ( "urgent", "#D32F2F", "⚡" ),
-    ( "treat", "#FFD700", "⭐" )
+    ( "urgent", "#D32F2F", "⚡", unixepoch() - 68 ),
+    ( "treat", "#FFD700", "⭐", unixepoch() - 1  )
 ;
 
 -- category tag for every item on a list

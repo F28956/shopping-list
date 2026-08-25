@@ -34,7 +34,7 @@ updating the files downstream of it.
 | `lists.sql` | 18 | owned by 8 of the 20 users |
 | `units.sql` | 31 | count, weight, volume, length |
 | `items.sql` | 73 | spread over 14 of the 18 lists |
-| `tags.sql` | 21 tags, 150 `item_tags` | associations are set-based, not hand-listed |
+| `tags.sql` | 21 tags, 150 `item_tags` | associations are set-based, not hand-listed; `created_at` stamped explicitly |
 | `notes.sql` | 12 | written by 4 of the 20 users |
 
 ## Shape of the data
@@ -156,7 +156,7 @@ but no shop tag.
 
 ### Timestamps
 
-`users`, `units`, `lists`, `items` and `notes` all stamp `created_at` **explicitly**, with
+`users`, `units`, `lists`, `items`, `tags` and `notes` all stamp `created_at` **explicitly**, with
 offsets deliberately out of id order. The column default is `unixepoch()`, so a single
 multi-row `INSERT` would give every row the same second and ordering by `created_at`
 would silently degrade to ordering by `id` — which is exactly the bug the
@@ -173,8 +173,9 @@ would silently degrade to ordering by `id` — which is exactly the bug the
 
 - No list is shared between users; ownership is 1:1, and `list_members` has no fixture —
   see `models::list::Role` for why sharing is not implemented.
-- `tags` has no model of its own yet, so nothing exercises `tags.sql` beyond
-  `item::delete` checking that a deleted item takes its `item_tags` rows with it.
+- Everything else the fixtures seed now has a model exercising it — `models::tag` covers
+  `tags` and `item_tags`, and `item::delete` additionally checks that a deleted item
+  takes its `item_tags` rows with it.
 
 ## Verifying a change
 
