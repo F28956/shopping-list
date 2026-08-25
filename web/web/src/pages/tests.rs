@@ -1543,3 +1543,164 @@ async fn a_guessed_link_gets_nowhere(#[future(awt)] pool: SqlitePool) {
 
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+// ------------------------------------------------------- coming back to it
+
+/// Returns the Location of a redirect, or None if the response was a page.
+async fn location(app: &axum::Router, uri: &str, cookie: &str) -> Option<String> {
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    res.headers()
+        .get(header::LOCATION)
+        .map(|v| v.to_str().unwrap().to_string())
+}
+
+/// The application comes back up where it was left, rather than on a menu you then
+/// have to navigate out of again.
+#[rstest]
+#[tokio::test]
+async fn it_opens_where_you_left_off(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|returner").await;
+    post(&app, "/lists", &cookie, "name=Weekly").await;
+    post(&app, "/lists", &cookie, "name=Hardware").await;
+    let (_, body) = get(&app, "/lists", &cookie).await;
+    let a_list = first_list_id(&body);
+
+    // nothing has been opened yet, so the home page is the index
+    assert_eq!(location(&app, "/", &cookie).await, None);
+
+    get(&app, &format!("/lists/{a_list}"), &cookie).await;
+
+    assert_eq!(
+        location(&app, "/", &cookie).await,
+        Some(format!("/lists/{a_list}")),
+        "it did not come back to the list that was open"
+    );
+
+    // and the index is still reachable, or the home link would bounce you back
+    let (status, index) = get(&app, "/lists", &cookie).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(index.contains("Weekly") && index.contains("Hardware"));
+}
+
+/// Somewhere that no longer exists is not somewhere to come back to.
+#[rstest]
+#[tokio::test]
+async fn a_deleted_list_is_forgotten(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|deleter").await;
+    post(&app, "/lists", &cookie, "name=Doomed").await;
+    let (_, body) = get(&app, "/lists", &cookie).await;
+    let id = first_list_id(&body);
+    get(&app, &format!("/lists/{id}"), &cookie).await;
+    assert!(location(&app, "/", &cookie).await.is_some());
+
+    post(&app, &format!("/lists/{id}/delete"), &cookie, "").await;
+
+    assert_eq!(
+        location(&app, "/", &cookie).await,
+        None,
+        "it tried to return to a deleted list"
+    );
+}
+
+/// Nor is somewhere access was taken away.
+#[rstest]
+#[tokio::test]
+async fn a_list_you_were_removed_from_is_forgotten(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|sharer").await;
+    post(&app, "/lists", &mine, "name=Household").await;
+    let (_, body) = get(&app, "/lists", &mine).await;
+    let id = first_list_id(&body);
+
+    let shown = post_page(&app, &format!("/lists/{id}/invites"), &mine, "").await;
+    let at = shown.find("/join/").unwrap();
+    let token: String = shown[at + 6..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|guest").await;
+    get(&app2, &format!("/join/{token}"), &theirs).await;
+    get(&app2, &format!("/lists/{id}"), &theirs).await;
+    assert!(
+        location(&app2, "/", &theirs).await.is_some(),
+        "they were not there"
+    );
+
+    // the owner takes it back
+    let members: Vec<i64> = vec![];
+    let _ = members;
+    let (_, share) = get(&app, &format!("/lists/{id}/share"), &mine).await;
+    let at = share.find("/members/").expect("no member to remove");
+    let who: i64 = share[at + 9..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap();
+    post(
+        &app,
+        &format!("/lists/{id}/members/{who}/remove"),
+        &mine,
+        "",
+    )
+    .await;
+
+    assert_eq!(
+        location(&app2, "/", &theirs).await,
+        None,
+        "it tried to return to a list they can no longer open"
+    );
+}
+
+/// Leaving a list forgets it, or the next visit sends you straight back in.
+#[rstest]
+#[tokio::test]
+async fn leaving_a_list_forgets_it(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|host").await;
+    post(&app, "/lists", &mine, "name=Shared").await;
+    let (_, body) = get(&app, "/lists", &mine).await;
+    let id = first_list_id(&body);
+    let shown = post_page(&app, &format!("/lists/{id}/invites"), &mine, "").await;
+    let at = shown.find("/join/").unwrap();
+    let token: String = shown[at + 6..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|leaver").await;
+    get(&app2, &format!("/join/{token}"), &theirs).await;
+    get(&app2, &format!("/lists/{id}"), &theirs).await;
+
+    post(&app2, &format!("/lists/{id}/leave"), &theirs, "").await;
+
+    assert_eq!(location(&app2, "/", &theirs).await, None);
+}
+
+/// A list somebody else opened is not where *this* person left off.
+#[rstest]
+#[tokio::test]
+async fn where_you_left_off_is_yours(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|one").await;
+    post(&app, "/lists", &mine, "name=Mine").await;
+    let (_, body) = get(&app, "/lists", &mine).await;
+    let id = first_list_id(&body);
+    get(&app, &format!("/lists/{id}"), &mine).await;
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|two").await;
+
+    assert_eq!(
+        location(&app2, "/", &theirs).await,
+        None,
+        "one person's place was handed to another"
+    );
+}

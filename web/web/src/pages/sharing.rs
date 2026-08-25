@@ -33,7 +33,7 @@ pub async fn show(
         &format!("Sharing {}", list.name.0),
         Some(&crate::pages::who(&user)),
         html! {
-            p { a href="/" { "← all lists" } }
+            p { a href="/lists" { "← all lists" } }
             h2 style="font-size:1.1rem;margin:.5rem 0 1rem" { "Sharing " (list.name.0) }
 
             @if members.is_empty() {
@@ -153,7 +153,19 @@ pub async fn leave(
     let actor = auth::require_actor(&session, &s.ctx).await?;
     let me = actor.person()?.id;
     lists::remove_member(&s.ctx, &actor, list::Id(id), me).await?;
-    Ok(Redirect::to("/"))
+
+    // Forget it as well, or the next visit sends them back to a list they just left.
+    forget_if_last(&session, id).await?;
+
+    Ok(Redirect::to("/lists"))
+}
+
+/// Drops the remembered list if it is this one.
+pub(super) async fn forget_if_last(session: &Session, id: i64) -> Result<(), AppError> {
+    if session.get::<i64>(crate::auth::LAST_LIST).await? == Some(id) {
+        session.remove::<i64>(crate::auth::LAST_LIST).await?;
+    }
+    Ok(())
 }
 
 /// Following an invitation link.

@@ -14,6 +14,13 @@ use crate::error::AppError;
 /// The session key holding the signed-in user's id.
 pub const USER_ID: &str = "user_id";
 
+/// The session key holding the list this person was last looking at.
+///
+/// In the session rather than in the database on purpose: "where I left off" is a
+/// property of the device you left off on. A phone and a laptop are allowed to be in
+/// different places.
+pub const LAST_LIST: &str = "last_list";
+
 /// Loads the signed-in person, if there is one.
 ///
 /// Returns `None` rather than an error when nobody is signed in: the index page is

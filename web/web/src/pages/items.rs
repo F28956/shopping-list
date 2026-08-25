@@ -334,13 +334,17 @@ pub async fn show(
     // Ownership is checked here, once, by the service. A list that is not theirs is
     // NotFound, which the browser sees as a 404 page rather than a hint.
     let list = lists::get(&s.ctx, &actor, list::Id(id)).await?;
+
+    // Remembered only after the access check, so a list somebody cannot open is never
+    // the one they get sent back to.
+    session.insert(auth::LAST_LIST, list.id.0).await?;
     let b = board(&s, &actor, list.id).await?;
 
     Ok(view::page(
         &list.name.0,
         Some(&crate::pages::who(&user)),
         html! {
-            p { a href="/" { "← all lists" } }
+            p { a href="/lists" { "← all lists" } }
             h2 style="font-size:1.1rem;margin:.5rem 0 1rem" { (list.name.0) }
 
             (fragment(list.id, &b, None))

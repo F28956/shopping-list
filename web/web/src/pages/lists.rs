@@ -2,7 +2,7 @@
 
 use axum::extract::{Form, Path, State};
 use axum::http::HeaderMap;
-use axum::response::Response;
+use axum::response::{IntoResponse, Redirect, Response};
 use domain::models::list::{self, List, Name};
 use domain::models::user;
 use domain::models::{Direction, OrderBy, Paging};
@@ -109,6 +109,30 @@ async fn sharing(s: &AppState, actor: &Actor) -> Result<Sharing, AppError> {
     })
 }
 
+/// Opens where you left off.
+///
+/// The application should come back up on the list you were using, not on a menu you
+/// then have to navigate out of again. The index keeps its own address at `/lists`,
+/// which the header and the navigation point at, so nothing becomes unreachable.
+///
+/// A remembered list that has since been deleted, or that access was revoked on, is
+/// forgotten rather than being an error: the answer to "that is not there any more"
+/// is the list of what is.
+pub async fn home(session: Session, State(s): State<AppState>) -> Result<Response, AppError> {
+    let Some(actor) = auth::current_actor(&session, &s.ctx).await? else {
+        return Ok(view::sign_in().into_response());
+    };
+
+    if let Some(id) = session.get::<i64>(auth::LAST_LIST).await?
+        && lists::get(&s.ctx, &actor, list::Id(id)).await.is_ok()
+    {
+        return Ok(Redirect::to(&format!("/lists/{id}")).into_response());
+    }
+
+    session.remove::<i64>(auth::LAST_LIST).await?;
+    Ok(index(session, State(s)).await?.into_response())
+}
+
 pub async fn index(session: Session, State(s): State<AppState>) -> Result<Markup, AppError> {
     let Some(actor) = auth::current_actor(&session, &s.ctx).await? else {
         return Ok(view::sign_in());
@@ -173,6 +197,9 @@ pub async fn delete(
 ) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     lists::delete(&s.ctx, &actor, list::Id(id)).await?;
+
+    // A deleted list is not somewhere to come back to.
+    super::sharing::forget_if_last(&session, id).await?;
     Ok(swap_or_redirect(
         &headers,
         fragment_of(current(&s, &actor).await?, &sharing(&s, &actor).await?),

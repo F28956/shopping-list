@@ -22,13 +22,13 @@ pub fn page(title: &str, who: Option<&str>, inner: Markup) -> Markup {
             }
             body {
                 header {
-                    h1 { a href="/" { "Shopping list" } }
+                    h1 { a href="/lists" { "Shopping list" } }
                     @if let Some(name) = who {
                         span class="who" { (name) " · " a href="/auth/logout" { "sign out" } }
                     }
                 }
                 @if who.is_some() {
-                    nav { a href="/" { "Lists" } a href="/notes" { "Notes" } }
+                    nav { a href="/lists" { "Lists" } a href="/notes" { "Notes" } }
                 }
                 (inner)
             }

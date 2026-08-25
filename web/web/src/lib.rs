@@ -197,8 +197,11 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
         .route("/static/htmx.js", get(assets::htmx))
         .route("/static/app.css", get(assets::css))
         .route("/static/app.js", get(assets::app_js))
-        .route("/", get(pages::lists::index))
-        .route("/lists", post(pages::lists::create))
+        .route("/", get(pages::lists::home))
+        .route(
+            "/lists",
+            get(pages::lists::index).post(pages::lists::create),
+        )
         .route("/lists/{id}/rename", post(pages::lists::rename))
         .route("/lists/{id}/delete", post(pages::lists::delete))
         .route("/lists/{id}", get(pages::items::show))
