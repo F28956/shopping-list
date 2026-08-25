@@ -14,20 +14,17 @@ pub type OidcClient = CoreClient<
 #[derive(Clone)]
 pub struct AppState {
     pub oidc: Arc<OidcClient>,
+    /// Used for the OIDC token exchange only. The API is no longer reached over HTTP,
+    /// so there is nothing else for it to call.
     pub http: openidconnect::reqwest::Client,
-    pub api_base: String,
+    /// What service calls need. The same pool the API uses, in the same process.
+    pub ctx: domain::service::Ctx,
 }
 
 #[derive(serde::Deserialize)]
 pub struct CallbackQuery {
     pub code: String,
     pub state: String,
-}
-
-#[derive(serde::Deserialize)]
-pub struct Note {
-    pub id: i64,
-    pub body: String,
 }
 
 #[derive(serde::Deserialize)]

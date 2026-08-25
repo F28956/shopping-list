@@ -10,6 +10,10 @@ use axum::{
     response::Redirect,
     routing::{get, post},
 };
+use domain::models::note;
+use domain::models::user::{self, User};
+use domain::models::{Direction, OrderBy, Paging};
+use domain::service::{Actor, Ctx, notes};
 use maud::{DOCTYPE, Markup, html};
 use openidconnect::{
     AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
@@ -19,11 +23,12 @@ use openidconnect::{
 use std::sync::Arc;
 use tower_sessions::{Expiry, MemoryStore, Session, SessionManagerLayer, cookie::SameSite};
 
+pub mod auth;
 pub mod error;
 pub use error::AppError;
 
 pub mod state;
-pub use state::{AppState, CallbackQuery, Note, NoteForm};
+pub use state::{AppState, CallbackQuery, NoteForm};
 
 async fn login(session: Session, State(s): State<AppState>) -> Result<Redirect, AppError> {
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
@@ -89,66 +94,75 @@ async fn callback(
 
     tracing::info!(sub = %claims.subject().as_str(), "login ok");
 
-    // 5. New session ID then store identity
+    // 5. Resolve the identity to a user, once. The session then outlives the id_token,
+    //    which is good for about an hour and is not refreshed anywhere.
+    let user = User::find_or_create(
+        &s.ctx.db,
+        user::Sub(claims.subject().to_string()),
+        Some(name)
+            .filter(|n: &String| !n.is_empty())
+            .map(user::Name),
+        claims.email().map(|e| user::Email(e.to_string())),
+    )
+    .await?;
+
+    // 6. New session id, then store who they are
     session.cycle_id().await?;
-    session.insert("id_token", id_token.to_string()).await?;
-    session.insert("name", name).await?;
+    session.insert(auth::USER_ID, user.id.0).await?;
     Ok(Redirect::to("/"))
 }
 
 #[axum::debug_handler]
 async fn index(session: Session, State(s): State<AppState>) -> Result<Markup, AppError> {
-    let Some(token): Option<String> = session.get("id_token").await? else {
-        return Ok(html! {
-            (DOCTYPE)
-            html {
-                head {
-                    title { "Shopping list" }
-                }
-                body {
-                    h1 { "Shopping list" }
-                    a href = "/auth/login" { "Sign in wih Google" }
-                }
-            }
-        });
+    let Some(user) = auth::current_user(&session, &s.ctx).await? else {
+        return Ok(page(html! {
+            h1 { "Shopping list" }
+            a href="/auth/login" { "Sign in with Google" }
+        }));
     };
 
-    let name: String = session.get("name").await?.unwrap_or_default();
+    // No HTTP, no bearer token, no serialisation: the same call the API handler makes,
+    // in the same process, against the same pool.
+    let notes = notes::list(
+        &s.ctx,
+        &Actor::User(user.clone()),
+        Paging {
+            number: 1,
+            size: 100,
+        },
+        OrderBy {
+            field: note::Field::CreatedAt,
+            direction: Direction::Descending,
+        },
+    )
+    .await?;
 
-    let resp = s
-        .http
-        .get(format!("{}/api/notes", s.api_base))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .map_err(|e| AppError::Oidc(e.to_string()))?;
+    let who = user
+        .name
+        .as_ref()
+        .map(|n| n.0.clone())
+        .unwrap_or_else(|| "you".to_string());
 
-    if resp.status() == 401 {
-        session.flush().await?;
-        return Ok(html! {
-            meta http-equiv="refresh" content="0;url=/auth/login" {}
-        });
-    }
+    Ok(page(html! {
+        h1 { "Shopping list" }
+        p { "Signed in as " (who) " — " a href="/auth/logout" { "sign out" } }
+        form method="post" action="/notes" {
+            input type="text" name="body" placeholder="add an item" {}
+            button type="submit" { "Add" }
+        }
+        ul { @for n in &notes.items { li { (n.body.0) } } }
+    }))
+}
 
-    let notes: Vec<Note> = resp
-        .json()
-        .await
-        .map_err(|e| AppError::Oidc(e.to_string()))?;
-
-    Ok(html! {
+/// The shell every page shares.
+fn page(inner: Markup) -> Markup {
+    html! {
         (DOCTYPE)
         html {
-            body {
-                h1 {"Shopping list" }
-                p { "Signed in as " (name) " - " a href="/auth/logout" { "sign out" } }
-                form method="post" action="/notes" {
-                    input type="text" name="body" placeholder="add an item" {}
-                    button type="submit" { "Add" }
-                }
-                ul { @for n in &notes { li { (n.body) } } }
-            }
+            head { title { "Shopping list" } meta charset="utf-8"; }
+            body { (inner) }
         }
-    })
+    }
 }
 
 async fn add_note(
@@ -156,15 +170,9 @@ async fn add_note(
     State(s): State<AppState>,
     Form(form): Form<NoteForm>,
 ) -> Result<Redirect, AppError> {
-    let token: String = session.get("id_token").await?.ok_or(AppError::BadRequest)?;
+    let actor = auth::require_actor(&session, &s.ctx).await?;
 
-    s.http
-        .post(format!("{}/api/notes", s.api_base))
-        .bearer_auth(&token)
-        .json(&serde_json::json!({ "body": form.body }))
-        .send()
-        .await
-        .map_err(|e| AppError::Oidc(e.to_string()))?;
+    notes::create(&s.ctx, &actor, note::Body(form.body)).await?;
 
     Ok(Redirect::to("/"))
 }
@@ -174,7 +182,7 @@ async fn add_note(
 /// Separate from [`router`] because discovery is a network call: the caller decides
 /// when to pay for it, and gets a real error if it fails rather than a panic during
 /// routing.
-pub async fn state() -> anyhow::Result<AppState> {
+pub async fn state(ctx: Ctx) -> anyhow::Result<AppState> {
     let http = openidconnect::reqwest::ClientBuilder::new()
         .redirect(openidconnect::reqwest::redirect::Policy::none())
         .build()?;
@@ -200,8 +208,7 @@ pub async fn state() -> anyhow::Result<AppState> {
     Ok(AppState {
         oidc: Arc::new(oidc),
         http,
-        // the API now lives in this same process, under /api
-        api_base: std::env::var("API_BASE").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string()),
+        ctx,
     })
 }
 

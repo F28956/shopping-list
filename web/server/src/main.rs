@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
             client_id: std::env::var("GOOGLE_CLIENT_ID")?,
         },
     };
-    let web_state = web::state().await?;
+    let web_state = web::state(Ctx::new(db.clone())).await?;
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     tracing::info!("listening on {}", listener.local_addr()?);
