@@ -1,15 +1,17 @@
 //! What is on one list.
 
 use axum::extract::{Form, Path, State};
-use axum::response::Redirect;
+use axum::http::HeaderMap;
+use axum::response::Response;
 use domain::models::item::{self, Amount, Name};
 use domain::models::{Direction, OrderBy, Paging, list, tag, unit};
-use domain::service::{items, lists, tags, units};
+use domain::service::{Actor, items, lists, tags, units};
 use maud::{Markup, html};
 use tower_sessions::Session;
 
 use crate::auth;
 use crate::error::AppError;
+use crate::htmx::swap_or_redirect;
 use crate::state::AppState;
 use crate::view;
 
@@ -29,61 +31,66 @@ fn everything() -> Paging {
     }
 }
 
-pub async fn show(
-    session: Session,
-    State(s): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<Markup, AppError> {
-    let actor = auth::require_actor(&session, &s.ctx).await?;
-    let user = actor.person()?.clone();
+/// Everything the item rows need, gathered once.
+struct Board {
+    items: Vec<item::Item>,
+    unit_names: std::collections::HashMap<i64, String>,
+    tags_by_item: std::collections::HashMap<i64, Vec<tag::Tag>>,
+    all_tags: Vec<tag::Tag>,
+}
 
-    // Ownership is checked here, once, by the service. A list that is not theirs is
-    // NotFound, which the browser sees as a 404 page rather than a hint.
-    let list = lists::get(&s.ctx, &actor, list::Id(id)).await?;
+async fn board(s: &AppState, actor: &Actor, list_id: list::Id) -> Result<Board, AppError> {
+    Ok(Board {
+        items: items::for_list(
+            &s.ctx,
+            actor,
+            list_id,
+            everything(),
+            // Outstanding first, then the ones already ticked off.
+            OrderBy {
+                field: item::Field::DoneAt,
+                direction: Direction::Ascending,
+            },
+        )
+        .await?
+        .items,
+        unit_names: unit_lookup(s, actor).await?,
+        // One query for the whole page rather than one per item.
+        tags_by_item: tags::on_list(&s.ctx, actor, list_id).await?,
+        all_tags: tags::list(
+            &s.ctx,
+            actor,
+            everything(),
+            OrderBy {
+                field: tag::Field::Name,
+                direction: Direction::Ascending,
+            },
+        )
+        .await?
+        .items,
+    })
+}
 
-    let page = items::for_list(
-        &s.ctx,
-        &actor,
-        list.id,
-        everything(),
-        // Outstanding first, then the ones already ticked off.
-        OrderBy {
-            field: item::Field::DoneAt,
-            direction: Direction::Ascending,
-        },
-    )
-    .await?;
-
-    let unit_names = unit_lookup(&s, &actor).await?;
-    // One query for the whole page rather than one per item.
-    let tags_by_item = tags::on_list(&s.ctx, &actor, list.id).await?;
-    let all_tags = tags::list(
-        &s.ctx,
-        &actor,
-        everything(),
-        OrderBy {
-            field: tag::Field::Name,
-            direction: Direction::Ascending,
-        },
-    )
-    .await?
-    .items;
-
-    Ok(view::page(
-        &list.name.0,
-        Some(&crate::pages::who(&user)),
-        html! {
-            p { a href="/" { "← all lists" } }
-            h2 style="font-size:1.1rem;margin:.5rem 0 1rem" { (list.name.0) }
-
-            @if page.items.is_empty() {
+/// The part of the page that changes. Every edit re-renders exactly this, so there is
+/// one description of what an item looks like rather than one per operation.
+///
+/// The add form sits outside it: htmx replaces this element, and a form that is
+/// replaced loses the cursor. Leaving it in place means you can add a whole shop's
+/// worth of items without touching the mouse.
+fn fragment(list_id: list::Id, b: &Board) -> Markup {
+    let base = format!("/lists/{}", list_id.0);
+    html! {
+        div id="items" {
+            @if b.items.is_empty() {
                 p class="empty" { "Nothing on this list yet." }
             } @else {
                 ul class="rows" {
-                    @for i in &page.items {
+                    @for i in &b.items {
                         li class=@if i.done_at.is_some() { "done" } @else { "" } {
                             form class="inline" method="post"
-                                 action={ "/lists/" (list.id.0) "/items/" (i.id.0) "/toggle" } {
+                                 action={ (base) "/items/" (i.id.0) "/toggle" }
+                                 hx-post={ (base) "/items/" (i.id.0) "/toggle" }
+                                 hx-target="#items" hx-swap="outerHTML" {
                                 button class="quiet" title="Tick off" {
                                     @if i.done_at.is_some() { "☑" } @else { "☐" }
                                 }
@@ -91,21 +98,24 @@ pub async fn show(
                             span class="grow" { (i.name.0) }
                             span class="amount" {
                                 (trim_amount(i.amount))
-                                @if let Some(u) = i.unit_id.and_then(|u| unit_names.get(&u.0)) {
+                                @if let Some(u) = i.unit_id.and_then(|u| b.unit_names.get(&u.0)) {
                                     " " (u)
                                 }
                             }
                             form class="inline" method="post"
-                                 action={ "/lists/" (list.id.0) "/items/" (i.id.0) "/delete" } {
+                                 action={ (base) "/items/" (i.id.0) "/delete" }
+                                 hx-post={ (base) "/items/" (i.id.0) "/delete" }
+                                 hx-target="#items" hx-swap="outerHTML" {
                                 button class="quiet" title="Remove" { "×" }
                             }
                         }
                         li class="tagrow" {
-                            @let on_item = tags_by_item.get(&i.id.0);
+                            @let on_item = b.tags_by_item.get(&i.id.0);
                             @for t in on_item.into_iter().flatten() {
                                 form class="inline" method="post"
-                                     action={ "/lists/" (list.id.0) "/items/" (i.id.0)
-                                              "/tags/" (t.id.0) "/delete" } {
+                                     action={ (base) "/items/" (i.id.0) "/tags/" (t.id.0) "/delete" }
+                                     hx-post={ (base) "/items/" (i.id.0) "/tags/" (t.id.0) "/delete" }
+                                     hx-target="#items" hx-swap="outerHTML" {
                                     button class="chip" title="Remove tag" {
                                         @if let Some(e) = &t.emoji { (e.0) " " }
                                         (t.name.0) " ×"
@@ -115,14 +125,16 @@ pub async fn show(
                             details class="edit" {
                                 summary title="Edit" { "✎ edit" }
                                 form class="add" method="post"
-                                     action={ "/lists/" (list.id.0) "/items/" (i.id.0) "/edit" } {
+                                     action={ (base) "/items/" (i.id.0) "/edit" }
+                                     hx-post={ (base) "/items/" (i.id.0) "/edit" }
+                                     hx-target="#items" hx-swap="outerHTML" {
                                     input type="text" name="name" value=(i.name.0)
                                           required maxlength="128" aria-label="Item name";
                                     input type="number" name="amount" value=(trim_amount(i.amount))
                                           min="0" step="any" style="width:5rem" aria-label="Amount";
                                     select name="unit_id" aria-label="Unit" {
                                         option value="" selected[i.unit_id.is_none()] { "unit" }
-                                        @for (uid, uname) in &unit_names_sorted(&unit_names) {
+                                        @for (uid, uname) in &unit_names_sorted(&b.unit_names) {
                                             option value=(uid)
                                                    selected[i.unit_id.map(|u| u.0) == Some(*uid)] {
                                                 (uname)
@@ -135,9 +147,11 @@ pub async fn show(
                             details {
                                 summary { "+ tag" }
                                 form class="add" method="post"
-                                     action={ "/lists/" (list.id.0) "/items/" (i.id.0) "/tags" } {
+                                     action={ (base) "/items/" (i.id.0) "/tags" }
+                                     hx-post={ (base) "/items/" (i.id.0) "/tags" }
+                                     hx-target="#items" hx-swap="outerHTML" {
                                     select name="tag_id" aria-label="Tag" required {
-                                        @for t in &all_tags {
+                                        @for t in &b.all_tags {
                                             // only what is not already on it
                                             @if !on_item.is_some_and(|ts| ts.iter().any(|x| x.id == t.id)) {
                                                 option value=(t.id.0) {
@@ -154,15 +168,43 @@ pub async fn show(
                     }
                 }
             }
+        }
+    }
+}
 
-            form class="add" method="post" action={ "/lists/" (list.id.0) "/items" } {
+pub async fn show(
+    session: Session,
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Markup, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+    let user = actor.person()?.clone();
+
+    // Ownership is checked here, once, by the service. A list that is not theirs is
+    // NotFound, which the browser sees as a 404 page rather than a hint.
+    let list = lists::get(&s.ctx, &actor, list::Id(id)).await?;
+    let b = board(&s, &actor, list.id).await?;
+
+    Ok(view::page(
+        &list.name.0,
+        Some(&crate::pages::who(&user)),
+        html! {
+            p { a href="/" { "← all lists" } }
+            h2 style="font-size:1.1rem;margin:.5rem 0 1rem" { (list.name.0) }
+
+            (fragment(list.id, &b))
+
+            form class="add" method="post" action={ "/lists/" (list.id.0) "/items" }
+                 hx-post={ "/lists/" (list.id.0) "/items" }
+                 hx-target="#items" hx-swap="outerHTML"
+                 hx-on::after-request="this.reset()" {
                 input type="text" name="name" placeholder="Add an item" required maxlength="128";
                 input type="number" name="amount" value="1" min="0" step="any"
                       style="width:5rem" aria-label="Amount";
                 select name="unit_id" aria-label="Unit" {
                     option value="" { "unit" }
-                    @for (id, name) in &unit_names_sorted(&unit_names) {
-                        option value=(id) { (name) }
+                    @for (uid, uname) in &unit_names_sorted(&b.unit_names) {
+                        option value=(uid) { (uname) }
                     }
                 }
                 button class="primary" { "Add" }
@@ -211,8 +253,9 @@ pub async fn create(
     session: Session,
     State(s): State<AppState>,
     Path(id): Path<i64>,
+    headers: HeaderMap,
     Form(form): Form<NewItem>,
-) -> Result<Redirect, AppError> {
+) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
 
     let unit_id = form
@@ -231,7 +274,7 @@ pub async fn create(
     )
     .await?;
 
-    Ok(Redirect::to(&format!("/lists/{id}")))
+    swap(&s, &actor, &headers, list::Id(id)).await
 }
 
 /// One button that flips whichever way the item currently is — a browser form cannot
@@ -241,23 +284,25 @@ pub async fn toggle(
     session: Session,
     State(s): State<AppState>,
     Path((list_id, item_id)): Path<(i64, i64)>,
-) -> Result<Redirect, AppError> {
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
 
     let item = items::get(&s.ctx, &actor, item::Id(item_id)).await?;
     items::set_done(&s.ctx, &actor, item.id, item.done_at.is_none()).await?;
 
-    Ok(Redirect::to(&format!("/lists/{list_id}")))
+    swap(&s, &actor, &headers, list::Id(list_id)).await
 }
 
 pub async fn delete(
     session: Session,
     State(s): State<AppState>,
     Path((list_id, item_id)): Path<(i64, i64)>,
-) -> Result<Redirect, AppError> {
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     items::delete(&s.ctx, &actor, item::Id(item_id)).await?;
-    Ok(Redirect::to(&format!("/lists/{list_id}")))
+    swap(&s, &actor, &headers, list::Id(list_id)).await
 }
 
 #[derive(serde::Deserialize)]
@@ -271,21 +316,23 @@ pub async fn attach_tag(
     session: Session,
     State(s): State<AppState>,
     Path((list_id, item_id)): Path<(i64, i64)>,
+    headers: HeaderMap,
     Form(form): Form<TagChoice>,
-) -> Result<Redirect, AppError> {
+) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     tags::attach(&s.ctx, &actor, item::Id(item_id), tag::Id(form.tag_id)).await?;
-    Ok(Redirect::to(&format!("/lists/{list_id}")))
+    swap(&s, &actor, &headers, list::Id(list_id)).await
 }
 
 pub async fn detach_tag(
     session: Session,
     State(s): State<AppState>,
     Path((list_id, item_id, tag_id)): Path<(i64, i64, i64)>,
-) -> Result<Redirect, AppError> {
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     tags::detach(&s.ctx, &actor, item::Id(item_id), tag::Id(tag_id)).await?;
-    Ok(Redirect::to(&format!("/lists/{list_id}")))
+    swap(&s, &actor, &headers, list::Id(list_id)).await
 }
 
 /// Edits what a person typed: name, amount, unit. Not the list it is on -- moving an
@@ -295,8 +342,9 @@ pub async fn edit(
     session: Session,
     State(s): State<AppState>,
     Path((list_id, item_id)): Path<(i64, i64)>,
+    headers: HeaderMap,
     Form(form): Form<NewItem>,
-) -> Result<Redirect, AppError> {
+) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
 
     let unit_id = form
@@ -315,5 +363,21 @@ pub async fn edit(
     )
     .await?;
 
-    Ok(Redirect::to(&format!("/lists/{list_id}")))
+    swap(&s, &actor, &headers, list::Id(list_id)).await
+}
+
+/// Re-renders the item board for htmx, or sends a browser back to the page.
+async fn swap(
+    s: &AppState,
+    actor: &Actor,
+    headers: &HeaderMap,
+    list_id: list::Id,
+) -> Result<Response, AppError> {
+    let to = format!("/lists/{}", list_id.0);
+    if crate::htmx::is_htmx(headers) {
+        let b = board(s, actor, list_id).await?;
+        Ok(swap_or_redirect(headers, fragment(list_id, &b), &to))
+    } else {
+        Ok(swap_or_redirect(headers, maud::html! {}, &to))
+    }
 }

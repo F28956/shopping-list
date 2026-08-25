@@ -20,8 +20,10 @@ use openidconnect::{
 use std::sync::Arc;
 use tower_sessions::{Expiry, Session, SessionManagerLayer, cookie::SameSite};
 
+pub mod assets;
 pub mod auth;
 pub mod error;
+pub mod htmx;
 pub mod pages;
 pub mod sessions;
 #[cfg(any(test, feature = "test-support"))]
@@ -178,6 +180,7 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
         ));
 
     Router::new()
+        .route("/static/htmx.js", get(assets::htmx))
         .route("/", get(pages::lists::index))
         .route("/lists", post(pages::lists::create))
         .route("/lists/{id}/rename", post(pages::lists::rename))

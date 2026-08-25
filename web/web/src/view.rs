@@ -44,6 +44,9 @@ pub fn page(title: &str, who: Option<&str>, inner: Markup) -> Markup {
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) " · Shopping list" }
                 style { (PreEscaped(STYLE)) }
+                // Vendored, not from a CDN -- see assets.rs. `defer` because nothing
+                // on the page needs it before the HTML is parsed.
+                script src="/static/htmx.js" defer {}
             }
             body {
                 header {

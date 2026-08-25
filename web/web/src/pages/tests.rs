@@ -65,6 +65,34 @@ async fn get(app: &axum::Router, uri: &str, cookie: &str) -> (StatusCode, String
     (status, body)
 }
 
+/// Like `post`, but announcing itself as htmx — which is what makes the handler
+/// answer with a fragment instead of a redirect.
+async fn post_htmx(
+    app: &axum::Router,
+    uri: &str,
+    cookie: &str,
+    form: &str,
+) -> (StatusCode, String) {
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .method("POST")
+                .header(header::COOKIE, cookie)
+                .header("hx-request", "true")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(form.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let body = String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec())
+        .unwrap_or_default();
+    (status, body)
+}
+
 async fn post(app: &axum::Router, uri: &str, cookie: &str, form: &str) -> StatusCode {
     let res = app
         .clone()
@@ -562,4 +590,141 @@ async fn a_stranger_cannot_edit_my_things(
     // and nothing changed
     let (_, body) = get(&app, &format!("/lists/{list_id}"), &mine).await;
     assert!(body.contains("Thing"), "the item was edited by a stranger");
+}
+
+/// A fragment, not a page: no doctype, no header, no add form — just the part that
+/// changed. Getting this wrong is how htmx ends up nesting a whole page inside a div.
+fn is_fragment(body: &str, id: &str) -> bool {
+    body.contains(&format!("id=\"{id}\""))
+        && !body.contains("<!DOCTYPE")
+        && !body.contains("<header")
+}
+
+#[rstest]
+#[tokio::test]
+async fn htmx_gets_a_fragment_where_a_browser_gets_a_redirect(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|htmx").await;
+
+    // the plain form post is unchanged: still a redirect
+    assert_eq!(
+        post(&app, "/lists", &cookie, "name=Plain").await,
+        StatusCode::SEE_OTHER,
+        "the no-JavaScript path must keep working"
+    );
+
+    // the same route, announced as htmx, answers with the fragment
+    let (status, body) = post_htmx(&app, "/lists", &cookie, "name=Dynamic").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(is_fragment(&body, "lists"), "not a fragment: {body}");
+    assert!(
+        body.contains("Dynamic"),
+        "the new list is not in the swap: {body}"
+    );
+    assert!(
+        body.contains("Plain"),
+        "the swap must carry the whole list, not just the new row"
+    );
+}
+
+#[rstest]
+#[tokio::test]
+async fn htmx_item_actions_return_the_board(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|htmx-items").await;
+    post(&app, "/lists", &cookie, "name=Bakery").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+
+    // add
+    let (status, body) = post_htmx(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &cookie,
+        "name=Bagels&amount=6&unit_id=",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(is_fragment(&body, "items"), "not a fragment: {body}");
+    assert!(body.contains("Bagels") && body.contains("☐"));
+
+    let item_id: i64 = body[body.find("/items/").unwrap() + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap();
+
+    // tick off -- the swap shows the new state without another request
+    let (status, body) = post_htmx(
+        &app,
+        &format!("/lists/{list_id}/items/{item_id}/toggle"),
+        &cookie,
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(is_fragment(&body, "items"));
+    assert!(
+        body.contains("☑"),
+        "the toggle did not come back ticked: {body}"
+    );
+
+    // delete
+    let (status, body) = post_htmx(
+        &app,
+        &format!("/lists/{list_id}/items/{item_id}/delete"),
+        &cookie,
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Nothing on this list yet"), "{body}");
+}
+
+/// htmx is a client-side convenience, not an authorisation path: the header must not
+/// buy anything a plain post could not.
+#[rstest]
+#[tokio::test]
+async fn htmx_does_not_bypass_ownership(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|owner").await;
+    post(&app, "/lists", &mine, "name=Mine").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|stranger").await;
+
+    let (status, _) = post_htmx(
+        &app2,
+        &format!("/lists/{list_id}/items"),
+        &theirs,
+        "name=smuggled&amount=1&unit_id=",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[rstest]
+#[tokio::test]
+async fn the_page_serves_its_own_htmx(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|assets").await;
+
+    let (status, page) = get(&app, "/", &cookie).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains("/static/htmx.js"),
+        "the page does not load htmx"
+    );
+    assert!(
+        !page.contains("unpkg.com") && !page.contains("cdn."),
+        "the page reaches a CDN: {page}"
+    );
+
+    let (status, js) = get(&app, "/static/htmx.js", &cookie).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(js.contains("htmx"), "that is not htmx");
+    assert!(
+        js.len() > 10_000,
+        "htmx looks truncated: {} bytes",
+        js.len()
+    );
 }
