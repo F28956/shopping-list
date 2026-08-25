@@ -5,16 +5,13 @@
 //! can never authenticate an API route it happens to share an origin with.
 
 use axum::{
-    Form, Router,
+    Router,
     extract::{Query, State},
     response::Redirect,
     routing::{get, post},
 };
-use domain::models::note;
 use domain::models::user::{self, User};
-use domain::models::{Direction, OrderBy, Paging};
-use domain::service::{Actor, Ctx, notes};
-use maud::{DOCTYPE, Markup, html};
+use domain::service::Ctx;
 use openidconnect::{
     AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
     PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
@@ -25,11 +22,15 @@ use tower_sessions::{Expiry, Session, SessionManagerLayer, cookie::SameSite};
 
 pub mod auth;
 pub mod error;
+pub mod pages;
 pub mod sessions;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
+pub mod view;
 pub use error::AppError;
 
 pub mod state;
-pub use state::{AppState, CallbackQuery, NoteForm};
+pub use state::{AppState, CallbackQuery};
 
 async fn login(session: Session, State(s): State<AppState>) -> Result<Redirect, AppError> {
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
@@ -113,71 +114,6 @@ async fn callback(
     Ok(Redirect::to("/"))
 }
 
-#[axum::debug_handler]
-async fn index(session: Session, State(s): State<AppState>) -> Result<Markup, AppError> {
-    let Some(user) = auth::current_user(&session, &s.ctx).await? else {
-        return Ok(page(html! {
-            h1 { "Shopping list" }
-            a href="/auth/login" { "Sign in with Google" }
-        }));
-    };
-
-    // No HTTP, no bearer token, no serialisation: the same call the API handler makes,
-    // in the same process, against the same pool.
-    let notes = notes::list(
-        &s.ctx,
-        &Actor::User(user.clone()),
-        Paging {
-            number: 1,
-            size: 100,
-        },
-        OrderBy {
-            field: note::Field::CreatedAt,
-            direction: Direction::Descending,
-        },
-    )
-    .await?;
-
-    let who = user
-        .name
-        .as_ref()
-        .map(|n| n.0.clone())
-        .unwrap_or_else(|| "you".to_string());
-
-    Ok(page(html! {
-        h1 { "Shopping list" }
-        p { "Signed in as " (who) " — " a href="/auth/logout" { "sign out" } }
-        form method="post" action="/notes" {
-            input type="text" name="body" placeholder="add an item" {}
-            button type="submit" { "Add" }
-        }
-        ul { @for n in &notes.items { li { (n.body.0) } } }
-    }))
-}
-
-/// The shell every page shares.
-fn page(inner: Markup) -> Markup {
-    html! {
-        (DOCTYPE)
-        html {
-            head { title { "Shopping list" } meta charset="utf-8"; }
-            body { (inner) }
-        }
-    }
-}
-
-async fn add_note(
-    session: Session,
-    State(s): State<AppState>,
-    Form(form): Form<NoteForm>,
-) -> Result<Redirect, AppError> {
-    let actor = auth::require_actor(&session, &s.ctx).await?;
-
-    notes::create(&s.ctx, &actor, note::Body(form.body)).await?;
-
-    Ok(Redirect::to("/"))
-}
-
 /// Builds the state this crate's routes need, discovering Google's OIDC endpoints.
 ///
 /// Separate from [`router`] because discovery is a network call: the caller decides
@@ -242,8 +178,26 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
         ));
 
     Router::new()
-        .route("/", get(index))
-        .route("/notes", post(add_note))
+        .route("/", get(pages::lists::index))
+        .route("/lists", post(pages::lists::create))
+        .route("/lists/{id}/delete", post(pages::lists::delete))
+        .route("/lists/{id}", get(pages::items::show))
+        .route("/lists/{id}/items", post(pages::items::create))
+        // A browser form can only GET or POST, so ticking off and deleting are POSTs
+        // to their own paths rather than PUT and DELETE on the item.
+        .route(
+            "/lists/{id}/items/{item_id}/toggle",
+            post(pages::items::toggle),
+        )
+        .route(
+            "/lists/{id}/items/{item_id}/delete",
+            post(pages::items::delete),
+        )
+        .route(
+            "/notes",
+            get(pages::notes::index).post(pages::notes::create),
+        )
+        .route("/notes/{id}/delete", post(pages::notes::delete))
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
         .route("/auth/logout", get(logout))

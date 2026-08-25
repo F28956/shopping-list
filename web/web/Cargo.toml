@@ -21,7 +21,14 @@ sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio
 time = "0.3.55"
 async-trait = "0.1.92"
 
+[features]
+# Builds a router without the OIDC discovery round trip, so the pages can be driven
+# in tests. Enabled from dev-dependencies only.
+test-support = []
+
 [dev-dependencies]
 domain = { path = "../domain", features = ["test-support"] }
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
 rstest = "0.26.1"
 serde_json = "1.0.151"
