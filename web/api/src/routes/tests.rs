@@ -201,6 +201,11 @@ async fn another_persons_list_and_items_are_invisible(#[future(awt)] pool: Sqlit
         ),
         ("GET", format!("/api/lists/{list_id}/items/{item_id}"), None),
         (
+            "PUT",
+            format!("/api/lists/{list_id}/items/{item_id}"),
+            Some(json!({"name": "theirs now", "amount": 99.0})),
+        ),
+        (
             "POST",
             format!("/api/lists/{list_id}/items/{item_id}/done"),
             None,
@@ -227,6 +232,15 @@ async fn another_persons_list_and_items_are_invisible(#[future(awt)] pool: Sqlit
     )
     .await;
     assert_eq!(page["total"], 1, "nothing was added or removed");
+    // status codes alone would not notice a write that happened anyway
+    assert_eq!(
+        page["items"][0]["name"], "Apples",
+        "a stranger edited the item"
+    );
+    assert_eq!(
+        page["items"][0]["amount"], 2.0,
+        "a stranger changed the amount"
+    );
 }
 
 /// Reference data is readable by anyone signed in, and writable by nobody: the write
@@ -421,4 +435,79 @@ async fn attaching_an_unknown_tag_is_a_client_error(
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// PUT on an item replaces what a person typed, and leaves the rest of the row alone.
+#[rstest]
+#[tokio::test]
+async fn editing_an_item(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, item_id) = a_list_with_an_item(&app).await;
+    let base = format!("/api/lists/{list_id}/items/{item_id}");
+
+    // tick it off first, so we can see whether editing disturbs that
+    send(&app, req("POST", &format!("{base}/done"), &me(), None)).await;
+
+    let (status, edited) = send(
+        &app,
+        req(
+            "PUT",
+            &base,
+            &me(),
+            Some(json!({"name": "  Braeburn apples ", "amount": 1.5})),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(edited["name"], "Braeburn apples", "trimmed on the way in");
+    assert_eq!(
+        edited["amount"], 1.5,
+        "a REAL amount survives the round trip"
+    );
+    assert!(
+        !edited["done_at"].is_null(),
+        "editing must not un-tick the item"
+    );
+    assert_eq!(edited["list_id"], list_id, "an edit is not a move");
+}
+
+#[rstest]
+#[case::empty_name(json!({"name": "  "}), StatusCode::BAD_REQUEST)]
+#[case::zero_amount(json!({"name": "Apples", "amount": 0}), StatusCode::BAD_REQUEST)]
+#[case::unknown_unit(json!({"name": "Apples", "unit_id": 9999}), StatusCode::BAD_REQUEST)]
+#[tokio::test]
+async fn bad_item_edits_are_client_errors(
+    #[future(awt)] pool: SqlitePool,
+    #[case] body: Value,
+    #[case] expected: StatusCode,
+) {
+    let app = app(pool);
+    let (list_id, item_id) = a_list_with_an_item(&app).await;
+
+    let (status, _) = send(
+        &app,
+        req(
+            "PUT",
+            &format!("/api/lists/{list_id}/items/{item_id}"),
+            &me(),
+            Some(body),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, expected);
+
+    // the item is untouched
+    let (_, item) = send(
+        &app,
+        req(
+            "GET",
+            &format!("/api/lists/{list_id}/items/{item_id}"),
+            &me(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(item["name"], "Apples");
 }

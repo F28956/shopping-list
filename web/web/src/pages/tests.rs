@@ -399,3 +399,167 @@ async fn a_stranger_cannot_tag_my_item_from_the_page(
         StatusCode::NOT_FOUND
     );
 }
+
+#[rstest]
+#[tokio::test]
+async fn a_list_can_be_renamed(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|renamer").await;
+    post(&app, "/lists", &cookie, "name=Groceries").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+    assert!(
+        body.contains("value=\"Groceries\""),
+        "the rename form is not prefilled: {body}"
+    );
+
+    assert_eq!(
+        post(
+            &app,
+            &format!("/lists/{list_id}/rename"),
+            &cookie,
+            "name=Weekly+shop"
+        )
+        .await,
+        StatusCode::SEE_OTHER
+    );
+
+    let (_, body) = get(&app, "/", &cookie).await;
+    assert!(body.contains("Weekly shop"), "{body}");
+    assert!(
+        !body.contains("Groceries"),
+        "the old name is still on the page"
+    );
+}
+
+#[rstest]
+#[tokio::test]
+async fn an_item_can_be_edited(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|editor").await;
+    post(&app, "/lists", &cookie, "name=Dairy").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &cookie,
+        "name=Milk&amount=1&unit_id=",
+    )
+    .await;
+
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    let item_id: i64 = body[body.find("/items/").unwrap() + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap();
+    assert!(
+        body.contains("value=\"Milk\""),
+        "the edit form is not prefilled: {body}"
+    );
+
+    assert_eq!(
+        post(
+            &app,
+            &format!("/lists/{list_id}/items/{item_id}/edit"),
+            &cookie,
+            "name=Oat+milk&amount=2&unit_id="
+        )
+        .await,
+        StatusCode::SEE_OTHER
+    );
+
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    assert!(body.contains("Oat milk"), "{body}");
+    assert!(!body.contains(">Milk<"), "the old name is still shown");
+    assert!(
+        body.contains("value=\"2\""),
+        "the amount did not change: {body}"
+    );
+}
+
+/// Editing keeps the item where it is and does not tick it off.
+#[rstest]
+#[tokio::test]
+async fn editing_leaves_the_rest_of_the_item_alone(#[future(awt)] pool: SqlitePool) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|careful").await;
+    post(&app, "/lists", &cookie, "name=Bakery").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &cookie,
+        "name=Rolls&amount=6&unit_id=",
+    )
+    .await;
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    let item_id: i64 = body[body.find("/items/").unwrap() + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap();
+    post(
+        &app,
+        &format!("/lists/{list_id}/items/{item_id}/toggle"),
+        &cookie,
+        "",
+    )
+    .await;
+
+    post(
+        &app,
+        &format!("/lists/{list_id}/items/{item_id}/edit"),
+        &cookie,
+        "name=Bread+rolls&amount=6&unit_id=",
+    )
+    .await;
+
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
+    assert!(body.contains("Bread rolls"));
+    assert!(body.contains("☑"), "editing un-ticked the item: {body}");
+}
+
+#[rstest]
+#[case::rename_a_list("/lists/{list}/rename", "name=theirs+now")]
+#[case::edit_an_item("/lists/{list}/items/{item}/edit", "name=theirs&amount=1&unit_id=")]
+#[tokio::test]
+async fn a_stranger_cannot_edit_my_things(
+    #[future(awt)] pool: SqlitePool,
+    #[case] path: &str,
+    #[case] form: &str,
+) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|owner").await;
+    post(&app, "/lists", &mine, "name=Mine").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &mine,
+        "name=Thing&amount=1&unit_id=",
+    )
+    .await;
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &mine).await;
+    let item_id: i64 = body[body.find("/items/").unwrap() + 7..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap();
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|stranger").await;
+    let uri = path
+        .replace("{list}", &list_id.to_string())
+        .replace("{item}", &item_id.to_string());
+
+    assert_eq!(
+        post(&app2, &uri, &theirs, form).await,
+        StatusCode::NOT_FOUND
+    );
+
+    // and nothing changed
+    let (_, body) = get(&app, &format!("/lists/{list_id}"), &mine).await;
+    assert!(body.contains("Thing"), "the item was edited by a stranger");
+}

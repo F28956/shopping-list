@@ -50,6 +50,15 @@ pub async fn index(session: Session, State(s): State<AppState>) -> Result<Markup
                     @for l in &page.items {
                         li {
                             a class="grow" href={ "/lists/" (l.id.0) } { (l.name.0) }
+                            details class="edit" {
+                                summary title="Rename" { "✎" }
+                                form class="add" method="post"
+                                     action={ "/lists/" (l.id.0) "/rename" } {
+                                        input type="text" name="name" value=(l.name.0)
+                                              required maxlength="128" aria-label="List name";
+                                        button { "Save" }
+                                }
+                            }
                             form class="inline" method="post" action={ "/lists/" (l.id.0) "/delete" } {
                                 button class="quiet" title="Delete list" { "×" }
                             }
@@ -83,5 +92,18 @@ pub async fn delete(
 ) -> Result<Redirect, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     lists::delete(&s.ctx, &actor, list::Id(id)).await?;
+    Ok(Redirect::to("/"))
+}
+
+/// Renaming, not transferring: `lists::update` writes the name and stamps
+/// `updated_at`, and the owner is not writable at all.
+pub async fn rename(
+    session: Session,
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<NewList>,
+) -> Result<Redirect, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+    lists::update(&s.ctx, &actor, list::Id(id), Name(form.name)).await?;
     Ok(Redirect::to("/"))
 }

@@ -112,6 +112,26 @@ pub async fn show(
                                     }
                                 }
                             }
+                            details class="edit" {
+                                summary title="Edit" { "✎ edit" }
+                                form class="add" method="post"
+                                     action={ "/lists/" (list.id.0) "/items/" (i.id.0) "/edit" } {
+                                    input type="text" name="name" value=(i.name.0)
+                                          required maxlength="128" aria-label="Item name";
+                                    input type="number" name="amount" value=(trim_amount(i.amount))
+                                          min="0" step="any" style="width:5rem" aria-label="Amount";
+                                    select name="unit_id" aria-label="Unit" {
+                                        option value="" selected[i.unit_id.is_none()] { "unit" }
+                                        @for (uid, uname) in &unit_names_sorted(&unit_names) {
+                                            option value=(uid)
+                                                   selected[i.unit_id.map(|u| u.0) == Some(*uid)] {
+                                                (uname)
+                                            }
+                                        }
+                                    }
+                                    button { "Save" }
+                                }
+                            }
                             details {
                                 summary { "+ tag" }
                                 form class="add" method="post"
@@ -265,5 +285,35 @@ pub async fn detach_tag(
 ) -> Result<Redirect, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     tags::detach(&s.ctx, &actor, item::Id(item_id), tag::Id(tag_id)).await?;
+    Ok(Redirect::to(&format!("/lists/{list_id}")))
+}
+
+/// Edits what a person typed: name, amount, unit. Not the list it is on -- moving an
+/// item between lists would need the destination checked too, and is its own
+/// operation rather than a field on this form.
+pub async fn edit(
+    session: Session,
+    State(s): State<AppState>,
+    Path((list_id, item_id)): Path<(i64, i64)>,
+    Form(form): Form<NewItem>,
+) -> Result<Redirect, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+
+    let unit_id = form
+        .unit_id
+        .filter(|v| !v.is_empty())
+        .and_then(|v| v.parse::<i64>().ok())
+        .map(unit::Id);
+
+    items::update(
+        &s.ctx,
+        &actor,
+        item::Id(item_id),
+        Name(form.name),
+        Amount(form.amount.unwrap_or(1.0)),
+        unit_id,
+    )
+    .await?;
+
     Ok(Redirect::to(&format!("/lists/{list_id}")))
 }

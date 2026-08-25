@@ -180,6 +180,7 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
     Router::new()
         .route("/", get(pages::lists::index))
         .route("/lists", post(pages::lists::create))
+        .route("/lists/{id}/rename", post(pages::lists::rename))
         .route("/lists/{id}/delete", post(pages::lists::delete))
         .route("/lists/{id}", get(pages::items::show))
         .route("/lists/{id}/items", post(pages::items::create))
@@ -193,6 +194,7 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
             "/lists/{id}/items/{item_id}/delete",
             post(pages::items::delete),
         )
+        .route("/lists/{id}/items/{item_id}/edit", post(pages::items::edit))
         .route(
             "/lists/{id}/items/{item_id}/tags",
             post(pages::items::attach_tag),
