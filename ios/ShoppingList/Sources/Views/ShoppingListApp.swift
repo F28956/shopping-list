@@ -4,6 +4,15 @@ import SwiftUI
 @main
 struct ShoppingListApp: App {
     @State private var identity = Identity()
+    /// Held for the life of the app, because it is a WCSession delegate: dropped, the
+    /// watch's requests would arrive at nobody.
+    @State private var watch: PhoneLink
+
+    init() {
+        let identity = Identity()
+        _identity = State(initialValue: identity)
+        _watch = State(initialValue: PhoneLink(token: { await identity.token() }))
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -13,18 +22,6 @@ struct ShoppingListApp: App {
                 // The sign-in flow leaves the app and comes back through this URL.
                 .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
         }
-    }
-}
-
-/// Where the server is.
-///
-/// From the bundle rather than a constant, so pointing the app at a different machine
-/// is a build setting — `localhost` is the phone itself, which is the first thing to
-/// get wrong on a real device.
-enum Config {
-    static var apiBaseURL: URL {
-        let raw = Bundle.main.object(forInfoDictionaryKey: "ShoppingListAPIBaseURL") as? String
-        return URL(string: raw ?? "") ?? URL(string: "http://localhost:8080")!
     }
 }
 

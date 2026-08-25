@@ -64,3 +64,47 @@ Lists, and the items on them: add by typing a line the same way the web quick-ad
 does, tick off, and delete. Editing an item, tags, sharing and notes are deliberately
 not here — a phone in a shop is for the two things you actually do while standing in
 one.
+
+## The watch app
+
+`ShoppingListWatch` is a watchOS app embedded in the phone app. It shows what is on a
+list and crosses items off. It cannot add, edit, delete or tag — a watch is glanced at
+with one hand on a trolley, and a row that does two things is a row that does the
+wrong one.
+
+### How it signs in
+
+It does not. Google's SDK has no watchOS build, and a watch has no browser to run the
+flow in, so the watch asks the paired phone for a current ID token over
+WatchConnectivity and calls the API itself. Asked rather than pushed: a Google ID
+token lasts about an hour, and one pushed when the phone felt like it is stale exactly
+when the watch needs it.
+
+The consequence is visible and deliberate: with the phone unreachable or signed out,
+the watch says "Open Shopping on your phone" rather than pretending to work.
+
+### Building and running it
+
+Build the *phone* scheme — the watch app is embedded, so it comes along:
+
+```sh
+xcodegen generate
+xcodebuild -project ShoppingList.xcodeproj -scheme ShoppingList \
+    -destination 'platform=iOS Simulator,name=iPhone 17 Pro Max' build
+```
+
+Do **not** pass `-sdk iphonesimulator`. It overrides the SDK for every target,
+including the watch one, which then builds against iOS: the symptom is a confusing
+`WCSessionDelegate` conformance error, and if it gets past that, an install refused
+for `UIDeviceFamily`.
+
+To run it, the phone and watch simulators have to be a pair (`xcrun simctl list
+pairs`), and the watch app is installed separately:
+
+```sh
+xcrun simctl install <watch-udid> \
+    ~/Library/Developer/Xcode/DerivedData/.../Debug-watchsimulator/ShoppingListWatch.app
+xcrun simctl launch <watch-udid> com.cernauskas.shoppinglist.watchkitapp
+```
+
+Sign in on the paired phone first, or the watch has nothing to ask.
