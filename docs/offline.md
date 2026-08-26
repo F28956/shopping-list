@@ -191,7 +191,10 @@ step.
 
 * **Android** — Room, with an `operations` outbox table and `pending` flags on
   rows, driven by WorkManager so a queued change survives the app being killed.
-* **iOS / macOS** — **GRDB**, same shape, with a background task. SwiftData is
+* **iOS / macOS** — **GRDB**, same shape, with a background task. The Mac is not
+  the exception it looks like: a laptop is opened on a train and closed in a
+  tunnel, and "it has a proper connection" describes a desk, not a machine you
+  carry. It gets the same cache, the same queue and the same cues as the phones. SwiftData is
   built in and would cost no dependency, but it is a model graph with its own
   change tracking, and an outbox is a strictly ordered queue that gets dequeued
   in a transaction. GRDB is SQLite with the SQL written down, which is also the

@@ -115,7 +115,13 @@ struct MacItemsView: View {
             }
         }
         .navigationTitle(list.name)
+        .navigationSubtitle(subtitle)
         .toolbar {
+            // Leading, beside the list's name, for the same reason as on the phones:
+            // it is a fact about this screen rather than a control.
+            ToolbarItem(placement: .navigation) {
+                StatusDot(waiting: waiting, offline: offline)
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     ordering = true
@@ -146,6 +152,7 @@ struct MacItemsView: View {
             refreshUnsent()
             await load()
         }
+        .task { await keepTrying() }
         .task { await watch() }
         .sheet(item: $editing) { target in
             MacItemEditor(
@@ -265,6 +272,16 @@ struct MacItemsView: View {
                     // than as a second organising scheme.
                     ForEach(item.tagIDs.compactMap { tagsByID[$0] }) { tag in
                         chip(tag)
+                    }
+
+                    // Quietly, on the row. A change that has not been sent is a detail
+                    // about that line, not news about the app — and a laptop on a train
+                    // would have every line marked, which is a banner by another name.
+                    if unsent.contains(item.uuid) {
+                        Image(systemName: "clock")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Waiting to be sent")
                     }
 
                     Spacer(minLength: 8)
@@ -400,6 +417,33 @@ struct MacItemsView: View {
         let queued = cache.outbox.forList(list)
         unsent = Set(queued.map(\.itemUUID))
         waiting = queued.count
+    }
+
+    /// What the window's subtitle says about this device being in step.
+    ///
+    /// The dot is the glance; this is the sentence beside it. A Mac has a title bar
+    /// with room in it, and a laptop on a train is exactly where somebody needs to know
+    /// whether the thing they just typed has gone anywhere.
+    private var subtitle: String {
+        switch (offline, waiting) {
+        case (false, 0): return ""
+        case (true, 0): return "Offline — showing what was last loaded"
+        case (true, let n): return "Offline — \(n) change\(n == 1 ? "" : "s") waiting"
+        case (false, let n): return "\(n) change\(n == 1 ? "" : "s") waiting to be sent"
+        }
+    }
+
+    /// Tries the queue again while anything is in it.
+    ///
+    /// A load drains on success, and a load happens when the change stream reconnects.
+    /// That is the right moment when there is a stream to reconnect, and the wrong thing
+    /// to depend on entirely — a laptop closed on a train and opened in a station should
+    /// send what it is holding without waiting for somebody else to touch the list.
+    private func keepTrying() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(10))
+            await drain()
+        }
     }
 
     /// Rewrites what is on screen, and remembers it — see the phone's copy.

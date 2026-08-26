@@ -26,6 +26,9 @@ struct MacShoppingView: View {
     @State private var fresh = false
     /// Guards against a drain and a reload calling each other round in a circle.
     @State private var draining = false
+    /// How many changes are waiting, anywhere. The window opens here, so this is where
+    /// somebody first sees whether the Mac is in step.
+    @State private var queued = 0
 
     private var selected: List? { lists.first { $0.id == chosen } }
 
@@ -116,6 +119,9 @@ struct MacShoppingView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
+                StatusDot(waiting: queued, offline: offline)
+            }
+            ToolbarItem(placement: .navigation) {
                 Button {
                     naming = .create
                 } label: {
@@ -193,6 +199,14 @@ struct MacShoppingView: View {
         .task {
             showWhatWeHave()
             await load()
+        }
+        .task {
+            // Cheap, and the only way the dot stays honest while somebody is looking
+            // at it: every items view drains the same queue.
+            while !Task.isCancelled {
+                queued = cache.outbox.waiting
+                try? await Task.sleep(for: .seconds(2))
+            }
         }
         .task { await watchLists() }
         .alert("Could not load", isPresented: .constant(error != nil)) {
@@ -279,6 +293,7 @@ struct MacShoppingView: View {
         draining = true
         _ = await cache.outbox.drain(through: api)
         draining = false
+        queued = cache.outbox.waiting
     }
 
     private func load() async {
