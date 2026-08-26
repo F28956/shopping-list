@@ -354,6 +354,27 @@ Answering it means deciding what a `viewer` may do — and, separately, whose hi
 shared list draws on. History is per-user by design: what you buy is yours, and
 merging two people's habits would make both sets of suggestions worse.
 
+### Sign in with Apple
+
+The Apple clients use Google, and will keep doing so. Sign in with Apple needs the
+`com.apple.developer.applesignin` entitlement, and that needs an App ID with the
+capability enabled, which needs a paid Apple Developer Program membership. This is a
+personal shopping list; the membership costs more per year than the problem is worth.
+
+It was weighed rather than skipped, and three things would have to be answered if the
+price ever stops being the objection:
+
+* **Both providers, not one.** Android would stay on Google, so the API would verify
+  Apple's JWKS and issuer alongside Google's. That half is small.
+* **Apple's subject is not Google's**, so the same person signing in the other way
+  arrives as a stranger with no lists. Linking them means matching on email — which
+  works only if they choose "Share my email", because "Hide my email" yields a
+  `@privaterelay.appleid.com` address that matches nothing and, being absent from
+  `ALLOWED_EMAILS`, is refused outright.
+* **Apple sends `email` only on the first authorisation.** Every later sign-in omits
+  it, so admission — which reads the email off the token — would pass once and refuse
+  for ever after. It would have to fall back to the address stored against that `sub`.
+
 ### Working without the server
 
 Every client today is online-only: reads keep the last-loaded list while the app
