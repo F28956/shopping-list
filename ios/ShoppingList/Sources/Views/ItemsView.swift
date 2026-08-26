@@ -227,16 +227,17 @@ struct ItemsView: View {
                     .strikethrough(item.isDone)
                     .foregroundStyle(item.isDone ? .secondary : .primary)
 
-                // The tag that put it here, and only that one. The others are on the
-                // item but had no say in where it sits, and naming them beside it
-                // would point at places the item is not.
+                // The tag that put it here, and only that one: the others are on the
+                // item but had no say in where it sits.
+                //
+                // The emoji alone, unstyled. A name and a capsule beside every row is
+                // a second column of text on a screen already showing the name that
+                // matters, and the emoji says the same thing in one glyph. The name
+                // is still spoken -- see `spoken(_:)` -- so nothing is lost to anyone
+                // reading by ear rather than by eye.
                 if let primary = primaryTag(of: item, in: tags) {
-                    Text(primary.heading)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(.quaternary, in: Capsule())
+                    Text(primary.mark)
+                        .font(.callout)
                         .accessibilityHidden(true)
                 }
 

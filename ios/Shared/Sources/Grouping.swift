@@ -27,10 +27,20 @@ func primaryTag(of item: Item, in tags: [Tag]) -> Tag? {
 }
 
 extension Tag {
-    /// The tag as a heading or a chip: its emoji, when it has one, then its name.
+    /// The tag as a heading: its emoji, when it has one, then its name.
     var heading: String {
         guard let emoji, !emoji.isEmpty else { return name }
         return "\(emoji) \(name)"
+    }
+
+    /// The tag in as little space as it can be shown: the emoji alone.
+    ///
+    /// Falls back to the name, because a tag without an emoji would otherwise show as
+    /// nothing at all and read as untagged. Every seeded tag has one; a future one
+    /// added by migration might not.
+    var mark: String {
+        guard let emoji, !emoji.isEmpty else { return name }
+        return emoji
     }
 }
 
