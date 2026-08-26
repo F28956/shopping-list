@@ -17,6 +17,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cernauskas.shoppinglist.data.Item
 import com.cernauskas.shoppinglist.data.Tag
@@ -301,9 +302,25 @@ private fun ItemRow(
                     Text(
                         filed.joinToString(" ") { it.mark },
                         style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.semantics {
-                            contentDescription = "In " + filed.joinToString(", ") { it.name }
-                        },
+                        // One line, and the ones that do not fit become an ellipsis
+                        // rather than being squeezed or wrapped. The Mac needs a layout
+                        // of its own for this because it drops names first and then
+                        // marks -- two different view trees. Here there were never any
+                        // names to drop, so a run of marks in one Text is already the
+                        // whole answer, and the ellipsis never splits a glyph.
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        // The weight goes here, not on the name: an unweighted child is
+                        // measured at the width it wants, so weighting the name gave
+                        // thirteen emoji their full width and left the name nothing --
+                        // the row came back as a line of pictures with no word on it.
+                        // The name never gives way; the marks are what should go.
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .semantics {
+                                contentDescription =
+                                    "In " + filed.joinToString(", ") { it.name }
+                            },
                     )
                 }
             }

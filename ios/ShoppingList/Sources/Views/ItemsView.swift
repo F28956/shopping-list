@@ -290,6 +290,10 @@ struct ItemsView: View {
                 Text(item.name)
                     .strikethrough(item.isDone)
                     .foregroundStyle(item.isDone ? .secondary : .primary)
+                    // The name never gives way. When a row is too narrow — a long name,
+                    // a large Dynamic Type size, six categories — the marks are what
+                    // should go, not the word that says what to buy.
+                    .layoutPriority(1)
 
                 // Every tag the item carries, in the order this list is walked. The
                 // first is the one that put the row where it is; the rest are true of
@@ -305,6 +309,15 @@ struct ItemsView: View {
                 if !filed.isEmpty {
                     Text(filed.map(\.mark).joined(separator: " "))
                         .font(.callout)
+                        // One line, and the ones that do not fit become an ellipsis
+                        // rather than being squeezed or wrapped. The Mac needs a
+                        // layout of its own for this because it drops names first and
+                        // then marks — two different view trees. Here there were never
+                        // any names to drop, so a run of marks in one Text is already
+                        // the whole answer, and truncation comes for free and never
+                        // splits a glyph.
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                         .accessibilityHidden(true)
                 }
 
