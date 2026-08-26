@@ -116,10 +116,6 @@ struct MacItemsView: View {
         }
         .navigationTitle(list.name)
         .toolbar {
-            // No status dot here. A split view on macOS merges both halves' toolbars
-            // into the one window title bar, so a dot on each side is two dots saying
-            // the same thing. The sidebar keeps it: there is one window, one
-            // connection and one queue, so there is one dot.
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     ordering = true
@@ -128,6 +124,30 @@ struct MacItemsView: View {
                 }
                 .help("Which tag decides where an item sits")
                 .accessibilityIdentifier("order.open")
+            }
+
+            // Last, and on the detail's own toolbar, which is what puts it at the far
+            // right of the window: a split view renders the sidebar's items over the
+            // sidebar and the detail's over the detail, so a dot declared on the
+            // sidebar sits in the middle of the title bar rather than the end of it.
+            //
+            // One dot for the window, not one per pane — the two halves' toolbars merge
+            // into a single title bar, and there is one connection and one queue behind
+            // them either way.
+            // No pill behind it: macOS 26 gives every toolbar item a control's
+            // background, which turns a thing you read into a thing that looks like it
+            // wants pressing. Asked for where it exists, and simply not asked for
+            // where it does not -- on 14 and 15 a toolbar item has no background to
+            // hide, so the dot already sits bare.
+            if #available(macOS 26.0, *) {
+                ToolbarItem(placement: .primaryAction) {
+                    StatusDot(waiting: waiting, offline: offline)
+                }
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    StatusDot(waiting: waiting, offline: offline)
+                }
             }
         }
         .sheet(isPresented: $ordering) {
