@@ -174,6 +174,16 @@ struct WatchItemsView: View {
                     .lineLimit(2)
                     .strikethrough(item.isDone)
                     .foregroundStyle(item.isDone ? .secondary : .primary)
+                // The tag that put it here, and only that one — on the same line, as
+                // one glyph. A wrist sorted by these already says where things are;
+                // the mark is a reminder of which run you are in, and every tag would
+                // be a second column on a screen that has no room for a first.
+                if let primary = primaryTag(of: item, in: tags) {
+                    Text(primary.mark)
+                        .font(.caption2)
+                        .accessibilityHidden(true)
+                }
+
                 Spacer(minLength: 2)
 
                 // Quietly, in the row rather than over it: a tick that has not been

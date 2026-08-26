@@ -138,10 +138,16 @@ struct ItemsView: View {
         .navigationTitle(list.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // Leading, beside the back button, so it reads as a fact about this screen
-            // rather than as another control to press.
-            ToolbarItem(placement: .topBarLeading) {
-                StatusDot(waiting: waiting, offline: offline)
+            // Beside the title rather than among the buttons. A toolbar item gets a
+            // button's own background on iOS 26, which made a dot that does nothing
+            // look like a control that does something — and the whole point of it is
+            // to be read without being pressed.
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 6) {
+                    Text(list.name)
+                        .font(.headline)
+                    StatusDot(waiting: waiting, offline: offline)
+                }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -285,16 +291,19 @@ struct ItemsView: View {
                     .strikethrough(item.isDone)
                     .foregroundStyle(item.isDone ? .secondary : .primary)
 
-                // The tag that put it here, and only that one: the others are on the
-                // item but had no say in where it sits.
+                // Every tag the item carries, in the order this list is walked. The
+                // first is the one that put the row where it is; the rest are true of
+                // it too, and hiding them made a row filed under three things look
+                // exactly like one filed under one.
                 //
-                // The emoji alone, unstyled. A name and a capsule beside every row is
-                // a second column of text on a screen already showing the name that
-                // matters, and the emoji says the same thing in one glyph. The name
-                // is still spoken -- see `spoken(_:)` -- so nothing is lost to anyone
+                // Emoji alone, unstyled. Names and capsules beside every row are a
+                // second column of text on a screen already showing the name that
+                // matters, and each emoji says the same thing in one glyph. The names
+                // are still spoken -- see `spoken(_:)` -- so nothing is lost to anyone
                 // reading by ear rather than by eye.
-                if let primary = primaryTag(of: item, in: tags) {
-                    Text(primary.mark)
+                let filed = tagsOn(item, in: tags)
+                if !filed.isEmpty {
+                    Text(filed.map(\.mark).joined(separator: " "))
                         .font(.callout)
                         .accessibilityHidden(true)
                 }
@@ -352,7 +361,8 @@ struct ItemsView: View {
     /// chip is hidden from it so that it does not arrive as a loose word.
     private func spoken(_ item: Item) -> String {
         let measure = item.measure(units: unitNames).map { ", \($0)" } ?? ""
-        let filed = primaryTag(of: item, in: tags).map { ", in \($0.name)" } ?? ""
+        let named = tagsOn(item, in: tags).map(\.name)
+        let filed = named.isEmpty ? "" : ", in \(named.joined(separator: ", "))"
         let state = item.isDone ? ", crossed off" : ""
         return "\(item.name)\(measure)\(filed)\(state)"
     }

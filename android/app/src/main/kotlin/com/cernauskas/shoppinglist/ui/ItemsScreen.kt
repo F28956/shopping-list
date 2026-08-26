@@ -20,8 +20,9 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.cernauskas.shoppinglist.data.Item
 import com.cernauskas.shoppinglist.data.Tag
+import com.cernauskas.shoppinglist.data.mark
 import com.cernauskas.shoppinglist.data.measure
-import com.cernauskas.shoppinglist.data.primaryTag
+import com.cernauskas.shoppinglist.data.tagsOn
 import kotlinx.coroutines.launch
 
 /**
@@ -263,26 +264,48 @@ private fun ItemRow(
     onDelete: () -> kotlin.Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
-    val filed = primaryTag(item, tags)
+
+    // Every tag the item carries, in the order this list is walked, as emoji on the
+    // name's own line.
+    //
+    // Two changes from what this was, and both were the phone disagreeing with itself.
+    // It showed one tag, so a row filed under three things looked exactly like one
+    // filed under one; and it showed it on a second line, which put the categories in
+    // a column of their own and made a list of six items as tall as one of twelve. The
+    // iOS app has always had them beside the name, and this now reads the same.
+    val filed = tagsOn(item, tags)
 
     ListItem(
         headlineContent = {
-            Text(
-                item.name,
-                textDecoration = if (item.isDone) TextDecoration.LineThrough else null,
-                color = if (item.isDone) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-            )
-        },
-        supportingContent = filed?.let { tag ->
-            {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    listOfNotNull(tag.emoji, tag.name).joinToString(" "),
-                    style = MaterialTheme.typography.bodySmall,
+                    item.name,
+                    textDecoration = if (item.isDone) TextDecoration.LineThrough else null,
+                    color = if (item.isDone) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
                 )
+                if (filed.isNotEmpty()) {
+                    // Emoji alone. A name beside every row is a second column of text
+                    // on a screen already showing the name that matters, and the emoji
+                    // says the same thing in one glyph.
+                    //
+                    // Named for anybody reading by ear: an emoji read aloud is a
+                    // description of a picture, not the name of a category, so the
+                    // glyphs are replaced rather than announced.
+                    Text(
+                        filed.joinToString(" ") { it.mark },
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.semantics {
+                            contentDescription = "In " + filed.joinToString(", ") { it.name }
+                        },
+                    )
+                }
             }
         },
         leadingContent = {

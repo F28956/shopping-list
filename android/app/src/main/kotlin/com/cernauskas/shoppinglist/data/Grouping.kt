@@ -18,6 +18,24 @@ fun primaryTag(item: Item, tags: List<Tag>): Tag? {
 }
 
 /**
+ * Every tag an item carries, in the order this list is walked.
+ *
+ * The first is the one that decided where the row sits; the rest are true of it too,
+ * and a row that shows only the first looks exactly like a row filed under one thing.
+ *
+ * [tags] must arrive in the list's order, as the service resolves it — the same rule as
+ * [primaryTag]. Tags the item carries that this list does not know about are dropped
+ * rather than shown out of place.
+ */
+fun tagsOn(item: Item, tags: List<Tag>): List<Tag> {
+    val placed = tags.withIndex().associate { (at, tag) -> tag.id to at }
+    return item.tagIds.mapNotNull { id -> placed[id] }.sorted().map { tags[it] }
+}
+
+/** A tag in one glyph: its emoji, or its name when it has none. */
+val Tag.mark: String get() = emoji?.takeIf { it.isNotBlank() } ?: name
+
+/**
  * Outstanding items in the order this list is walked.
  *
  * Grouped by the tag that leads, then flattened: the order is what matters, and the
