@@ -317,6 +317,14 @@ Answering it means deciding what a `viewer` may do — and, separately, whose hi
 shared list draws on. History is per-user by design: what you buy is yours, and
 merging two people's habits would make both sets of suggestions worse.
 
+### Working without the server
+
+Every client today is online-only: reads keep the last-loaded list while the app
+stays open, writes fail and are discarded, and a cold start with no connection
+claims you have no lists at all. The design for fixing that — a local database,
+an outbox of operations, and per-operation merge rules on the server — is in
+[offline.md](offline.md). Nothing of it is built.
+
 ### TLS
 
 Nothing here serves HTTPS. On a laptop talking to its own simulators that costs
