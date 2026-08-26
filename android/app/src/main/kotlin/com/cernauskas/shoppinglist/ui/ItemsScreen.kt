@@ -58,7 +58,14 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
         modifier = Modifier.fillMaxSize().nestedScroll(scroll.nestedScrollConnection),
         topBar = {
             TopAppBar(
-                title = { Text(model.list.name) },
+                title = {
+                    // The dot beside the name rather than among the actions: it is a
+                    // fact about this screen, not another control to press.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StatusDot(waiting = state.waiting, offline = state.offline)
+                        Text(model.list.name)
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")

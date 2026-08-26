@@ -40,6 +40,9 @@ class ListsViewModel(
         /** Whether the server has ever answered this screen. What is shown while this
          * is false came out of the cache, and may be old. */
         val fresh: Boolean = false,
+        /** How many changes are waiting, anywhere. The app opens here, so this is where
+         * somebody first sees whether the device is in step. */
+        val waiting: Int = 0,
         val message: String? = null,
     )
 
@@ -50,6 +53,20 @@ class ListsViewModel(
         showWhatWeHave()
         load()
         watch()
+        countWhatIsWaiting()
+    }
+
+    /**
+     * Keeps the dot honest while somebody is looking at it.
+     *
+     * Cheap, and necessary: every items screen drains the same queue, so this screen's
+     * idea of what is waiting goes stale the moment one of them succeeds.
+     */
+    private fun countWhatIsWaiting() = viewModelScope.launch {
+        while (true) {
+            _state.update { it.copy(waiting = cache.outbox.waiting()) }
+            delay(2_000)
+        }
     }
 
     /**
@@ -116,6 +133,7 @@ class ListsViewModel(
             // that came out of a shop and went into a pocket would otherwise hold its
             // changes until somebody happened to open the list they were made on.
             cache.outbox.drain(api)
+            _state.update { it.copy(waiting = cache.outbox.waiting()) }
         } catch (e: ApiError.Transport) {
             // Not reported. Being out of signal is a state, not an event: a phone in a
             // basement would raise this every few seconds, and a message for each is

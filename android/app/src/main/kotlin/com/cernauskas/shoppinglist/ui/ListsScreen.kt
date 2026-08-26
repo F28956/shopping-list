@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -62,7 +63,12 @@ fun ListsScreen(
         modifier = Modifier.fillMaxSize().nestedScroll(scroll.nestedScrollConnection),
         topBar = {
             LargeTopAppBar(
-                title = { Text("Lists") },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StatusDot(waiting = state.waiting, offline = state.offline)
+                        Text("Lists")
+                    }
+                },
                 actions = {
                     var open by remember { mutableStateOf(false) }
                     IconButton(onClick = { open = true }) {

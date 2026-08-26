@@ -138,6 +138,11 @@ struct ItemsView: View {
         .navigationTitle(list.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // Leading, beside the back button, so it reads as a fact about this screen
+            // rather than as another control to press.
+            ToolbarItem(placement: .topBarLeading) {
+                StatusDot(waiting: waiting, offline: offline)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     ordering = true

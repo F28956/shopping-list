@@ -26,6 +26,9 @@ struct ListsView: View {
     @State private var fresh = false
     /// Guards against a drain and a reload calling each other round in a circle.
     @State private var draining = false
+    /// How many changes are waiting, anywhere. The lists screen is where the app opens,
+    /// so it is where somebody first sees whether this device is in step.
+    @State private var queued = 0
     @State private var naming: ListNameSheet.Purpose?
     @State private var deleting: List?
     @State private var sharing: List?
@@ -133,6 +136,9 @@ struct ListsView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
+                    StatusDot(waiting: queued, offline: offline)
+                }
+                ToolbarItem(placement: .topBarLeading) {
                     Button("Sign out") {
                         // What is cached belongs to whoever is signing out. The next
                         // person to use this device is a different person.
@@ -190,6 +196,15 @@ struct ListsView: View {
             .task {
                 showWhatWeHave()
                 await load()
+            }
+            .task {
+                // Cheap, and the only way the dot stays honest while somebody is
+                // looking at it: the list screen it belongs to drains the queue, and
+                // so does every items screen.
+                while !Task.isCancelled {
+                    queued = cache.outbox.waiting
+                    try? await Task.sleep(for: .seconds(2))
+                }
             }
             .task { await watchLists() }
             .alert("Could not load", isPresented: .constant(error != nil)) {
@@ -278,6 +293,7 @@ struct ListsView: View {
         draining = true
         _ = await cache.outbox.drain(through: api)
         draining = false
+        queued = cache.outbox.waiting
     }
 
     private func load() async {
