@@ -158,6 +158,20 @@ class Api(
         send("DELETE", "/api/lists/${list.id}/items/done", null)
     }
 
+    // ------------------------------------------------------------------- sync
+
+    /**
+     * Replays everything this device did while it could not reach the server.
+     *
+     * One request for the batch, and one answer per operation. Nothing here decides
+     * what an answer means -- see [Outbox.drain], which is the only caller.
+     */
+    suspend fun sync(operations: List<SyncOperation>): List<AppliedOperation> {
+        val body = json.encodeToString(Batch.serializer(), Batch(operations))
+        val text = send("POST", "/api/sync", body)
+        return json.decodeFromString(Replayed.serializer(), text).operations
+    }
+
     // ------------------------------------------------------------------ lists
 
     suspend fun createList(name: String): ShoppingList =
