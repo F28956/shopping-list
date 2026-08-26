@@ -1,18 +1,5 @@
 import Foundation
 
-extension Double {
-    /// "2" rather than "2.0", "1.5" left as it is.
-    ///
-    /// Counts are whole far more often than not, and a trailing ".0" reads as a
-    /// measurement rather than a count. The magnitude guard is not decoration:
-    /// `Int(_:)` traps on NaN, on infinity, and on anything past `Int.max`, and the
-    /// amount arrives from the network.
-    var asAmount: String {
-        guard self == rounded(), abs(self) < 1e15 else { return String(self) }
-        return String(Int(self))
-    }
-}
-
 /// A saveable edit: what the fields came to mean.
 struct ItemEdit: Equatable {
     var name: String

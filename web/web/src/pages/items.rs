@@ -397,7 +397,16 @@ pub async fn suggestions(
         return Ok(suggestion_list(&[]));
     };
 
-    let names = items::suggestions(&s.ctx, &actor, list::Id(id), 100, Some(query)).await?;
+    // The same pool the API considers. Two different numbers meant the phone could
+    // suggest something this page would never offer for the same letters.
+    let names = items::suggestions(
+        &s.ctx,
+        &actor,
+        list::Id(id),
+        domain::service::PAGE_MAX,
+        Some(query),
+    )
+    .await?;
     Ok(suggestion_list(&names))
 }
 

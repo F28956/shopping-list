@@ -56,12 +56,15 @@ pub enum Lookup {
 /// Every variant added here needs a matching `WHEN` arm in both `CASE` branches of
 /// the `list` query. A variant without one silently sorts by nothing, which is what
 /// `list_every_field_changes_the_order` exists to catch.
+/// The default is `Id`: no field is more meaningful than another here.
+///
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::VariantArray, serde::Deserialize,
+    Debug, Clone, Copy, Default, PartialEq, Eq, strum::IntoStaticStr, strum::VariantArray, serde::Deserialize,
 )]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum Field {
+    #[default]
     Id,
     Sub,
     Email,

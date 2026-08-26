@@ -10,7 +10,7 @@ use axum::{
 };
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use domain::models::OffsetPage;
-use domain::models::list::{self, List, Name};
+use domain::models::list::{self, List, Name, Role};
 use domain::service::lists;
 
 use crate::auth::CurrentUser;
@@ -25,6 +25,42 @@ pub fn router() -> Router<AppState> {
         .route("/{id}/events", get(events))
 }
 
+/// A list, plus what the caller may do with it.
+///
+/// Without this a client cannot tell a list it owns from one shared with it as a
+/// viewer, so it either offers every control and lets the server refuse them, or
+/// hides controls the person is entitled to. The browser has always known — it reads
+/// the role straight out of the service — and this is what lets an app know too.
+///
+/// Flattened, so it is the list's own shape with one field added.
+#[derive(Debug, serde::Serialize)]
+pub struct ListWithRole {
+    #[serde(flatten)]
+    pub list: List,
+    pub role: Role,
+}
+
+impl ListWithRole {
+    /// Owners are answered from the list itself; anyone else costs a lookup.
+    ///
+    /// `lists::role` would re-check readability for every row, having just read them
+    /// through a call that established exactly that.
+    async fn of(state: &AppState, actor: &domain::service::Actor, list: List) -> Self {
+        let role = match actor.person() {
+            Ok(user) if user.id == list.owner_id => Some(Role::Owner),
+            Ok(_) => lists::role(&state.ctx, actor, list.id).await.ok(),
+            Err(_) => None,
+        };
+
+        Self {
+            // A member row that has gone missing under a list the caller could read
+            // is not a reason to fail the request: viewer is the least it can be.
+            role: role.unwrap_or(Role::Viewer),
+            list,
+        }
+    }
+}
+
 /// A list's editable fields. A DTO rather than the model's newtype, so nothing
 /// outside a route can conjure a `Name` that skipped normalisation.
 #[derive(Debug, serde::Deserialize)]
@@ -36,10 +72,21 @@ async fn list(
     State(state): State<AppState>,
     user: CurrentUser,
     Query(q): Query<PageQuery<list::Field>>,
-) -> Result<Json<OffsetPage<List>>, AppError> {
-    Ok(Json(
-        lists::for_user(&state.ctx, &user.actor(), q.paging(), q.order_by()).await?,
-    ))
+) -> Result<Json<OffsetPage<ListWithRole>>, AppError> {
+    let actor = user.actor();
+    let page = lists::for_user(&state.ctx, &actor, q.paging(), q.order_by()).await?;
+
+    let mut items = Vec::with_capacity(page.items.len());
+    for list in page.items {
+        items.push(ListWithRole::of(&state, &actor, list).await);
+    }
+
+    Ok(Json(OffsetPage {
+        items,
+        total: page.total,
+        total_pages: page.total_pages,
+        has_more: page.has_more,
+    }))
 }
 
 async fn create(
@@ -55,10 +102,10 @@ async fn read(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(id): Path<i64>,
-) -> Result<Json<List>, AppError> {
-    Ok(Json(
-        lists::get(&state.ctx, &user.actor(), list::Id(id)).await?,
-    ))
+) -> Result<Json<ListWithRole>, AppError> {
+    let actor = user.actor();
+    let list = lists::get(&state.ctx, &actor, list::Id(id)).await?;
+    Ok(Json(ListWithRole::of(&state, &actor, list).await))
 }
 
 async fn update(

@@ -12,6 +12,8 @@ struct ItemsView: View {
     @Environment(\.scenePhase) private var phase
 
     @State private var items: [Item] = []
+    @State private var truncated = false
+    @State private var total: Int64 = 0
     @State private var units: [Unit] = []
     /// What the server offered for what is currently typed. Shown in the order it
     /// came in: the ranking and the matching are both its business.
@@ -49,6 +51,7 @@ struct ItemsView: View {
 
     var body: some View {
         SwiftUI.List {
+            if list.mayEdit {
             Section {
                 HStack {
                     TextField("Add an item — try 2 kg apples", text: $line)
@@ -61,32 +64,16 @@ struct ItemsView: View {
                     }
                 }
             }
+            }
 
             // Only while the field has focus: a permanent list of things you might
             // want is clutter on a screen whose job is what you actually need.
             if typing && !offered.isEmpty {
-                Section {
-                    ForEach(offered, id: \.self) { suggestion in
-                        Button {
-                            // Fills the field rather than adding outright. What is
-                            // typed may carry a quantity -- "2 kg app" -- and the only
-                            // thing that knows what a line means is the server, so
-                            // guessing here is how the phone and the browser start
-                            // disagreeing about it.
-                            line = suggestion
-                        } label: {
-                            HStack {
-                                Image(systemName: "clock.arrow.circlepath")
-                                    .foregroundStyle(.secondary)
-                                    .font(.footnote)
-                                Text(suggestion)
-                                Spacer()
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                Section { suggestionSection }
+            }
+
+            if truncated {
+                Section { truncationNotice }
             }
 
             if outstanding.isEmpty && loaded {
@@ -117,12 +104,7 @@ struct ItemsView: View {
                         row(item)
                     }
                 } header: {
-                    HStack {
-                        Text("\(done.count) done")
-                        Spacer()
-                        Button("Clear", role: .destructive) { confirmingClear = true }
-                            .textCase(nil)
-                    }
+                    doneHeader
                 }
             }
         }
@@ -144,12 +126,10 @@ struct ItemsView: View {
                 let found = (try? await api.suggestions(matching: wanted, on: list)) ?? []
                 guard !Task.isCancelled else { return }
 
-                // Never the thing already typed in full: offering it back is a row
-                // that does nothing.
-                offered = Array(
-                    found.filter { $0.caseInsensitiveCompare(wanted) != .orderedSame }
-                        .prefix(6)
-                )
+                // Shown as given. The cap and the exact-match rule live in the
+                // service now, so this page and the browser cannot offer different
+                // numbers of different things for the same letters.
+                offered = found
             }
         }
         .navigationTitle(list.name)
@@ -189,6 +169,61 @@ struct ItemsView: View {
         }
     }
 
+    /// The done section's heading, with the one control that empties it.
+    ///
+    /// Its own property for the same reason as `truncationNotice`: `body` is long
+    /// enough that the type-checker gives up on it, and a `Button` whose title is
+    /// conditional is exactly the kind of thing it gives up on.
+    private var doneHeader: some View {
+        HStack {
+            Text("\(done.count) done")
+            Spacer()
+            if list.mayEdit {
+                Button("Clear", role: .destructive) { confirmingClear = true }
+                    .textCase(nil)
+            }
+        }
+    }
+
+    /// The things this list has bought before that match what is being typed.
+    private var suggestionSection: some View {
+        ForEach(offered, id: \.self) { suggestion in
+            Button {
+                // Fills the field rather than adding outright. What is typed may
+                // carry a quantity -- "2 kg app" -- and the only thing that knows
+                // what a line means is the server, so guessing here is how the phone
+                // and the browser start disagreeing about it.
+                line = suggestion
+            } label: {
+                HStack {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                    Text(suggestion)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// Said rather than hidden: a prefix shown as the whole list makes the rows that
+    /// did not fit look deleted rather than merely elsewhere. The browser has always
+    /// said this; these apps decoded the flag and never read it.
+    ///
+    /// Its own property because `body` is at the limit of what the type-checker will
+    /// infer in one expression, and an interpolated string inside a view builder is
+    /// an expensive thing to put there.
+    private var truncationNotice: some View {
+        let shown = items.count
+        let all = Int(total)
+
+        return Text("Showing \(shown) of \(all). This list is long enough to be worth splitting.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+    }
+
     private func row(_ item: Item) -> some View {
         Button {
             Task { await toggle(item) }
@@ -208,7 +243,10 @@ struct ItemsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // A viewer is given a list to read, not one covered in controls that would
+        // refuse them — the same rule the browser follows.
         .swipeActions(edge: .trailing) {
+            if list.mayEdit {
             // Delete first, so it is what a full swipe commits to: that was the whole
             // gesture before edit existed, and changing what it does silently is how
             // you delete something you meant to correct.
@@ -224,6 +262,7 @@ struct ItemsView: View {
                 Label("Edit", systemImage: "pencil")
             }
             .tint(.accentColor)
+            }
         }
     }
 
@@ -280,6 +319,7 @@ struct ItemsView: View {
     }
 
     private func toggle(_ item: Item) async {
+        guard list.mayEdit else { return }
         await attempt { try await api.setDone(item, on: list, done: !item.isDone) }
     }
 
@@ -349,7 +389,12 @@ struct ItemsView: View {
             async let items = api.items(on: list)
             async let units = api.units()
             async let tags = api.tags()
-            (self.items, self.units, self.tags) = try await (items, units, tags)
+            let (listing, loadedUnits, loadedTags) = try await (items, units, tags)
+            self.items = listing.items
+            self.total = listing.total
+            self.truncated = listing.truncated
+            self.units = loadedUnits
+            self.tags = loadedTags
             error = nil
         } catch let problem as APIError {
             if case .unauthorized = problem {

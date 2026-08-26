@@ -47,18 +47,28 @@ actor API {
 
     // MARK: - Reading
 
-    func lists() async throws -> [List] {
-        let page: Page<List> = try await get("/api/lists?order_by=updated_at&direction=descending")
-        return page.items
+    /// The service's own ceiling, and the same one the browser asks for.
+    ///
+    /// Asking for less is how these screens came to show a prefix of a list without
+    /// saying so: the default page is twenty, and twenty-one lists meant the last one
+    /// simply was not there. Anything past this is reported rather than dropped.
+    static let pageLimit = 500
+
+    func lists() async throws -> Listing<List> {
+        let page: Page<List> = try await get(
+            "/api/lists?order_by=updated_at&direction=descending&size=\(Self.pageLimit)"
+        )
+        return Listing(page)
     }
 
-    func items(on list: List) async throws -> [Item] {
+    func items(on list: List) async throws -> Listing<Item> {
         // Outstanding first, then what is already in the trolley — the same order the
         // web UI uses, so the two do not show the same list differently.
         let page: Page<Item> = try await get(
-            "/api/lists/\(list.id)/items?order_by=done_at&direction=ascending&size=200"
+            "/api/lists/\(list.id)/items"
+                + "?order_by=done_at&direction=ascending&size=\(Self.pageLimit)"
         )
-        return page.items
+        return Listing(page)
     }
 
     /// Every unit, in name order.
@@ -66,13 +76,16 @@ actor API {
     /// An array rather than a lookup because the editor's picker needs an order and a
     /// dictionary has none. Rows still want the lookup, and the screen builds it.
     func units() async throws -> [Unit] {
-        let page: Page<Unit> = try await get("/api/units?order_by=name&size=200")
+        // Reference data, seeded by migration and counted in dozens. The ceiling is
+        // an order of magnitude clear of it, so truncation here would mean a
+        // deployment gone wrong rather than a list somebody grew.
+        let page: Page<Unit> = try await get("/api/units?order_by=name&size=\(Self.pageLimit)")
         return page.items
     }
 
     /// Every tag, in the order a shop is walked.
     func tags() async throws -> [Tag] {
-        let page: Page<Tag> = try await get("/api/tags?order_by=name&size=200")
+        let page: Page<Tag> = try await get("/api/tags?order_by=name&size=\(Self.pageLimit)")
         return page.items.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
     }
 
@@ -87,6 +100,9 @@ actor API {
     /// adjacent or at the start -- and a second implementation of them in Swift would
     /// agree with the browser only until one of the two was changed. The order is the
     /// server's too, so this shows what it is given and does not re-sort.
+    /// Capped and de-duplicated by the service, so this asks and shows what it is
+    /// given: the browser and the phone offered different numbers of different things
+    /// for the same letters when each decided for itself.
     func suggestions(matching typed: String, on list: List) async throws -> [String] {
         let query = typed.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
         return try await get("/api/lists/\(list.id)/history?q=\(query)")

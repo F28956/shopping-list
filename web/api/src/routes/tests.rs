@@ -765,6 +765,54 @@ async fn items_come_with_their_tags(
     assert_eq!(row["name"], "Apples");
 }
 
+/// A list says what the caller may do with it.
+///
+/// Without it a client cannot tell a list it owns from one shared for reading, so it
+/// either offers controls that will be refused or hides ones the person is entitled
+/// to. The browser has always had this; an app could not get it at all.
+#[rstest]
+#[tokio::test]
+async fn a_list_carries_the_callers_role(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+
+    let (_, page) = send(&app, req("GET", "/api/lists", &me(), None)).await;
+    assert_eq!(page["items"][0]["role"], "owner");
+    // Flattened, so the list's own fields are where they were.
+    assert_eq!(page["items"][0]["id"], list_id);
+
+    let (_, one) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &me(), None)).await;
+    assert_eq!(one["role"], "owner", "and on the single-list route too");
+
+    // Somebody invited to read it is told they may read it, and nothing more.
+    let (status, invite) = send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{list_id}/members/invites"),
+            &me(),
+            Some(json!({"role": "viewer"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{invite}");
+    let token = invite["token"].as_str().expect("no token in {invite}").to_string();
+
+    let (status, _) = send(
+        &app,
+        req("POST", &format!("/api/invites/{token}"), &them(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "following the link failed");
+
+    let (_, theirs) = send(&app, req("GET", "/api/lists", &them(), None)).await;
+    assert_eq!(
+        theirs["items"][0]["role"], "viewer",
+        "a guest was told they own it: {theirs}"
+    );
+    assert_eq!(theirs["items"][0]["id"], list_id);
+}
+
 /// Clearing takes the ticked-off rows and nothing else.
 #[rstest]
 #[tokio::test]

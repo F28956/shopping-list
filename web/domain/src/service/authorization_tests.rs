@@ -651,6 +651,58 @@ async fn spelling_does_not_split_the_memory(#[future(awt)] pool: SqlitePool) {
     assert_eq!(milks[0].0, "Milk");
 }
 
+/// Suggestions are capped in the service, not by whoever is asking.
+///
+/// The browser used to show every match and the phone the first six, which is two
+/// answers to one question. It is one now, so this is where it is checked.
+#[rstest]
+#[tokio::test]
+async fn suggestions_are_capped(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    // Lettered, not numbered: a trailing number is read as a quantity, so
+    // "apple sort 3" would be three of "apple sort" and ten names would collapse
+    // into one memory -- which is the parser working, and a useless fixture.
+    for suffix in ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"] {
+        items::quick_add(&s.ctx, &s.mine, s.list.id, &format!("apple sort {suffix}"))
+            .await
+            .unwrap();
+    }
+
+    let offered = items::suggestions(&s.ctx, &s.mine, s.list.id, 500, Some("apple"))
+        .await
+        .unwrap();
+    assert_eq!(offered.len(), items::SUGGESTIONS);
+}
+
+/// What has already been typed in full is not a suggestion: accepting it would change
+/// nothing, and it costs a row that a real one could have had.
+#[rstest]
+#[tokio::test]
+async fn what_is_already_typed_is_not_offered(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    items::quick_add(&s.ctx, &s.mine, s.list.id, "Milk").await.unwrap();
+    items::quick_add(&s.ctx, &s.mine, s.list.id, "Milk chocolate")
+        .await
+        .unwrap();
+
+    let offered = items::suggestions(&s.ctx, &s.mine, s.list.id, 500, Some("Milk"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        offered.iter().map(|n| n.0.as_str()).collect::<Vec<_>>(),
+        vec!["Milk chocolate"],
+        "the exact match should have been dropped, the other kept"
+    );
+
+    // However it was capitalised: the comparison is the same one the matcher uses.
+    let offered = items::suggestions(&s.ctx, &s.mine, s.list.id, 500, Some("  mILk "))
+        .await
+        .unwrap();
+    assert!(!offered.iter().any(|n| n.0 == "Milk"));
+}
+
 /// A typo can be taken back.
 #[rstest]
 #[tokio::test]

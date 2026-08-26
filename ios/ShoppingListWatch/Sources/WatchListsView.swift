@@ -44,7 +44,7 @@ struct WatchListsView: View {
     private func load() async {
         loaded = false
         do {
-            lists = try await api.lists()
+            lists = try await api.lists().items
             problem = nil
         } catch {
             problem = Problem(error, identity: identity)

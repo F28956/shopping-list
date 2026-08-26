@@ -37,14 +37,17 @@ pub enum Lookup {
 /// Every variant added here needs a matching `WHEN` arm in both `CASE` branches of
 /// the query. A variant without one silently sorts by nothing, which is what
 /// `for_user_every_field_changes_the_order` exists to catch.
+/// The default is `CreatedAt`: newest first is what a list of notes is for.
+///
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::VariantArray, serde::Deserialize,
+    Debug, Clone, Copy, Default, PartialEq, Eq, strum::IntoStaticStr, strum::VariantArray, serde::Deserialize,
 )]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum Field {
     Id,
     Body,
+    #[default]
     CreatedAt,
 }
 

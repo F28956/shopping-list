@@ -29,6 +29,8 @@ pub fn router() -> Router<AppState> {
         // The memory belongs to the list, so it is addressed through it
         .nest("/lists/{list_id}/history", routes::history::router())
         .nest("/lists/{list_id}/members", routes::sharing::router())
+        // Not under a list: following a link is what gets you the list.
+        .nest("/invites", routes::sharing::invites_router())
         .nest("/me", routes::me::router())
         .nest("/notes", routes::notes::router())
         .nest("/units", routes::reference::units_router())

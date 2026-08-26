@@ -12,6 +12,8 @@ struct WatchItemsView: View {
     @Environment(\.scenePhase) private var phase
 
     @State private var items: [Item] = []
+    @State private var truncated = false
+    @State private var total: Int64 = 0
     @State private var units: [Int64: String] = [:]
     @State private var tags: [Tag] = []
     @State private var problem: Problem?
@@ -46,6 +48,15 @@ struct WatchItemsView: View {
                     }
 
                     ForEach(ordered) { row($0) }
+
+                    // Short, because there is no room for more -- but said, because
+                    // a wrist showing a prefix of a list is the worst place to
+                    // discover that quietly.
+                    if truncated {
+                        Text("\(ordered.count) of \(total) shown")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
 
                     if !done.isEmpty {
                         Section {
@@ -152,11 +163,15 @@ struct WatchItemsView: View {
             .opacity(inFlight.contains(item.id) ? 0.4 : 1)
         }
         .buttonStyle(.plain)
-        .disabled(inFlight.contains(item.id))
+        .disabled(inFlight.contains(item.id) || !list.mayEdit)
         .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
     }
 
     private func toggle(_ item: Item) async {
+        // A viewer's tap would be refused by the server, and a row that greys out and
+        // comes back unchanged is a worse answer than one that does not move.
+        guard list.mayEdit else { return }
+
         inFlight.insert(item.id)
         defer { inFlight.remove(item.id) }
 
@@ -173,8 +188,10 @@ struct WatchItemsView: View {
             async let items = api.items(on: list)
             async let units = api.units()
             async let tags = api.tags()
-            let (loadedItems, loadedUnits, loadedTags) = try await (items, units, tags)
-            self.items = loadedItems
+            let (listing, loadedUnits, loadedTags) = try await (items, units, tags)
+            self.items = listing.items
+            self.truncated = listing.truncated
+            self.total = listing.total
             self.units = Dictionary(uniqueKeysWithValues: loadedUnits.map { ($0.id, $0.name) })
             self.tags = loadedTags
             problem = nil

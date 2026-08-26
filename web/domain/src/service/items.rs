@@ -166,6 +166,13 @@ pub async fn forget(ctx: &Ctx, actor: &Actor, list_id: list::Id, name: Name) -> 
     Ok(())
 }
 
+/// How many suggestions a caller is offered.
+///
+/// Here rather than in each transport: the browser was showing every match and the
+/// phone the first six, which is two answers to one question. Six is what fits under
+/// a field on a phone without covering the list behind it.
+pub const SUGGESTIONS: usize = 6;
+
 /// What gets bought on this list, for a quick-add suggestion list.
 ///
 /// The list's memory, not the actor's: everyone sharing it sees and feeds the same
@@ -212,11 +219,18 @@ pub async fn suggestions(
     let mut matches: Vec<(i32, usize, String)> = ranked
         .into_iter()
         .enumerate()
+        // Never what has already been typed in full: a suggestion that changes
+        // nothing is a row in the way of the ones that would.
+        .filter(|(_, name)| !name.eq_ignore_ascii_case(query))
         .filter_map(|(rank, name)| fuzzy::score(query, &name).map(|s| (s, rank, name)))
         .collect();
     matches.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
 
-    Ok(matches.into_iter().map(|(_, _, name)| Name(name)).collect())
+    Ok(matches
+        .into_iter()
+        .map(|(_, _, name)| Name(name))
+        .take(SUGGESTIONS)
+        .collect())
 }
 
 /// Clears everything ticked off one of the actor's lists, returning how many went.

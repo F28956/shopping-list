@@ -6,7 +6,8 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use domain::models::list::{self, ListMember, Role};
+use domain::models::invite::Token;
+use domain::models::list::{self, List, ListMember, Role};
 use domain::models::user;
 use domain::service::lists;
 
@@ -19,6 +20,29 @@ pub fn router() -> Router<AppState> {
         .route("/", get(members))
         .route("/invites", post(invite).delete(revoke))
         .route("/{user_id}", axum::routing::delete(remove))
+}
+
+/// Accepting a share link.
+///
+/// Its own router because it is not nested under a list: the whole point of a link is
+/// that the person following it does not have the list yet, and cannot be authorised
+/// against one they cannot see.
+///
+/// This existed only in the browser, which meant a share link could be sent to
+/// someone and then only opened on a laptop -- and it is why the API could not be
+/// tested for what a viewer is told about their own role.
+pub fn invites_router() -> Router<AppState> {
+    Router::new().route("/{token}", post(join))
+}
+
+async fn join(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(token): Path<String>,
+) -> Result<Json<List>, AppError> {
+    Ok(Json(
+        lists::join(&state.ctx, &user.actor(), &Token(token)).await?,
+    ))
 }
 
 /// Deserialised straight into the model's `Role`, so `owner` is rejected by the

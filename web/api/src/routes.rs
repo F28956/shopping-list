@@ -26,6 +26,10 @@ pub struct PageQuery<F> {
     pub page: i64,
     #[serde(default = "default_size")]
     pub size: i64,
+    /// Defaulted rather than required. A list route that 422s until the caller
+    /// guesses a field is a route every new client meets as a bug first, and each
+    /// field's default is the order that transport reads it in anyway.
+    #[serde(default)]
     pub order_by: F,
     #[serde(default = "ascending")]
     pub direction: Direction,
