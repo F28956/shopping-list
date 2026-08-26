@@ -148,10 +148,19 @@ POST /api/sync
 
 * **Android** — Room, with an `operations` outbox table and `pending` flags on
   rows, driven by WorkManager so a queued change survives the app being killed.
-* **iOS / macOS** — SwiftData or GRDB, same shape, with a background task.
+* **iOS / macOS** — **GRDB**, same shape, with a background task. SwiftData is
+  built in and would cost no dependency, but it is a model graph with its own
+  change tracking, and an outbox is a strictly ordered queue that gets dequeued
+  in a transaction. GRDB is SQLite with the SQL written down, which is also the
+  server's mental model, so the two halves of a merge rule can be read side by
+  side.
 * **watchOS** — reads only. It already asks the phone for a token; asking it to
   hold a queue as well is a lot of machinery for a screen you glance at. It
   stays online-only, and says so when it cannot reach anything.
+* **The browser** — online-only, and it says so. The web UI is server-rendered
+  HTML with htmx: making it work offline means a service worker and a
+  client-side store, which is a second copy of the app rather than a feature of
+  this one. A person with no signal has the phone app in their pocket.
 
 ## What the screen must say
 
@@ -346,8 +355,11 @@ trusting one to police access is not a choice worth the safety it costs.
 
 Ben's phone keeps the refused events and can say what was lost.
 
-**Follow-on:** what happens to those refused events? Kept in case he is invited
-back, or dropped with a note? This one I have no strong view on.
+**Follow-on — settled.** The refused events stay on the device, with a note
+naming what was refused. If Ben is invited back they are still there to send; if
+he is not, nothing was quietly binned behind him. A queue for a list he can no
+longer see costs a few rows, and the alternative is the same silent-loss habit
+that made this document worth writing.
 
 ### 9. Events for a list that no longer exists
 
