@@ -239,10 +239,16 @@ Offline handling is mostly a communication problem:
 3. ~~**The outbox, one operation at a time.**~~ **Done for `setDone`.** A tick
    with no signal changes the screen, goes in the queue, and is sent on the next
    successful load from anywhere in the app.
-4. **The rest of the operations**, in the table's order.
+4. ~~**The rest of the operations**, in the table's order.~~ **Done, bar tags.**
+   `add`, `setDone`, `update`, `delete` and `clearDone` all have an offline path
+   on both native clients, and all of them go over `POST /api/sync`. Attaching
+   and detaching tags is the last one without: it stays online-only and says so.
 5. ~~**`POST /api/sync`** and batch replay.~~ **Done.** Every operation, named by
    uuid, carrying the device's clock, answered one by one.
-6. **The "what changed" note**, once there is something worth telling.
+6. **The "what changed" note**, once there is something worth telling. Half of it
+   exists: a refusal reaches the screen as the sentence for it, and the state
+   that says so is the one of the three that interrupts. What is missing is the
+   summary after a long time away.
 
 Each step is useful on its own, and the app is never half-migrated: an operation
 either has an offline path or it does not, and the ones that do not stay

@@ -11,8 +11,16 @@ struct OutboxTests {
 
     private let list = List(id: 1, uuid: "list-1", name: "Shop", ownerID: 9, role: .editor)
 
-    private func item(_ id: Int64, _ name: String) -> Item {
-        Item(id: id, uuid: "item-\(id)", name: name, amount: 1, unitID: nil, doneAt: nil, tagIDs: [])
+    private func item(_ id: Int64, _ name: String, amount: Double = 1, unit: Int64? = nil) -> Item {
+        Item(
+            id: id,
+            uuid: "item-\(id)",
+            name: name,
+            amount: amount,
+            unitID: unit,
+            doneAt: nil,
+            tagIDs: []
+        )
     }
 
     @Test func aTickIsQueuedWithWhatItNeedsToBeReplayed() {
@@ -25,9 +33,8 @@ struct OutboxTests {
         #expect(queued[0].kind == QueuedOperation.Kind.setDone)
         #expect(queued[0].itemID == 7)
         #expect(queued[0].listID == 1)
-        // Both names for the row: the id the REST routes want today, and the uuid the
-        // sync route will want. Carried from the first day so the table needs no
-        // migration when that lands.
+        // Both names for the row: the uuid, which is the only one that travels, and
+        // the id, which stays here to key the screen on.
         #expect(queued[0].itemUUID == "item-7")
         #expect(queued[0].listUUID == "list-1")
         #expect(queued[0].done)
@@ -101,5 +108,82 @@ struct OutboxTests {
         let second = Cache(path: path)
 
         #expect(second.outbox.all().map(\.itemID) == [3])
+    }
+
+    /// Every kind reaches the wire as the route expects, which is the one translation
+    /// in this file with somewhere to go wrong: the arguments live as JSON in a column,
+    /// and they have to come back out in the right fields.
+    @Test func eachKindReachesTheWireIntact() throws {
+        let cache = Cache.inMemory()
+        let milk = item(1, "Milk")
+        // Measured, so the `seen` fields have something to carry that is not a default.
+        let measured = item(1, "Milk", amount: 2, unit: 3)
+
+        cache.outbox.add(uuid: "new-1", localID: -99, line: "2 kg apples", on: list)
+        cache.outbox.setDone(milk, on: list, done: true)
+        cache.outbox.update(measured, on: list, name: "Whole milk", amount: 3, unitID: 4)
+        cache.outbox.delete(milk, on: list)
+        cache.outbox.clearDone([milk, item(2, "Bread")], on: list)
+
+        let wire = cache.outbox.all().map(\.onTheWire)
+        #expect(wire.map(\.kind) == ["add", "set_done", "update", "delete", "clear_done"])
+
+        #expect(wire[0].item == "new-1")
+        #expect(wire[0].line == "2 kg apples")
+
+        #expect(wire[1].done == true)
+
+        #expect(wire[2].name == "Whole milk")
+        #expect(wire[2].amount == 3)
+        #expect(wire[2].unitID == 4)
+        // What the row looked like when the edit was made — the thing that decides
+        // between renaming a row and splitting one.
+        #expect(wire[2].seen?.name == "Milk")
+        #expect(wire[2].seen?.amount == 2)
+        #expect(wire[2].seen?.unitID == 3)
+
+        // A sweep is about a list, not a row: no item, and the rows it meant by name.
+        #expect(wire[4].item == nil)
+        #expect(wire[4].items == ["item-1", "item-2"])
+    }
+
+    /// The JSON is what the server reads, so it is worth looking at rather than trusting
+    /// the field names to line up.
+    @Test func theBatchEncodesTheWayTheRouteReadsIt() throws {
+        let cache = Cache.inMemory()
+        cache.outbox.update(
+            item(1, "Milk", amount: 2, unit: 3),
+            on: list,
+            name: "Whole milk",
+            amount: 3,
+            unitID: 4
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(SyncBatch(operations: cache.outbox.all().map(\.onTheWire)))
+        let json = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        let operation = try #require((json["operations"] as? [[String: Any]])?.first)
+
+        #expect(operation["kind"] as? String == "update")
+        #expect(operation["unit_id"] as? Int == 4, "snake_case, as the route reads it")
+        #expect((operation["seen"] as? [String: Any])?["unit_id"] as? Int == 3)
+        // RFC 3339, which is what the route's `at` decodes.
+        let at = try #require(operation["at"] as? String)
+        #expect(at.contains("T"))
+    }
+
+    /// A row made offline is queued under a uuid and a placeholder id, and the uuid is
+    /// the only one that travels. The negative id never leaves the device.
+    @Test func aRowMadeOfflineTravelsUnderItsUuid() {
+        let cache = Cache.inMemory()
+
+        cache.outbox.add(uuid: "minted", localID: -1234, line: "Bread", on: list)
+
+        let queued = cache.outbox.all()[0]
+        #expect(queued.itemID == -1234)
+        #expect(queued.onTheWire.item == "minted")
     }
 }
