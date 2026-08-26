@@ -368,6 +368,26 @@ actor API {
         }
     }
 
+    /// Replays everything this device did while it could not reach the server.
+    ///
+    /// One request for the batch, and one answer per operation. Nothing here decides
+    /// what an answer means — see ``Outbox/drain(through:)``, which is the only caller.
+    func sync(_ operations: [SyncOperation]) async throws -> [AppliedOperation] {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+
+        guard let body = try? encoder.encode(SyncBatch(operations: operations)) else {
+            throw APIError.badInput("Could not describe what is queued.")
+        }
+
+        let data = try await sendRaw("POST", "/api/sync", body)
+        do {
+            return try Self.decoder.decode(Replayed.self, from: data).operations
+        } catch {
+            throw APIError.transport(error)
+        }
+    }
+
     // MARK: - Plumbing
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
@@ -379,8 +399,22 @@ actor API {
         }
     }
 
+    /// The same request as ``send(_:_:_:)`` with a body already encoded.
+    ///
+    /// `send` builds its JSON from a dictionary, which is fine for the small bodies the
+    /// REST routes take and wrong for a batch of operations — those have a shape worth
+    /// keeping in a type.
+    private func sendRaw(_ method: String, _ path: String, _ body: Data) async throws -> Data {
+        try await send(method, path, nil, body)
+    }
+
     @discardableResult
-    private func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> Data {
+    private func send(
+        _ method: String,
+        _ path: String,
+        _ body: [String: Any]?,
+        _ encoded: Data? = nil
+    ) async throws -> Data {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw APIError.badInput("Bad address: \(path)")
         }
@@ -391,7 +425,10 @@ actor API {
         guard let token = await token() else { throw APIError.unauthorized }
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
-        if let body {
+        if let encoded {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = encoded
+        } else if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
