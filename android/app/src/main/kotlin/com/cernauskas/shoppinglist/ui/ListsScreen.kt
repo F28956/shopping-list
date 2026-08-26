@@ -45,7 +45,9 @@ fun ListsScreen(
 ) {
     val state by model.state.collectAsState()
     val snackbars = remember { SnackbarHostState() }
-    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
+    // Pinned, because `exitUntilCollapsed` is the behaviour of a large title
+    // shrinking into a small one, and there is no large title here any more.
+    val scroll = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
 
     var naming by remember { mutableStateOf<Naming?>(null) }
     var deleting by remember { mutableStateOf<ShoppingList?>(null) }
@@ -62,7 +64,11 @@ fun ListsScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize().nestedScroll(scroll.nestedScrollConnection),
         topBar = {
-            LargeTopAppBar(
+            // A plain bar, not a large one. A large title sits on its own line with
+            // the actions on the line above it, so "Lists" and the menu that acts on
+            // lists ended up on different rows looking unrelated. It also matches the
+            // items screen, which has always been a plain bar.
+            TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         StatusDot(waiting = state.waiting, offline = state.offline)
