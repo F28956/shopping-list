@@ -198,6 +198,8 @@ online-only until they get one.
   changes applied when it comes back.
 * **Losing access ends your influence.** Somebody removed from a list has no
   effect on it from that moment, whatever is still queued on their device.
+  "That moment" is measured by **arrival at the server**, never by the removed
+  device's clock — losing work they genuinely did is an accepted cost.
 * **Delete is final.** Deletion is a fact about the server, not an intention held
   on a device. Nothing that arrives afterwards resurrects the row; the person
   whose work was dropped is told.
@@ -313,23 +315,21 @@ hours, and a phone that is wrong by a day would win every conflict for a day.
 
 *Recommendation: (c).*
 
-### 8. Losing access, and what "after that time" means
-
-The rule is settled — actions after being removed have no effect — but it needs
-a clock, and (7) decides which one.
+### 8. Losing access, and what "after that time" means — settled
 
 *Ben is editing a shared list on a train with no signal. At 14:00 Anna removes
 him. At 14:30 he reaches signal, and his phone says his edits happened at 13:50.*
 
-* **By the device's clock**, the edits land: they happened before he was removed.
-  But a device can claim any time it likes, so this is also how a removed person
-  keeps writing to a list.
-* **By arrival**, they are refused: he was removed before they arrived. Safe, and
-  it discards work that genuinely happened while he had access.
+**Access is decided by arrival at the server.** Ben was removed before his batch
+arrived, so it is refused, whatever his phone says about when he did the work.
 
-*Recommendation: refuse by arrival.* Removal is a security decision and a
-security decision should not depend on the removed party's clock. Ben's phone
-keeps the refused events and can say what was lost.
+Losing work he genuinely did while he still had access is an accepted cost. This
+is a shopping list: the loss is a few lines somebody can retype, and the
+alternative is that a removed person keeps writing to a list they were removed
+from by claiming an earlier time. A device can claim any time it likes, so
+trusting one to police access is not a choice worth the safety it costs.
+
+Ben's phone keeps the refused events and can say what was lost.
 
 **Follow-on:** what happens to those refused events? Kept in case he is invited
 back, or dropped with a note? This one I have no strong view on.
