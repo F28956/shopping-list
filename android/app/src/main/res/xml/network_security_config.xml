@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android has refused cleartext HTTP since API 28, and it is right to. This permits it
+  for exactly one host: 10.0.2.2, which is the machine running the emulator, reached
+  over a virtual network that never leaves it.
+
+  `cleartextTrafficPermitted` is false everywhere else, so a build pointed at a real
+  server cannot quietly fall back to plain HTTP.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

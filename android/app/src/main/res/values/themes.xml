@@ -1,0 +1,13 @@
+<resources>
+    <!--
+      A bare theme with no action bar. Everything visible is decided in Compose,
+      including the colours; this exists so the window has a sane background before
+      the first frame rather than flashing white on a dark device.
+    -->
+    <style name="Theme.ShoppingList" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
