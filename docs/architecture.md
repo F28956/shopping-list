@@ -218,6 +218,13 @@ next successful load. The cache is disposable; the queue is not, and shares its 
 so that file is migrated by hand. See `docs/offline.md` — `setDone` is the operation
 that has an offline path today.
 
+**Units are never hidden.** Every item carries one — `unit` is what an item added
+without a measure is given, so that `milk` and `1 unit milk` are the same row rather
+than two. It used to print as nothing, on the grounds that it said nothing a number did
+not. It said one thing that mattered: that the row had a unit at all, which is how a row
+that had genuinely lost one went unnoticed. All four surfaces now print it, and the rule
+is applied on every write rather than only on the first.
+
 **Category grouping.** `tags.sort_order` carries the order of a shop rather than the
 alphabet — perimeter first, frozen late, shop names after everything describing a
 department. Aisle numbers would be more precise and are deliberately not used: they
