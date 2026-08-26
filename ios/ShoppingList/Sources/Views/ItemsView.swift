@@ -11,6 +11,8 @@ struct ItemsView: View {
     @Environment(Identity.self) private var identity
     @Environment(\.scenePhase) private var phase
 
+    private let cache = Cache.shared
+
     @State private var items: [Item] = []
     @State private var truncated = false
     @State private var total: Int64 = 0
@@ -24,6 +26,9 @@ struct ItemsView: View {
     @State private var sharing = false
     @State private var error: String?
     @State private var loaded = false
+    /// See `ListsView.offline`.
+    @State private var offline = false
+    @State private var fresh = false
     @FocusState private var typing: Bool
 
     /// An item and what it is already filed under, fetched before the sheet opens so
@@ -71,11 +76,22 @@ struct ItemsView: View {
                 Section { suggestionSection }
             }
 
+            if offline {
+                Section { OfflineNote() }
+            }
+
             if truncated {
                 Section { truncationNotice }
             }
 
-            if outstanding.isEmpty && loaded {
+            // "Nothing on this list yet" is a claim, and with nothing cached and no
+            // connection it is a claim nobody has checked.
+            if items.isEmpty && loaded && offline && !fresh {
+                Section {
+                    Text("Can't reach the server. This list will appear as soon as there is a connection.")
+                        .foregroundStyle(.secondary)
+                }
+            } else if outstanding.isEmpty && loaded {
                 Section {
                     Text(items.isEmpty ? "Nothing on this list yet." : "All done.")
                         .foregroundStyle(.secondary)
@@ -144,7 +160,10 @@ struct ItemsView: View {
         }
         .refreshable { await load() }
         .task { await loadReference() }
-        .task { await load() }
+        .task {
+            showWhatWeHave()
+            await load()
+        }
         .task { await watch() }
         // Coming back from the background is the one gap the stream cannot cover:
         // iOS tears the connection down and the reconnect has not happened yet.
@@ -432,7 +451,10 @@ struct ItemsView: View {
         do {
             async let units = api.units()
             async let tags = api.tags(orderedFor: list)
-            (self.units, self.tags) = try await (units, tags)
+            let (fetchedUnits, fetchedTags) = try await (units, tags)
+            cache.remember(units: fetchedUnits)
+            cache.remember(tags: fetchedTags, on: list)
+            (self.units, self.tags) = (fetchedUnits, fetchedTags)
         } catch {
             // Not shown: without these, rows lose their measure and their grouping,
             // which is a poorer list rather than no list. `load()` reports what
@@ -440,16 +462,44 @@ struct ItemsView: View {
         }
     }
 
+    /// Puts the list up as it was last seen, before asking anything.
+    ///
+    /// Units and tags in the same breath: an item read out of the cache with no unit
+    /// and no category is a bare name in no aisle, which is a worse answer than the
+    /// one the shop actually needs.
+    private func showWhatWeHave() {
+        guard !fresh else { return }
+
+        let rememberedUnits = cache.units()
+        let rememberedTags = cache.tags(on: list)
+        if !rememberedUnits.isEmpty { units = rememberedUnits }
+        if !rememberedTags.isEmpty { tags = rememberedTags }
+
+        let remembered = cache.items(on: list)
+        guard !remembered.isEmpty else { return }
+        items = remembered
+        total = Int64(remembered.count)
+        loaded = true
+    }
+
     private func load() async {
         do {
             let listing = try await api.items(on: list)
+            cache.remember(items: listing.items, on: list)
             self.items = listing.items
             self.total = listing.total
             self.truncated = listing.truncated
             error = nil
+            offline = false
+            fresh = true
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()
+            } else if case .transport = problem {
+                // See ListsView.load: no signal is a state, not an event. What is on
+                // screen stays there -- it is the last thing the server said.
+                offline = true
+                if !fresh { showWhatWeHave() }
             } else {
                 error = problem.localizedDescription
             }

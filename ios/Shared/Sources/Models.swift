@@ -39,20 +39,36 @@ enum Role: String, Decodable, Comparable {
 
 struct List: Identifiable, Decodable, Hashable {
     let id: Int64
+    /// What operations call this list, minted wherever it was made.
+    ///
+    /// `id` is the server's counter; this is the name a queued change uses, because a
+    /// device with no signal has one of these and not the other. Empty when it came
+    /// from a server that predates the column, which is not worth failing a decode
+    /// over — nothing queues against it yet.
+    let uuid: String
     let name: String
     let ownerID: Int64
     let role: Role
 
     var mayEdit: Bool { role >= .editor }
 
+    init(id: Int64, uuid: String, name: String, ownerID: Int64, role: Role) {
+        self.id = id
+        self.uuid = uuid
+        self.name = name
+        self.ownerID = ownerID
+        self.role = role
+    }
+
     enum CodingKeys: String, CodingKey {
-        case id, name, role
+        case id, uuid, name, role
         case ownerID = "owner_id"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(Int64.self, forKey: .id)
+        uuid = try c.decodeIfPresent(String.self, forKey: .uuid) ?? ""
         name = try c.decode(String.self, forKey: .name)
         ownerID = try c.decode(Int64.self, forKey: .ownerID)
         // The safe reading of a server that did not say: a list you may not change is
@@ -63,6 +79,8 @@ struct List: Identifiable, Decodable, Hashable {
 
 struct Item: Identifiable, Decodable, Hashable {
     let id: Int64
+    /// What operations call this item. See [`List.uuid`].
+    let uuid: String
     let name: String
     let amount: Double
     let unitID: Int64?
@@ -76,8 +94,26 @@ struct Item: Identifiable, Decodable, Hashable {
 
     var isDone: Bool { doneAt != nil }
 
+    init(
+        id: Int64,
+        uuid: String,
+        name: String,
+        amount: Double,
+        unitID: Int64?,
+        doneAt: Date?,
+        tagIDs: [Int64]
+    ) {
+        self.id = id
+        self.uuid = uuid
+        self.name = name
+        self.amount = amount
+        self.unitID = unitID
+        self.doneAt = doneAt
+        self.tagIDs = tagIDs
+    }
+
     enum CodingKeys: String, CodingKey {
-        case id, name, amount
+        case id, uuid, name, amount
         case unitID = "unit_id"
         case doneAt = "done_at"
         case tagIDs = "tag_ids"
@@ -86,6 +122,7 @@ struct Item: Identifiable, Decodable, Hashable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(Int64.self, forKey: .id)
+        uuid = try c.decodeIfPresent(String.self, forKey: .uuid) ?? ""
         name = try c.decode(String.self, forKey: .name)
         amount = try c.decode(Double.self, forKey: .amount)
         unitID = try c.decodeIfPresent(Int64.self, forKey: .unitID)

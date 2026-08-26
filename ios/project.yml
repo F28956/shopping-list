@@ -22,6 +22,12 @@ packages:
   GoogleSignIn:
     url: https://github.com/google/GoogleSignIn-iOS
     from: "7.1.0"
+  # SQLite with the SQL written down, for the local copy of what the server holds.
+  # SwiftData was the other candidate and is built in; see docs/offline.md for why
+  # this won. Not a dependency of the watch app, which is online-only by design.
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: "7.0.0"
 
 targets:
   ShoppingList:
@@ -32,11 +38,14 @@ targets:
       - path: Shared/Sources
       - path: Auth/Sources
       - path: UI/Sources
+      - path: Store/Sources
     dependencies:
       - package: GoogleSignIn
         product: GoogleSignIn
       - package: GoogleSignIn
         product: GoogleSignInSwift
+      - package: GRDB
+        product: GRDB
       # Embedded, which is what puts the watch app on the watch: watchOS installs it
       # from the phone app rather than from its own download.
       - target: ShoppingListWatch
@@ -112,11 +121,14 @@ targets:
       # Views the phone and the Mac both use. Not the watch: it has no keyboard
       # shortcuts, no bordered text fields, and nothing here it could show.
       - path: UI/Sources
+      - path: Store/Sources
     dependencies:
       - package: GoogleSignIn
         product: GoogleSignIn
       - package: GoogleSignIn
         product: GoogleSignInSwift
+      - package: GRDB
+        product: GRDB
     info:
       path: Mac/Info.plist
       properties:

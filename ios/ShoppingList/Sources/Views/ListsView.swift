@@ -10,11 +10,20 @@ struct ListsView: View {
     let api: API
     @Environment(Identity.self) private var identity
 
+    private let cache = Cache.shared
+
     @State private var lists: [List] = []
     @State private var truncated = false
     @State private var total: Int64 = 0
     @State private var error: String?
     @State private var loaded = false
+    /// The server could not be reached last time we asked. Not an error and not worth
+    /// a dialog -- but the difference between "you have no lists" and "I could not
+    /// find out" has to reach the screen.
+    @State private var offline = false
+    /// Whether the server has ever answered. What is shown while this is false came
+    /// out of the cache and may be old.
+    @State private var fresh = false
     @State private var naming: ListNameSheet.Purpose?
     @State private var deleting: List?
     @State private var sharing: List?
@@ -25,6 +34,19 @@ struct ListsView: View {
             Group {
                 if !loaded {
                     ProgressView()
+                } else if lists.isEmpty && offline && !fresh {
+                    // Before the empty state, and the order is the point: with nothing
+                    // cached and no connection this app used to say "No lists", an
+                    // emptiness it had never verified. Once the server has said there
+                    // are none, `fresh` keeps the real empty state reachable -- losing
+                    // signal afterwards does not unsay it.
+                    ContentUnavailableView {
+                        Label("Can't reach the server", systemImage: "icloud.slash")
+                    } description: {
+                        Text("Your lists will appear as soon as there is a connection.")
+                    } actions: {
+                        Button("Try again") { Task { await load() } }
+                    }
                 } else if lists.isEmpty {
                     ContentUnavailableView {
                         Label("No lists", systemImage: "cart")
@@ -36,6 +58,10 @@ struct ListsView: View {
                     }
                 } else {
                     SwiftUI.List {
+                        if offline {
+                            OfflineNote()
+                        }
+
                         ForEach(lists) { list in
                             NavigationLink(value: list) {
                                 Text(list.name)
@@ -98,7 +124,12 @@ struct ListsView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Sign out") { identity.signOut() }
+                    Button("Sign out") {
+                        // What is cached belongs to whoever is signing out. The next
+                        // person to use this device is a different person.
+                        cache.forgetEverything()
+                        identity.signOut()
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -147,7 +178,10 @@ struct ListsView: View {
                 Text("Everything on it goes too. This cannot be undone.")
             }
             .refreshable { await load() }
-            .task { await load() }
+            .task {
+                showWhatWeHave()
+                await load()
+            }
             .task { await watchLists() }
             .alert("Could not load", isPresented: .constant(error != nil)) {
                 Button("OK") { error = nil }
@@ -200,18 +234,41 @@ struct ListsView: View {
         }
     }
 
+    /// Puts the last-loaded lists up before asking the server anything.
+    ///
+    /// The screen is never blank while a request is in flight, and on a phone with no
+    /// signal it is never blank at all. Guarded on `fresh` so a slow disk read cannot
+    /// land after a fast answer and put yesterday's lists back.
+    private func showWhatWeHave() {
+        guard !fresh else { return }
+        let remembered = cache.lists()
+        guard !remembered.isEmpty else { return }
+        lists = remembered
+        total = Int64(remembered.count)
+        loaded = true
+    }
+
     private func load() async {
         do {
             let listing = try await api.lists()
+            cache.remember(lists: listing.items)
             lists = listing.items
             total = listing.total
             truncated = listing.truncated
             error = nil
+            offline = false
+            fresh = true
         } catch let problem as APIError {
             // A signed-out session is not an error worth a dialog: the root view puts
             // the sign-in screen back as soon as the state changes.
             if case .unauthorized = problem {
                 identity.signOut()
+            } else if case .transport = problem {
+                // Not shown. Being out of signal is a state, not an event: a phone in
+                // a basement would raise this every few seconds, and a dialog for each
+                // is an interruption on top of an app that is still usable.
+                offline = true
+                if !fresh { showWhatWeHave() }
             } else {
                 error = problem.localizedDescription
             }

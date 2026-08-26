@@ -37,6 +37,24 @@ struct DecodingTests {
         #expect(item.isDone, "a done_at means done")
     }
 
+    /// The identity a queued operation will name a row by. Two tests in one, because
+    /// the two halves fail differently: a server that sends it must be read, and a
+    /// server that predates it must not fail the decode -- there is nothing queued
+    /// against a row yet, so an absent uuid is a poorer row rather than a broken one.
+    @Test func aUuidIsReadWhenSentAndEmptyWhenNot() throws {
+        let withOne = """
+        { "id": 1, "uuid": "a1b2c3d4-e5f6-4789-a012-3456789abcde", "list_id": 1,
+          "name": "Bread", "amount": 1, "unit_id": null, "done_at": null,
+          "created_at": "2026-08-24T18:03:11Z" }
+        """
+
+        let named = try Self.decoder().decode(Item.self, from: Data(withOne.utf8))
+        let unnamed = try Self.decoder().decode(Item.self, from: Data(Self.itemJSON.utf8))
+
+        #expect(named.uuid == "a1b2c3d4-e5f6-4789-a012-3456789abcde")
+        #expect(unnamed.uuid == "")
+    }
+
     /// The nullable columns are the ones that go wrong: an outstanding item has no
     /// done_at, and an unmeasured one has no unit.
     @Test func theNullsSurvive() throws {

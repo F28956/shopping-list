@@ -9,6 +9,8 @@ struct MacShoppingView: View {
     let api: API
     @Environment(Identity.self) private var identity
 
+    private let cache = Cache.shared
+
     @State private var lists: [List] = []
     @State private var truncated = false
     @State private var total: Int64 = 0
@@ -19,6 +21,9 @@ struct MacShoppingView: View {
     @State private var deleting: List?
     @State private var sharing: List?
     @State private var joining = false
+    /// See `ListsView.offline` on the phone: the same two flags, for the same reason.
+    @State private var offline = false
+    @State private var fresh = false
 
     private var selected: List? { lists.first { $0.id == chosen } }
 
@@ -27,6 +32,14 @@ struct MacShoppingView: View {
             Group {
                 if !loaded {
                     ProgressView()
+                } else if lists.isEmpty && offline && !fresh {
+                    // Before the empty state: with nothing cached and no connection,
+                    // "No lists" is an emptiness nobody has verified.
+                    ContentUnavailableView(
+                        "Can't reach the server",
+                        systemImage: "icloud.slash",
+                        description: Text("Your lists will appear as soon as there is a connection.")
+                    )
                 } else if lists.isEmpty {
                     ContentUnavailableView(
                         "No lists",
@@ -35,6 +48,10 @@ struct MacShoppingView: View {
                     )
                 } else {
                     SwiftUI.List(selection: $chosen) {
+                        if offline {
+                            OfflineNote()
+                        }
+
                         ForEach(lists) { list in
                             HStack {
                                 Text(list.name)
@@ -110,7 +127,11 @@ struct MacShoppingView: View {
                 .accessibilityIdentifier("list.join")
             }
             ToolbarItem(placement: .primaryAction) {
-                Button("Sign out") { identity.signOut() }
+                Button("Sign out") {
+                    // See the phone: cached shopping belongs to whoever signed in.
+                    cache.forgetEverything()
+                    identity.signOut()
+                }
             }
         }
         .sheet(item: $sharing) { list in
@@ -162,7 +183,10 @@ struct MacShoppingView: View {
         } message: { _ in
             Text("Everything on it goes too. This cannot be undone.")
         }
-        .task { await load() }
+        .task {
+            showWhatWeHave()
+            await load()
+        }
         .task { await watchLists() }
         .alert("Could not load", isPresented: .constant(error != nil)) {
             Button("OK") { error = nil }
@@ -214,9 +238,22 @@ struct MacShoppingView: View {
         }
     }
 
+    /// Puts the last-loaded lists up before asking the server anything -- see the
+    /// phone's `ListsView.showWhatWeHave`.
+    private func showWhatWeHave() {
+        guard !fresh else { return }
+        let remembered = cache.lists()
+        guard !remembered.isEmpty else { return }
+        lists = remembered
+        total = Int64(remembered.count)
+        if chosen == nil { chosen = remembered.first?.id }
+        loaded = true
+    }
+
     private func load() async {
         do {
             let listing = try await api.lists()
+            cache.remember(lists: listing.items)
             lists = listing.items
             total = listing.total
             truncated = listing.truncated
@@ -227,9 +264,15 @@ struct MacShoppingView: View {
                 chosen = lists.first?.id
             }
             error = nil
+            offline = false
+            fresh = true
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()
+            } else if case .transport = problem {
+                // No signal is a state, not an event -- see the phone's ListsView.
+                offline = true
+                if !fresh { showWhatWeHave() }
             } else {
                 error = problem.localizedDescription
             }

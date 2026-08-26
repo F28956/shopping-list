@@ -11,6 +11,8 @@ struct MacItemsView: View {
     let list: List
     @Environment(Identity.self) private var identity
 
+    private let cache = Cache.shared
+
     @State private var items: [Item] = []
     @State private var units: [Unit] = []
     @State private var tags: [Tag] = []
@@ -22,6 +24,10 @@ struct MacItemsView: View {
     @State private var confirmingClear = false
     @State private var ordering = false
     @State private var error: String?
+    /// See `ListsView.offline` on the phone.
+    @State private var offline = false
+    @State private var fresh = false
+    @State private var loaded = false
     @FocusState private var typing: Bool
 
     struct Editing: Identifiable {
@@ -58,7 +64,16 @@ struct MacItemsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if outstanding.isEmpty {
+            if offline {
+                OfflineNote()
+            }
+
+            // "Nothing on this list yet" is a claim, and with nothing cached and no
+            // connection it is a claim nobody has checked.
+            if items.isEmpty && loaded && offline && !fresh {
+                Text("Can't reach the server. This list will appear as soon as there is a connection.")
+                    .foregroundStyle(.secondary)
+            } else if outstanding.isEmpty {
                 Text(items.isEmpty ? "Nothing on this list yet." : "All done.")
                     .foregroundStyle(.secondary)
             }
@@ -114,7 +129,10 @@ struct MacItemsView: View {
             }
         }
         .task { await loadReference() }
-        .task { await load() }
+        .task {
+            showWhatWeHave()
+            await load()
+        }
         .task { await watch() }
         .sheet(item: $editing) { target in
             MacItemEditor(
@@ -402,25 +420,52 @@ struct MacItemsView: View {
         do {
             async let units = api.units()
             async let tags = api.tags(orderedFor: list)
-            (self.units, self.tags) = try await (units, tags)
+            let (fetchedUnits, fetchedTags) = try await (units, tags)
+            cache.remember(units: fetchedUnits)
+            cache.remember(tags: fetchedTags, on: list)
+            (self.units, self.tags) = (fetchedUnits, fetchedTags)
         } catch {}
+    }
+
+    /// Puts the list up as it was last seen -- see the phone's copy.
+    private func showWhatWeHave() {
+        guard !fresh else { return }
+
+        let rememberedUnits = cache.units()
+        let rememberedTags = cache.tags(on: list)
+        if !rememberedUnits.isEmpty { units = rememberedUnits }
+        if !rememberedTags.isEmpty { tags = rememberedTags }
+
+        let remembered = cache.items(on: list)
+        guard !remembered.isEmpty else { return }
+        items = remembered
+        total = Int64(remembered.count)
+        loaded = true
     }
 
     private func load() async {
         do {
             let listing = try await api.items(on: list)
+            cache.remember(items: listing.items, on: list)
             self.items = listing.items
             self.total = listing.total
             self.truncated = listing.truncated
             error = nil
+            offline = false
+            fresh = true
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()
+            } else if case .transport = problem {
+                // No signal is a state, not an event -- see the phone's ItemsView.
+                offline = true
+                if !fresh { showWhatWeHave() }
             } else {
                 error = problem.localizedDescription
             }
         } catch {
             self.error = error.localizedDescription
         }
+        loaded = true
     }
 }
