@@ -122,7 +122,13 @@ struct ItemsView: View {
             }
         }
         .sheet(isPresented: $ordering) {
-            TagOrderSheet(list: list, tags: tags) { chosen in
+            TagOrderSheet(
+                list: list,
+                tags: tags,
+                // What the list's items actually carry, so the sheet can say which
+                // of twenty-one names are the ones that would change anything.
+                inUse: Set(items.flatMap(\.tagIDs))
+            ) { chosen in
                 await attempt { try await api.setTagOrder(chosen, on: list) }
                 await loadReference()
             }

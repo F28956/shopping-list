@@ -18,6 +18,15 @@ final class ShoppingUITests: XCTestCase {
         return app
     }
 
+    /// A row in the tag order sheet.
+    ///
+    /// By identifier rather than by element type: each row is collapsed into a single
+    /// accessibility element with its own label, so it is not a static text any more
+    /// and asking for one finds nothing.
+    private func orderRow(_ app: XCUIApplication, _ name: String) -> XCUIElement {
+        app.descendants(matching: .any)["order.\(name)"].firstMatch
+    }
+
     /// A short wait, because every one of these is waiting on the same thing: a
     /// request that has already been answered in memory.
     private func expect(_ element: XCUIElement, _ message: String = "") {
@@ -383,12 +392,12 @@ final class ShoppingUITests: XCTestCase {
         )
 
         app.buttons["order.open"].click()
-        expect(app.staticTexts["order.produce"], "the tag order sheet did not open")
+        expect(orderRow(app, "produce"), "the tag order sheet did not open")
 
         // Dairy to the front, by dragging it above the first row.
-        app.staticTexts["order.dairy"].click(
+        orderRow(app, "dairy").click(
             forDuration: 0.4,
-            thenDragTo: app.staticTexts["order.produce"]
+            thenDragTo: orderRow(app, "produce")
         )
         app.buttons["order.save"].click()
 
@@ -403,16 +412,38 @@ final class ShoppingUITests: XCTestCase {
         )
     }
 
+    /// The sheet says which tags are actually on the list.
+    ///
+    /// Twenty-one names, and only some of them change anything: moving one that
+    /// nothing is filed under looks exactly like the feature not working. `bakery`
+    /// and `baking` sit rows apart and read the same at a glance.
+    func testTheOrderSheetSaysWhichTagsAreOnTheList() {
+        let app = launch()
+        expect(app.buttons["item.Apples"])
+
+        app.buttons["order.open"].click()
+        expect(orderRow(app, "dairy"))
+
+        XCTAssertTrue(
+            orderRow(app, "dairy").label.contains("on this list"),
+            "dairy is on Milk and was not marked: \(orderRow(app, "dairy").label)"
+        )
+        XCTAssertFalse(
+            orderRow(app, "frozen").label.contains("on this list"),
+            "frozen is on nothing and was marked anyway"
+        )
+    }
+
     /// Reset puts the list back on the order a shop is walked in.
     func testResettingTheTagOrder() {
         let app = launch()
         expect(app.buttons["item.Apples"])
 
         app.buttons["order.open"].click()
-        expect(app.staticTexts["order.dairy"])
-        app.staticTexts["order.dairy"].click(
+        expect(orderRow(app, "dairy"))
+        orderRow(app, "dairy").click(
             forDuration: 0.4,
-            thenDragTo: app.staticTexts["order.produce"]
+            thenDragTo: orderRow(app, "produce")
         )
         app.buttons["order.save"].click()
 
@@ -445,10 +476,10 @@ final class ShoppingUITests: XCTestCase {
         let before = app.buttons["item.Apples"].frame.minY
 
         app.buttons["order.open"].click()
-        expect(app.staticTexts["order.dairy"])
-        app.staticTexts["order.dairy"].click(
+        expect(orderRow(app, "dairy"))
+        orderRow(app, "dairy").click(
             forDuration: 0.4,
-            thenDragTo: app.staticTexts["order.produce"]
+            thenDragTo: orderRow(app, "produce")
         )
         app.buttons["order.cancel"].click()
 

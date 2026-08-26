@@ -50,6 +50,9 @@
             (20, "fruits", 20, "🍎"),
             (30, "bakery", 30, nil),
             (40, "dairy", 40, nil),
+            // On nothing, deliberately: a tag in the order that no item carries is
+            // the case that reads as the ordering being broken.
+            (50, "frozen", 110, "🧊"),
         ]
 
         func reset(scenario: String) {
