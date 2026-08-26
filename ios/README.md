@@ -108,3 +108,28 @@ xcrun simctl launch <watch-udid> com.cernauskas.shoppinglist.watchkitapp
 ```
 
 Sign in on the paired phone first, or the watch has nothing to ask.
+
+## The Mac app
+
+`ShoppingListMac` is a native macOS app, not Mac Catalyst. What it needs is a split
+view, a context menu and an add field pinned under the list — none of which a
+stretched phone layout gives you. Everything below the views is shared byte for byte:
+`Shared/Sources` (models, API client, grouping, draft rules) and `Auth/Sources`
+(the Google identity, whose only platform difference is that the sign-in sheet hangs
+off an `NSWindow` instead of a `UIViewController`).
+
+It carries **the same bundle id as the phone app**, deliberately. Google's iOS OAuth
+client type covers macOS and is registered against `com.cernauskas.shoppinglist`; a
+separate identifier would need a separate client, for the same person and the same
+account.
+
+```sh
+xcodegen generate
+xcodebuild -project ShoppingList.xcodeproj -scheme ShoppingListMac \
+    -destination 'platform=macOS' -derivedDataPath /tmp/ddmac build
+open /tmp/ddmac/Build/Products/Debug/ShoppingListMac.app
+```
+
+It is not sandboxed. This is a personal app, built locally, talking to a server on
+localhost; sandboxing would mean an entitlements file and a keychain access group to
+hold a token the phone already has. Turn it on before it ever leaves this machine.

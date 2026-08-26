@@ -15,6 +15,7 @@ options:
   deploymentTarget:
     iOS: "17.0"
     watchOS: "10.0"
+    macOS: "14.0"
   createIntermediateGroups: true
 
 packages:
@@ -29,6 +30,7 @@ targets:
     sources:
       - path: ShoppingList/Sources
       - path: Shared/Sources
+      - path: Auth/Sources
     dependencies:
       - package: GoogleSignIn
         product: GoogleSignIn
@@ -95,6 +97,46 @@ targets:
         TARGETED_DEVICE_FAMILY: "4"
         GENERATE_INFOPLIST_FILE: "NO"
 
+  # The Mac app is its own target rather than Catalyst: the screens it needs are a
+  # split view, a context menu and a pinned add field, none of which a stretched
+  # phone layout gives you. What it shares is everything below the views --
+  # Shared/Sources and Auth/Sources, byte for byte.
+  ShoppingListMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: Mac/Sources
+      - path: Shared/Sources
+      - path: Auth/Sources
+    dependencies:
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: GoogleSignIn
+        product: GoogleSignInSwift
+    info:
+      path: Mac/Info.plist
+      properties:
+        CFBundleDisplayName: Shopping
+        ShoppingListAPIBaseURL: $(SHOPPING_LIST_API_BASE_URL)
+        GIDClientID: $(GOOGLE_IOS_CLIENT_ID)
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - $(GOOGLE_IOS_REVERSED_CLIENT_ID)
+    settings:
+      base:
+        # The same identifier as the phone app, deliberately. Google's iOS OAuth
+        # client covers macOS, and it is registered against this bundle id -- a
+        # separate one would need a separate client, for the same person and the
+        # same account.
+        PRODUCT_BUNDLE_IDENTIFIER: com.cernauskas.shoppinglist
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        # Not sandboxed. This is a personal app run from a local build against a
+        # server on localhost; sandboxing it would mean an entitlements file and a
+        # keychain group to hold a token that is already the phone's.
+        ENABLE_HARDENED_RUNTIME: "NO"
+
   ShoppingListTests:
     type: bundle.unit-test
     platform: iOS
@@ -108,6 +150,10 @@ targets:
         GENERATE_INFOPLIST_FILE: "YES"
 
 schemes:
+  ShoppingListMac:
+    build:
+      targets:
+        ShoppingListMac: all
   ShoppingList:
     build:
       targets:

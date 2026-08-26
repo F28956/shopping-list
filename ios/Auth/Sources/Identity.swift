@@ -1,12 +1,28 @@
 import Foundation
 import GoogleSignIn
 
+#if canImport(UIKit)
+    import UIKit
+
+    /// What the sign-in sheet is presented from. A view controller on a phone, a
+    /// window on a Mac — the flow either side of it is identical, which is why this
+    /// file is shared rather than written twice.
+    typealias SignInHost = UIViewController
+#elseif canImport(AppKit)
+    import AppKit
+
+    typealias SignInHost = NSWindow
+#endif
+
 /// Who is signed in, and the token to prove it.
 ///
 /// The Google SDK holds the credential and refreshes it; this type is the thin part
 /// that the rest of the app talks to. Refresh matters more here than in the browser:
 /// a Google ID token lasts about an hour, and nobody is going to sign in again in the
 /// middle of a shop.
+///
+/// Shared by the phone and the Mac. Not by the watch, which cannot sign in at all and
+/// does not link the Google SDK — see `WatchIdentity`.
 @MainActor
 @Observable
 final class Identity {
@@ -47,7 +63,7 @@ final class Identity {
         }
     }
 
-    func signIn(presenting: UIViewController) async {
+    func signIn(presenting: SignInHost) async {
         guard isConfigured else {
             lastError = "This build has no Google client id — see ios/README.md."
             return
