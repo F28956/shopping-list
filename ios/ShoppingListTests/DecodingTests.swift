@@ -108,6 +108,27 @@ struct MeasureTests {
 
     private let units: [Int64: String] = [19: "kg", 4: "pint"]
 
+    /// A unit is never hidden, including the one that means "counted".
+    ///
+    /// It used to print as nothing, on the grounds that it says nothing a number does
+    /// not. It says one thing that matters: that the row has a unit at all — a row
+    /// showing nothing was indistinguishable from one that had lost its unit.
+    @Test func theCountedUnitIsShownLikeAnyOther() {
+        let counted: [Int64: String] = [1: "unit", 19: "kg"]
+
+        #expect(item(amount: 1, unit: 1).measure(units: counted) == "1 unit")
+        #expect(item(amount: 6, unit: 1).measure(units: counted) == "6 unit")
+        #expect(item(amount: 1, unit: 19).measure(units: counted) == "1 kg")
+    }
+
+    /// A row with no unit at all still prints nothing at one. Nothing adds such a row
+    /// any more — every item is given `unit` if it is given nothing else — so this is
+    /// about rows that predate the rule.
+    @Test func aRowWithNoUnitAtAllIsStillQuietAtOne() {
+        #expect(item(amount: 1, unit: nil).measure(units: [1: "unit"]) == nil)
+        #expect(item(amount: 6, unit: nil).measure(units: [1: "unit"]) == "6")
+    }
+
     /// One of something unmeasured says nothing, because "1" is not information.
     @Test func oneOfSomethingUnmeasuredShowsNothing() {
         #expect(item(amount: 1, unit: nil).measure(units: units) == nil)

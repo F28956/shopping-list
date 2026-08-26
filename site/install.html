@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install — Shopping List</title>
+<meta name="description" content="Where to get Shopping List, how to start the server, and how to point the apps at it.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="wrap masthead">
+  <a href="index.html"><img class="masthead-mark" src="icon.svg" alt="Shopping List home" width="38" height="38"></a>
+  <p class="masthead-name">Shopping&nbsp;List</p>
+  <nav class="masthead-nav" aria-label="Site">
+    <a href="install.html">Install</a>
+    <a href="support.html">Support</a>
+    <a href="privacy.html">Privacy</a>
+  </nav>
+</header>
+
+<main id="main" class="doc">
+<div class="wrap doc-wrap">
+
+<h1 class="doc-title">Install</h1>
+<p class="doc-meta">Two halves: a server you run, and an app that points at it</p>
+
+<div class="callout">
+<p><strong>Nothing is published yet.</strong> Every download below is marked coming
+soon, and the instructions describe what installing will look like when they are
+ready. The setup steps and settings are real — they are what the server reads
+today.</p>
+</div>
+
+<h2>Downloads</h2>
+
+<ul class="downloads">
+  <li class="download">
+    <span class="download-name">App Store</span>
+    <span class="pill">Coming soon</span>
+    <span class="download-for">iPhone, iPad, Mac and Apple Watch</span>
+  </li>
+  <li class="download">
+    <span class="download-name">Google Play</span>
+    <span class="pill">Coming soon</span>
+    <span class="download-for">Android phones and tablets</span>
+  </li>
+  <li class="download">
+    <span class="download-name">Server</span>
+    <span class="pill">Coming soon</span>
+    <span class="download-for">A single binary for macOS and Linux</span>
+  </li>
+  <li class="download">
+    <span class="download-name">Source</span>
+    <span class="pill">Coming soon</span>
+    <span class="download-for">Build it yourself with a Rust toolchain</span>
+  </li>
+</ul>
+
+<p>You need the server before the apps are any use to you. If somebody else is running
+one and has invited you, skip to <a href="#connect">connecting an app</a>.</p>
+
+<h2>Setting up the server</h2>
+
+<ol class="steps">
+  <li class="step">
+    <span class="step-mark">01</span>
+    <div>
+      <p class="step-title">Make a Google sign-in client</p>
+      <p class="step-body">Sign-in is Google's, so there is no password for this server
+        to store or lose. In the
+        <a href="https://console.cloud.google.com/apis/credentials" rel="noopener">Google
+        Cloud console</a>, create an OAuth client of type <strong>Web
+        application</strong>. Add <code>https://your-address/auth/callback</code> as an
+        authorised redirect URI. Keep the client id and secret.</p>
+    </div>
+  </li>
+
+  <li class="step">
+    <span class="step-mark">02</span>
+    <div>
+      <p class="step-title">Put the binary where it will live</p>
+      <p class="step-body">One executable and one SQLite file beside it. It serves the
+        browser, the phone apps and the watch from the same process, so there is nothing
+        else to install — no database server, no reverse proxy required, no runtime.</p>
+    </div>
+  </li>
+
+  <li class="step">
+    <span class="step-mark">03</span>
+    <div>
+      <p class="step-title">Write the settings file</p>
+      <p class="step-body">A file called <code>.env</code> next to the binary. The
+        minimum is a database path, a Google client, and who may sign in.</p>
+    </div>
+  </li>
+
+  <li class="step">
+    <span class="step-mark">04</span>
+    <div>
+      <p class="step-title">Start it</p>
+      <p class="step-body">It listens on port 8080 and prints the address a phone on
+        the same network can reach it at. If the database path is wrong it refuses to
+        start rather than quietly serving an empty list.</p>
+    </div>
+  </li>
+
+  <li class="step">
+    <span class="step-mark">05</span>
+    <div>
+      <p class="step-title">Open it and sign in</p>
+      <p class="step-body">Visit the address in a browser and sign in with Google. That
+        is the whole setup — you now have a list.</p>
+    </div>
+  </li>
+</ol>
+
+<h3>The settings file</h3>
+
+<pre class="code"><span class="comment"># The Google client from step 01.</span>
+GOOGLE_CLIENT_ID="000000000000-xxxxxxxx.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET="GOCSPX-xxxxxxxxxxxxxxxxxxxxxxx"
+
+<span class="comment"># An absolute path, and mind the three slashes.</span>
+DATABASE_URL="sqlite:///var/lib/shopping-list/data.db"
+
+<span class="comment"># The address this is served from. Changes that claim to come from
+# anywhere else are refused.</span>
+PUBLIC_ORIGIN="https://lists.example.com"
+
+<span class="comment"># Who may sign in. Comma-separated, or "*" to admit anyone.</span>
+ALLOWED_EMAILS="you@example.com,someone@example.com"</pre>
+
+<h3>Starting it</h3>
+
+<pre class="code">./shopping-list-server
+
+<span class="comment">  INFO listening on 0.0.0.0:8080
+  INFO reachable from this network at http://192.168.1.24:8080
+  INFO sign-in restricted admitted=2</span></pre>
+
+<h2>Every setting</h2>
+
+<div class="table-scroll">
+<table class="settings">
+  <thead>
+    <tr><th scope="col">Name</th><th scope="col">Needed</th><th scope="col">What it is</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>DATABASE_URL</td><td>required</td>
+      <td>Absolute path to the SQLite file, as <code>sqlite:///…</code>. The server will
+        not create a missing database — a wrong path fails loudly instead of serving an
+        empty one.</td>
+    </tr>
+    <tr>
+      <td>ALLOWED_EMAILS</td><td>required</td>
+      <td>The addresses allowed to sign in, comma-separated, or <code>*</code> to admit
+        anybody. There is no default: leaving it out looks exactly like meaning
+        &ldquo;anyone&rdquo;, so the server refuses to start instead.</td>
+    </tr>
+    <tr>
+      <td>GOOGLE_CLIENT_ID</td><td>required</td>
+      <td>The web client from step 01.</td>
+    </tr>
+    <tr>
+      <td>GOOGLE_CLIENT_SECRET</td><td>required</td>
+      <td>Its secret. Used for the browser sign-in flow only.</td>
+    </tr>
+    <tr>
+      <td>PUBLIC_ORIGIN</td><td>recommended</td>
+      <td>The address this server is served from. Defaults to
+        <code>http://localhost:8080</code>. Share links are built from it, and
+        state-changing requests that say they came from elsewhere are refused.</td>
+    </tr>
+    <tr>
+      <td>REDIRECT_URI</td><td>optional</td>
+      <td>Where Google sends the browser back to. Defaults to
+        <code>http://localhost:8080/auth/callback</code>; set it to match your own
+        address.</td>
+    </tr>
+    <tr>
+      <td>SESSION_INSECURE</td><td>optional</td>
+      <td>Set to <code>true</code> only for a local run over plain
+        <code>http://</code>. Anything reachable from outside must not have it — the
+        session cookie is marked <code>Secure</code> unless this says otherwise.</td>
+    </tr>
+    <tr>
+      <td>GOOGLE_IOS_CLIENT_ID</td><td>optional</td>
+      <td>The iPhone app's own client id, if you build the iOS app yourself. One
+        provider issues a different client id per platform, so the phone's tokens carry
+        a different audience from the browser's.</td>
+    </tr>
+    <tr>
+      <td>GOOGLE_ANDROID_CLIENT_ID</td><td>optional</td>
+      <td>Normally nothing. Android is given the web client id above and its tokens come
+        back addressed to that. Set this only if one turns up addressed elsewhere.</td>
+    </tr>
+    <tr>
+      <td>RUST_LOG</td><td>optional</td>
+      <td>How much the server says. Defaults to something readable.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="connect">Connecting an app</h2>
+
+<p>Install the app, open it, and it asks for the server address before anything else —
+something like <code>https://lists.example.com</code>. Enter it, sign in with Google,
+and you are on the list.</p>
+
+<p>The address is kept in the app's settings and can be changed later under
+<strong>Settings &rarr; Server</strong>. Changing it signs you out and clears the lists
+held on the device, because those belong to the old server.</p>
+
+<h3>Things that catch people out</h3>
+
+<ul>
+  <li><strong><code>localhost</code> on a phone means the phone.</strong> Use the
+    address the server prints at startup, and make sure the phone is on the same
+    network.</li>
+  <li><strong>Android refuses plain <code>http://</code>.</strong> A server reachable
+    from outside your home should be served over <code>https://</code> anyway.</li>
+  <li><strong>&ldquo;This account may not use this server&rdquo;</strong> means sign-in
+    worked and the address is not admitted. Add it to the server's list and try
+    again.</li>
+  <li><strong>The watch is set up by the phone.</strong> Open the app on the paired
+    iPhone once; the watch takes the address and the sign-in from there.</li>
+</ul>
+
+<h2>Putting it on the internet</h2>
+
+<p>Everything above works on a home network as it stands. Reaching it from outside means
+a name, a certificate and a way in — a reverse proxy in front of port 8080 is the usual
+answer. The server does not serve HTTPS itself.</p>
+
+<p>Do that before you hand the address to anybody: the token in every request is a
+bearer credential, and on plain HTTP it travels in the clear.</p>
+
+</div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-grid">
+    <p class="footer-note">Shopping List · self-hosted</p>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="index.html">Home</a>
+      <a href="install.html">Install</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="support.html">Support</a>
+      <!-- Replace with the repository address once it has one. -->
+      <a href="#">Source</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

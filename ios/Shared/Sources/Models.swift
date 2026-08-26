@@ -244,15 +244,20 @@ extension Item {
     /// "1" on most rows is noise dressed as information — the same rule the web UI
     /// follows, so the two do not disagree about what a row says.
     func measure(units: [Int64: String]) -> String? {
-        // `unit` is the unit that means "counted, not measured", and it is what an
-        // item added without one is given. It says nothing a number does not, so it
-        // prints as nothing: six eggs, not "6 unit".
-        let unit = unitID.flatMap { units[$0] }.flatMap { $0 == "unit" ? nil : $0 }
+        // A unit is never hidden. `unit` — the one that means counted rather than
+        // measured — used to print as nothing, on the grounds that it says nothing a
+        // number does not. It turned out to say one thing that matters: that the row
+        // has a unit at all. A row showing nothing was indistinguishable from a row
+        // that had lost one, and the only way to tell was to look in the database.
+        let unit = unitID.flatMap { units[$0] }
         // Through `asAmount` rather than repeating its rule: this had its own copy,
         // without the guard that keeps `Int(_:)` from trapping on a value off the
         // end of the number line.
         let quantity = amount.asAmount
 
+        // Nothing at all is left for the rows that genuinely have no unit: those
+        // predate the rule that gives every item one, and one of something unmeasured
+        // is still a row where "1" would be noise dressed as information.
         switch (amount, unit) {
         case (1, nil): return nil
         case (_, nil): return quantity

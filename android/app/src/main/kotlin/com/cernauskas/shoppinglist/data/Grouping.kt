@@ -46,15 +46,19 @@ fun Double.asAmount(): String =
 /**
  * How much of it, or nothing at all.
  *
- * One of something unmeasured is the default and the commonest case, so printing "1"
- * on most rows is noise dressed as information — the same rule every other client
- * follows, so they do not disagree about what a row says.
+ * A unit is never hidden. `unit` — the one that means counted rather than measured —
+ * used to print as nothing, on the grounds that it says nothing a number does not. It
+ * turned out to say one thing that matters: that the row has a unit at all. A row
+ * showing nothing was indistinguishable from a row that had lost one, and the only way
+ * to tell was to look in the database.
+ *
+ * Nothing at all is left for the rows that genuinely have no unit: those predate the
+ * rule that gives every item one, and one of something unmeasured is still a row where
+ * "1" would be noise dressed as information. The same rule every other client follows,
+ * so they do not disagree about what a row says.
  */
 fun Item.measure(units: Map<Long, String>): String? {
-    // `unit` is the unit that means "counted, not measured", and it is what an item
-    // added without one is given. It says nothing a number does not, so it prints as
-    // nothing: six eggs, not "6 unit".
-    val unit = unitId?.let { units[it] }?.takeIf { it != "unit" }
+    val unit = unitId?.let { units[it] }
 
     return when {
         amount == 1.0 && unit == null -> null

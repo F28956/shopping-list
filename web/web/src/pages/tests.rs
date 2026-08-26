@@ -1201,11 +1201,11 @@ async fn choosing_a_tag_adds_it(
 #[rstest]
 // Names come back capitalised: that happens where they are stored, so every client
 // shows the same spelling rather than each deciding for itself.
-#[case::just_a_name("line=Milk", "Milk", None)]
+#[case::just_a_name("line=Milk", "Milk", Some("1 unit"))]
 #[case::amount_and_unit("line=2+kg+apples", "Apples", Some("2 kg"))]
 #[case::no_space("line=500g+flour", "Flour", Some("500 g"))]
-#[case::bare_amount("line=6+eggs", "Eggs", Some("6"))]
-#[case::spelled_deliberately("line=iPhone+charger", "iPhone charger", None)]
+#[case::bare_amount("line=6+eggs", "Eggs", Some("6 unit"))]
+#[case::spelled_deliberately("line=iPhone+charger", "iPhone charger", Some("1 unit"))]
 #[tokio::test]
 async fn quick_add_reads_the_line(
     #[with(fixtures::UNITS)]
@@ -1238,10 +1238,12 @@ async fn quick_add_reads_the_line(
             body.contains(&format!("class=\"amount\">{m}<")),
             "{form} should show {m}: {body}"
         ),
-        // One of something unmeasured prints nothing, because "1" is not information.
+        // Only a row with no unit at all, which nothing adds any more -- every item
+        // gets `unit` if it is given nothing else. Kept so the arm exists if a row
+        // from before that rule turns up.
         None => assert!(
             !body.contains("class=\"amount\""),
-            "a plain item printed an amount: {body}"
+            "a row with no unit printed an amount: {body}"
         ),
     }
 }

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy — Shopping List</title>
+<meta name="description" content="What Shopping List stores, where it stores it, and who is responsible for it.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="wrap masthead">
+  <a href="index.html"><img class="masthead-mark" src="icon.svg" alt="Shopping List home" width="38" height="38"></a>
+  <p class="masthead-name">Shopping&nbsp;List</p>
+  <nav class="masthead-nav" aria-label="Site">
+    <a href="install.html">Install</a>
+    <a href="support.html">Support</a>
+    <a href="privacy.html">Privacy</a>
+  </nav>
+</header>
+
+<main id="main" class="doc">
+<div class="wrap doc-wrap">
+
+<h1 class="doc-title">Privacy</h1>
+<p class="doc-meta">Last updated 26 August 2026</p>
+
+<p>Shopping List is software you run, not a service we operate. That single fact
+decides almost everything below.</p>
+
+<div class="callout">
+<p><strong>The short version.</strong> The apps talk to one server: the one whose
+address you typed in. Nothing is sent to the makers of this app, there is no
+analytics of any kind, and this website makes no third-party requests and sets no
+cookies.</p>
+</div>
+
+<h2>Who is responsible for your data</h2>
+
+<p>Your lists live on a server that somebody runs. Under UK and EU data protection
+law that person is the <strong>controller</strong> of everything on it.</p>
+
+<ul>
+  <li><strong>If you run the server</strong>, you are the controller. The data is in a
+    single SQLite file on your machine, and nobody else — including us — can reach it.</li>
+  <li><strong>If somebody invited you onto their server</strong>, they are the
+    controller. Ask them about retention, deletion and backups; those are their
+    decisions to make, not ours.</li>
+</ul>
+
+<p>We publish the apps. We do not operate a server, receive a copy of your data, or
+hold keys to anybody else's.</p>
+
+<h2>What the apps send, and where</h2>
+
+<p>Each app asks for a server address the first time it opens and stores it in the
+app's settings, where you can change it later. All requests go to that address and
+nowhere else. There is no fallback server, no telemetry endpoint and no
+&ldquo;phone home&rdquo; on launch.</p>
+
+<h2>Signing in</h2>
+
+<p>Sign-in uses <strong>Google Sign-In</strong>. Google verifies who you are and issues a
+token that the app passes to your server; the app never sees or stores a password. Your
+use of Google Sign-In is covered by
+<a href="https://policies.google.com/privacy" rel="noopener">Google's privacy policy</a>.</p>
+
+<p>From that token the server records the Google account identifier, and your email
+address and display name where Google supplies them. The email address is what a server
+operator uses to decide who may sign in.</p>
+
+<h2>What the server stores</h2>
+
+<ul>
+  <li>Your lists, the items on them, their amounts, units and categories</li>
+  <li>Notes you attach to a list</li>
+  <li>A private history of what you have bought before, which is what makes suggestions
+    work. History is per person: two people sharing a list do not merge habits.</li>
+  <li>Share invitations, stored only as a hash of the link, never the link itself</li>
+  <li>Browser sessions, if you use the web interface</li>
+</ul>
+
+<p>All of it is in the server's database file. Its retention and backup are the
+operator's business.</p>
+
+<h2>What stays on your device</h2>
+
+<ul>
+  <li>The server address you entered</li>
+  <li>Your sign-in credential, held by the operating system's keychain or credential
+    manager — not by this app</li>
+  <li>A copy of the lists and items you last loaded, so the app still shows them with no
+    connection</li>
+</ul>
+
+<p>Signing out or changing the server address clears the cached copy.</p>
+
+<h2>What we do not do</h2>
+
+<ul>
+  <li>No analytics, no usage tracking, no crash reporting</li>
+  <li>No advertising, and no advertising identifiers</li>
+  <li>No selling or sharing of personal data, and nothing that would count as
+    &ldquo;sharing&rdquo; for targeted advertising under any privacy law</li>
+  <li>No third-party SDK other than Google Sign-In</li>
+</ul>
+
+<h2>This website</h2>
+
+<p>These pages are static files. No cookies are set, no analytics run, and nothing is
+loaded from another domain — the type you are reading is the one already on your
+device.</p>
+
+<h2>Your rights</h2>
+
+<p>You have the right to ask for a copy of your data, to have it corrected, and to have
+it deleted. Because the data sits on somebody's own server, those requests go to whoever
+runs it. Closing an account removes that person's lists, items, notes and history along
+with it.</p>
+
+<p>If you run the server yourself, you can act on all of this directly: the database is
+one file, and you own the machine it is on.</p>
+
+<h2>Children</h2>
+
+<p>The app is not directed at children and collects nothing beyond what is described
+above from anybody.</p>
+
+<h2>Changes</h2>
+
+<p>If this policy changes, the date at the top changes with it.</p>
+
+<h2>Contact</h2>
+
+<!-- Fill in the address you want to publish before the site goes live. -->
+<p>Questions about the app itself: <strong>[contact address]</strong>.</p>
+
+<p>Questions about the data on a particular server go to whoever runs that server.</p>
+
+</div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-grid">
+    <p class="footer-note">Shopping List · self-hosted</p>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="index.html">Home</a>
+      <a href="install.html">Install</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="support.html">Support</a>
+      <!-- Replace with the repository address once it has one. -->
+      <a href="#">Source</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>
