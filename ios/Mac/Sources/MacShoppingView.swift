@@ -119,9 +119,6 @@ struct MacShoppingView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                StatusDot(waiting: queued, offline: offline)
-            }
-            ToolbarItem(placement: .navigation) {
                 Button {
                     naming = .create
                 } label: {
@@ -138,6 +135,14 @@ struct MacShoppingView: View {
                 }
                 .help("Join a list somebody shared with you")
                 .accessibilityIdentifier("list.join")
+            }
+            // Trailing, beside the account control, which is where macOS puts state
+            // rather than actions -- the leading side of a toolbar is for things you
+            // press, and this is a thing you read. One dot for the window, because a
+            // split view merges both halves' toolbars into one title bar and there is
+            // one connection and one queue behind them.
+            ToolbarItem(placement: .primaryAction) {
+                StatusDot(waiting: queued, offline: offline)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button("Sign out") {
