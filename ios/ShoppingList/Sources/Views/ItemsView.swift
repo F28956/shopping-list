@@ -339,6 +339,17 @@ struct ItemsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        // Never squeezed. At an accessibility text size a row can run
+                        // out of width entirely, and a Text with no floor of its own is
+                        // compressed until it wraps -- which for "1 pack" meant one
+                        // letter per line, reading down the side of the row.
+                        //
+                        // The order of surrender is now the same at every size: the
+                        // marks truncate first, then the name wraps, and the amount
+                        // keeps the width it needs. It is the shortest thing on the row
+                        // and the one nobody can guess from context.
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(1)
                 }
             }
             .contentShape(Rectangle())
