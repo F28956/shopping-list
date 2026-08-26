@@ -21,6 +21,7 @@ struct ItemsView: View {
     @State private var editing: Editing?
     @State private var confirmingClear = false
     @State private var ordering = false
+    @State private var sharing = false
     @State private var error: String?
     @State private var loaded = false
     @FocusState private var typing: Bool
@@ -114,6 +115,20 @@ struct ItemsView: View {
                 }
                 .accessibilityIdentifier("order.open")
             }
+            // Here as well as on the lists screen: this is where you are when you
+            // think "somebody else should be able to see this", and a swipe on a row
+            // two screens back is a control nobody finds.
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    sharing = true
+                } label: {
+                    Label("Share", systemImage: "person.badge.plus")
+                }
+                .accessibilityIdentifier("share.open")
+            }
+        }
+        .sheet(isPresented: $sharing) {
+            ShareSheet(list: list, api: api) {}
         }
         .sheet(isPresented: $ordering) {
             TagOrderSheet(

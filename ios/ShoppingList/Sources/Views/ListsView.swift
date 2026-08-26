@@ -2,8 +2,10 @@ import SwiftUI
 
 /// The lists this person can see — the ones they own and the ones shared with them.
 ///
-/// Read-only: making, renaming, deleting and sharing lists are things you do sitting
-/// down, and they are in the web UI. This is the screen you open in a shop.
+/// Making, renaming, deleting, sharing and joining all happen here now. Each is
+/// reachable two ways: a swipe for anyone who knows the gesture, and a long press for
+/// everyone else, because a swipe rewards only somebody who already guessed it was
+/// there.
 struct ListsView: View {
     let api: API
     @Environment(Identity.self) private var identity
@@ -40,6 +42,20 @@ struct ListsView: View {
                             }
                             // Renaming and deleting are the owner's. An editor was
                             // given a list, not the say over whether it exists.
+                            .contextMenu {
+                                Button("Share…", systemImage: "person.badge.plus") {
+                                    sharing = list
+                                }
+                                if list.role >= .owner {
+                                    Button("Rename…", systemImage: "pencil") {
+                                        naming = .rename(list)
+                                    }
+                                    Divider()
+                                    Button("Delete…", systemImage: "trash", role: .destructive) {
+                                        deleting = list
+                                    }
+                                }
+                            }
                             .swipeActions(edge: .leading) {
                                 Button {
                                     sharing = list
