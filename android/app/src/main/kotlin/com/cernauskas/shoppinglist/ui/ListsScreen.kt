@@ -102,35 +102,50 @@ fun ListsScreen(
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
 
+            // Before the empty state, and that order is the point: with nothing
+            // cached and no connection, this app used to say "No lists yet" -- an
+            // emptiness it had never verified. `fresh` is what keeps the real empty
+            // state reachable: once the server has said there are none, it has been
+            // verified, and losing signal afterwards does not unsay it.
+            state.lists.isEmpty() && state.offline && !state.fresh -> Unreachable(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                what = "Your lists",
+                onRetry = { model.load() },
+            )
+
             state.lists.isEmpty() -> Empty(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 onNew = { naming = Naming.Create },
                 onJoin = { joining = true },
             )
 
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(bottom = 88.dp),
-            ) {
-                items(state.lists, key = { it.id }) { list ->
-                    ListRow(
-                        list = list,
-                        onOpen = { onOpen(list) },
-                        onShare = { sharing = list },
-                        onRename = { naming = Naming.Rename(list) },
-                        onDelete = { deleting = list },
-                    )
-                    HorizontalDivider()
-                }
+            else -> Column(Modifier.fillMaxSize().padding(padding)) {
+                OfflineNote(state.offline)
 
-                if (state.truncated) {
-                    item {
-                        Text(
-                            "Showing ${state.lists.size} of ${state.total}.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(16.dp),
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 88.dp),
+                ) {
+                    items(state.lists, key = { it.id }) { list ->
+                        ListRow(
+                            list = list,
+                            onOpen = { onOpen(list) },
+                            onShare = { sharing = list },
+                            onRename = { naming = Naming.Rename(list) },
+                            onDelete = { deleting = list },
                         )
+                        HorizontalDivider()
+                    }
+
+                    if (state.truncated) {
+                        item {
+                            Text(
+                                "Showing ${state.lists.size} of ${state.total}.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(16.dp),
+                            )
+                        }
                     }
                 }
             }

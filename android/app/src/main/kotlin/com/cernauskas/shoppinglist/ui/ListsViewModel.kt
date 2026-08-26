@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.cernauskas.shoppinglist.data.Api
 import com.cernauskas.shoppinglist.data.ApiError
+import com.cernauskas.shoppinglist.data.Cache
 import com.cernauskas.shoppinglist.data.Person
 import com.cernauskas.shoppinglist.data.ShoppingList
 import kotlinx.coroutines.delay
@@ -20,13 +21,24 @@ import kotlinx.coroutines.launch
  * down and rebuilt for something as ordinary as a rotation, and state that lives in
  * the composition goes with it.
  */
-class ListsViewModel(private val api: Api, private val onSignedOut: () -> Unit) : ViewModel() {
+class ListsViewModel(
+    private val api: Api,
+    private val cache: Cache,
+    private val onSignedOut: () -> Unit,
+) : ViewModel() {
 
     data class State(
         val lists: List<ShoppingList> = emptyList(),
         val total: Long = 0,
         val truncated: Boolean = false,
         val loading: Boolean = true,
+        /** The server could not be reached last time we asked. Not an error and not
+         * worth interrupting anybody over -- but the difference between "you have no
+         * lists" and "I could not find out" has to reach the screen. */
+        val offline: Boolean = false,
+        /** Whether the server has ever answered this screen. What is shown while this
+         * is false came out of the cache, and may be old. */
+        val fresh: Boolean = false,
         val message: String? = null,
     )
 
@@ -34,8 +46,25 @@ class ListsViewModel(private val api: Api, private val onSignedOut: () -> Unit) 
     val state: StateFlow<State> = _state.asStateFlow()
 
     init {
+        showWhatWeHave()
         load()
         watch()
+    }
+
+    /**
+     * Puts the last-loaded lists up before asking the server anything.
+     *
+     * The screen is never blank while a request is in flight, and on a phone with no
+     * signal it is never blank at all. Guarded on [State.fresh] so a slow disk read
+     * cannot land after a fast server answer and put yesterday's lists back.
+     */
+    private fun showWhatWeHave() = viewModelScope.launch {
+        val remembered = cache.lists()
+        if (remembered.isEmpty()) return@launch
+        _state.update {
+            if (it.fresh) it
+            else it.copy(lists = remembered, total = remembered.size.toLong(), loading = false)
+        }
     }
 
     /**
@@ -62,12 +91,28 @@ class ListsViewModel(private val api: Api, private val onSignedOut: () -> Unit) 
     fun load() = viewModelScope.launch {
         try {
             val listing = api.lists()
+            cache.rememberLists(listing.items)
             _state.update {
                 it.copy(
                     lists = listing.items,
                     total = listing.total,
                     truncated = listing.truncated,
                     loading = false,
+                    offline = false,
+                    fresh = true,
+                )
+            }
+        } catch (e: ApiError.Transport) {
+            // Not reported. Being out of signal is a state, not an event: a phone in a
+            // basement would raise this every few seconds, and a message for each is
+            // noise on top of an app that is still perfectly usable.
+            val remembered = if (_state.value.lists.isEmpty()) cache.lists() else _state.value.lists
+            _state.update {
+                it.copy(
+                    lists = remembered,
+                    total = maxOf(it.total, remembered.size.toLong()),
+                    loading = false,
+                    offline = true,
                 )
             }
         } catch (e: ApiError) {

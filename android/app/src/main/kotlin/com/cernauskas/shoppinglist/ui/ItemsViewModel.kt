@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.cernauskas.shoppinglist.data.Api
 import com.cernauskas.shoppinglist.data.ApiError
+import com.cernauskas.shoppinglist.data.Cache
 import com.cernauskas.shoppinglist.data.Item
 import com.cernauskas.shoppinglist.data.ItemDraft
 import com.cernauskas.shoppinglist.data.ShoppingList
@@ -21,6 +22,7 @@ import kotlinx.coroutines.launch
 /** What is on one list. */
 class ItemsViewModel(
     private val api: Api,
+    private val cache: Cache,
     val list: ShoppingList,
     private val onSignedOut: () -> Unit,
 ) : ViewModel() {
@@ -36,6 +38,11 @@ class ItemsViewModel(
         val total: Long = 0,
         val truncated: Boolean = false,
         val loading: Boolean = true,
+        /** The server could not be reached last time we asked -- see
+         * [ListsViewModel.State.offline]. */
+        val offline: Boolean = false,
+        /** Whether the server has ever answered this screen. */
+        val fresh: Boolean = false,
         val message: String? = null,
     )
 
@@ -45,9 +52,36 @@ class ItemsViewModel(
     private var asking: Job? = null
 
     init {
+        showWhatWeHave()
         loadReference()
         load()
         watch()
+    }
+
+    /**
+     * Puts the list up as it was last seen, before asking anything.
+     *
+     * Reference data first and in the same breath: an item read out of the cache with
+     * no units and no tags is a bare name in no category, which is a worse answer than
+     * the one the shop actually needs.
+     */
+    private fun showWhatWeHave() = viewModelScope.launch {
+        val units = cache.units()
+        val tags = cache.tags(list)
+        val remembered = cache.items(list)
+        _state.update {
+            if (it.fresh) it
+            else it.copy(
+                unitList = units.ifEmpty { it.unitList },
+                units = if (units.isEmpty()) it.units else units.associate { u -> u.id to u.name },
+                tags = tags.ifEmpty { it.tags },
+                outstanding = if (remembered.isEmpty()) it.outstanding
+                    else inShopOrder(remembered.filter { item -> !item.isDone }, tags),
+                done = if (remembered.isEmpty()) it.done else remembered.filter { item -> item.isDone },
+                total = maxOf(it.total, remembered.size.toLong()),
+                loading = it.loading && remembered.isEmpty(),
+            )
+        }
     }
 
     /**
@@ -60,11 +94,14 @@ class ItemsViewModel(
     private fun loadReference() = viewModelScope.launch {
         try {
             val units = api.units()
+            val tags = api.tagsOrderedFor(list)
+            cache.rememberUnits(units)
+            cache.rememberTags(list, tags)
             _state.update {
                 it.copy(
                     unitList = units,
                     units = units.associate { unit -> unit.id to unit.name },
-                    tags = api.tagsOrderedFor(list),
+                    tags = tags,
                 )
             }
         } catch (_: ApiError) {
@@ -76,6 +113,7 @@ class ItemsViewModel(
     fun load() = viewModelScope.launch {
         try {
             val listing = api.items(list)
+            cache.rememberItems(list, listing.items)
             _state.update { current ->
                 current.copy(
                     outstanding = inShopOrder(listing.items.filter { !it.isDone }, current.tags),
@@ -83,8 +121,15 @@ class ItemsViewModel(
                     total = listing.total,
                     truncated = listing.truncated,
                     loading = false,
+                    offline = false,
+                    fresh = true,
                 )
             }
+        } catch (e: ApiError.Transport) {
+            // See ListsViewModel.load: no signal is a state, not an event. What is on
+            // screen stays there -- it is the last thing the server said, and saying
+            // nothing instead would be the emptiness this whole change is about.
+            _state.update { it.copy(loading = false, offline = true) }
         } catch (e: ApiError) {
             report(e)
             _state.update { it.copy(loading = false) }

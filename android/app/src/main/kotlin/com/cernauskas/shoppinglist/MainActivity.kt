@@ -18,6 +18,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.cernauskas.shoppinglist.data.Api
+import com.cernauskas.shoppinglist.data.Cache
 import com.cernauskas.shoppinglist.data.Identity
 import com.cernauskas.shoppinglist.data.ShoppingList
 import com.cernauskas.shoppinglist.ui.ItemsScreen
@@ -35,6 +36,7 @@ class MainActivity : ComponentActivity() {
 
         val identity = Identity(this)
         val api = Api(token = { identity.current() })
+        val cache = Cache(this)
 
         setContent {
             ShoppingTheme {
@@ -54,8 +56,12 @@ class MainActivity : ComponentActivity() {
 
                     is Identity.State.SignedIn -> Shopping(
                         api = api,
+                        cache = cache,
                         onSignedOut = {
                             identity.signOut()
+                            // What was cached belongs to whoever just signed out. The
+                            // next person to use this phone is a different person.
+                            scope.launch { cache.forgetEverything() }
                             state = Identity.State.SignedOut()
                         },
                     )
@@ -117,14 +123,14 @@ private fun SignIn(configured: Boolean, problem: String?, onSignIn: () -> Unit) 
 }
 
 @Composable
-private fun Shopping(api: Api, onSignedOut: () -> Unit) {
+private fun Shopping(api: Api, cache: Cache, onSignedOut: () -> Unit) {
     val nav = rememberNavController()
     var open by remember { mutableStateOf<ShoppingList?>(null) }
 
     NavHost(navController = nav, startDestination = "lists") {
         composable("lists") {
             val model: ListsViewModel = viewModel(
-                factory = factory { ListsViewModel(api, onSignedOut) },
+                factory = factory { ListsViewModel(api, cache, onSignedOut) },
             )
             ListsScreen(
                 model = model,
@@ -144,7 +150,7 @@ private fun Shopping(api: Api, onSignedOut: () -> Unit) {
 
             val model: ItemsViewModel = viewModel(
                 key = "items-${list.id}",
-                factory = factory { ItemsViewModel(api, list, onSignedOut) },
+                factory = factory { ItemsViewModel(api, cache, list, onSignedOut) },
             )
             ItemsScreen(model = model, onBack = { nav.popBackStack() })
         }

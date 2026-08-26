@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -59,6 +60,11 @@ android {
     sourceSets["main"].java.srcDirs("src/main/kotlin")
 }
 
+// The schema Room generated, committed rather than regenerated. A migration is written
+// against a schema that existed; without the file there is nothing to write it
+// against, and nothing to notice when a change needs one.
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+
 /// The web client id, which is what an Android ID token is addressed to.
 ///
 /// Read from `local.properties` rather than committed: it is not a secret -- it is
@@ -74,6 +80,9 @@ fun googleWebClientId(): String {
 }
 
 dependencies {
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

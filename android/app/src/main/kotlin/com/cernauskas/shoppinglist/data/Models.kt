@@ -12,6 +12,10 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class ShoppingList(
     val id: Long,
+    /** What operations call this list, minted wherever it was made. Defaulted so a
+     * server that predates the column still decodes -- and so the cache can be read
+     * back by a build that has not seen one yet. */
+    val uuid: String = "",
     val name: String,
     @SerialName("owner_id") val ownerId: Long,
     /** What this person may do with it. Absent means the least: read it. */
@@ -34,6 +38,8 @@ enum class Role {
 @Serializable
 data class Item(
     val id: Long,
+    /** What operations call this item. See [ShoppingList.uuid]. */
+    val uuid: String = "",
     val name: String,
     val amount: Double,
     @SerialName("unit_id") val unitId: Long? = null,

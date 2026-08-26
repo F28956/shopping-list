@@ -104,8 +104,22 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
             return@Scaffold
         }
 
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+        // Nothing cached and no connection: this screen does not know whether the
+        // list is empty, so it does not say it is.
+        if (state.offline && state.outstanding.isEmpty() && state.done.isEmpty() && !state.fresh) {
+            Unreachable(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                what = "This list",
+                onRetry = { model.load() },
+            )
+            return@Scaffold
+        }
+
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            OfflineNote(state.offline)
+
+            LazyColumn(
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 96.dp),
         ) {
             if (state.truncated) {
@@ -171,6 +185,7 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
                     )
                 }
             }
+        }
         }
     }
 
