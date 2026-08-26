@@ -115,13 +115,11 @@ struct MacItemsView: View {
             }
         }
         .navigationTitle(list.name)
-        .navigationSubtitle(subtitle)
         .toolbar {
-            // Leading, beside the list's name, for the same reason as on the phones:
-            // it is a fact about this screen rather than a control.
-            ToolbarItem(placement: .navigation) {
-                StatusDot(waiting: waiting, offline: offline)
-            }
+            // No status dot here. A split view on macOS merges both halves' toolbars
+            // into the one window title bar, so a dot on each side is two dots saying
+            // the same thing. The sidebar keeps it: there is one window, one
+            // connection and one queue, so there is one dot.
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     ordering = true
@@ -417,20 +415,6 @@ struct MacItemsView: View {
         let queued = cache.outbox.forList(list)
         unsent = Set(queued.map(\.itemUUID))
         waiting = queued.count
-    }
-
-    /// What the window's subtitle says about this device being in step.
-    ///
-    /// The dot is the glance; this is the sentence beside it. A Mac has a title bar
-    /// with room in it, and a laptop on a train is exactly where somebody needs to know
-    /// whether the thing they just typed has gone anywhere.
-    private var subtitle: String {
-        switch (offline, waiting) {
-        case (false, 0): return ""
-        case (true, 0): return "Offline — showing what was last loaded"
-        case (true, let n): return "Offline — \(n) change\(n == 1 ? "" : "s") waiting"
-        case (false, let n): return "\(n) change\(n == 1 ? "" : "s") waiting to be sent"
-        }
     }
 
     /// Tries the queue again while anything is in it.
