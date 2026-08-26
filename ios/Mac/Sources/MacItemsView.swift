@@ -49,6 +49,11 @@ struct MacItemsView: View {
         SwiftUI.List {
             if truncated {
                 Text("Showing \(items.count) of \(Int(total)). This list is long enough to be worth splitting.")
+                    .accessibilityIdentifier("truncation.notice")
+                    .accessibilityLabel(
+                        "Showing \(items.count) of \(Int(total)). "
+                            + "This list is long enough to be worth splitting."
+                    )
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -69,6 +74,7 @@ struct MacItemsView: View {
                         Spacer()
                         if list.mayEdit {
                             Button("Clear") { confirmingClear = true }
+                                .accessibilityIdentifier("clear.done")
                                 .buttonStyle(.link)
                         }
                     }
@@ -146,12 +152,14 @@ struct MacItemsView: View {
                     // background, and the one control the screen exists for should
                     // not have to be discovered.
                     TextField("Add an item — try 2 kg apples", text: $line)
+                        .accessibilityIdentifier("add.field")
                         .textFieldStyle(.roundedBorder)
                         .controlSize(.large)
                         .focused($typing)
                         .onSubmit { Task { await add() } }
 
                     Button("Add") { Task { await add() } }
+                        .accessibilityIdentifier("add.button")
                         .buttonStyle(.borderedProminent)
                         .disabled(line.trimmingCharacters(in: .whitespaces).isEmpty)
                         .keyboardShortcut(.defaultAction)
@@ -178,6 +186,7 @@ struct MacItemsView: View {
                 .accessibilityLabel(
                     item.isDone ? "Put \(item.name) back" : "Cross \(item.name) off"
                 )
+                .accessibilityIdentifier("cross.\(item.name)")
 
             Button {
                 Task { await beginEditing(item) }
@@ -209,6 +218,7 @@ struct MacItemsView: View {
             .disabled(!list.mayEdit)
             .accessibilityLabel(accessibleName(item))
             .accessibilityHint(list.mayEdit ? "Opens the editor" : "")
+            .accessibilityIdentifier("item.\(item.name)")
         }
         .contextMenu {
             if list.mayEdit {
@@ -247,6 +257,7 @@ struct MacItemsView: View {
             .padding(.vertical, 1)
             .background(.quaternary, in: Capsule())
             .accessibilityHidden(true)
+            .accessibilityIdentifier("chip.\(tag.name)")
     }
 
     /// What the row says when it is read aloud rather than looked at.

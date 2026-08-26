@@ -27,11 +27,15 @@ struct MacItemEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Edit item").font(.headline)
+            Text("Edit item")
+                .accessibilityIdentifier("editor.title")
+                .font(.headline)
 
             Form {
                 TextField("Name", text: $draft.name)
+                    .accessibilityIdentifier("editor.name")
                 TextField("Amount", text: $draft.amount)
+                    .accessibilityIdentifier("editor.amount")
                 Picker("Unit", selection: $draft.unitID) {
                     Text("None").tag(Int64?.none)
                     ForEach(units) { unit in
@@ -60,6 +64,7 @@ struct MacItemEditor: View {
                                 }
                             }
                             .toggleStyle(.checkbox)
+                            .accessibilityIdentifier("editor.tag.\(tag.name)")
                         }
                     }
                 }
@@ -69,6 +74,7 @@ struct MacItemEditor: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .accessibilityIdentifier("editor.cancel")
                     .keyboardShortcut(.cancelAction)
                 Button("Save") {
                     guard let edit = draft.validated else { return }
@@ -76,6 +82,7 @@ struct MacItemEditor: View {
                     Task { await save(edit) }
                 }
                 .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("editor.save")
                 .disabled(draft.validated == nil)
             }
         }

@@ -41,8 +41,17 @@ actor API {
 
     init(baseURL: URL, token: @escaping () async -> String?) {
         self.baseURL = baseURL
-        self.session = URLSession(configuration: .default)
         self.token = token
+
+        let configuration = URLSessionConfiguration.default
+        #if DEBUG
+            // Under UI test the wire is replaced and nothing above it is: the same
+            // URLs, headers, status handling and decoding all still run.
+            if UITesting.isRunning {
+                configuration.protocolClasses = [StubURLProtocol.self]
+            }
+        #endif
+        self.session = URLSession(configuration: configuration)
     }
 
     // MARK: - Reading

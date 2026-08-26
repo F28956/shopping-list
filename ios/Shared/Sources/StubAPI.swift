@@ -1,0 +1,215 @@
+#if DEBUG
+
+    import Foundation
+
+    /// A server, in memory, for UI tests.
+    ///
+    /// Answers the same JSON the real one does — the app's decoding, grouping and
+    /// display all run for real against it — and mutates in place, so a test can tick
+    /// something off and then assert on what comes back.
+    ///
+    /// Deliberately not a mock framework: what a test wants to say is "given this
+    /// list, when I do that, the screen says this", and a small mutable world says it
+    /// better than a pile of expectations.
+    final class StubWorld: @unchecked Sendable {
+        static let shared = StubWorld()
+
+        struct Row {
+            var id: Int64
+            var name: String
+            var amount: Double
+            var unitID: Int64?
+            var doneAt: String?
+            var tagIDs: [Int64]
+        }
+
+        private let lock = NSLock()
+        private var rows: [Row] = []
+        private(set) var listRole = "owner"
+        private(set) var listTotal: Int64 = 1
+        private(set) var itemsTruncated = false
+        private(set) var itemsTotal: Int64 = 0
+
+        /// Units and tags are reference data on the real server too — seeded by
+        /// migration, ordered by where they fall in a shop.
+        let units: [(Int64, String)] = [(1, "kg"), (2, "unit"), (3, "pint")]
+        let tags: [(Int64, String, Int64, String?)] = [
+            (10, "produce", 10, nil),
+            (20, "fruits", 20, "🍎"),
+            (30, "bakery", 30, nil),
+            (40, "dairy", 40, nil),
+        ]
+
+        func reset(scenario: String) {
+            lock.lock()
+            defer { lock.unlock() }
+
+            listRole = scenario == "viewer" ? "viewer" : "owner"
+            itemsTruncated = scenario == "truncated"
+            rows = [
+                Row(id: 1, name: "Milk", amount: 1, unitID: 3, doneAt: nil, tagIDs: [40]),
+                Row(id: 2, name: "Apples", amount: 2, unitID: 1, doneAt: nil, tagIDs: [20]),
+                Row(id: 3, name: "Bread", amount: 1, unitID: 2, doneAt: nil, tagIDs: [30]),
+                Row(id: 4, name: "Batteries", amount: 1, unitID: nil, doneAt: nil, tagIDs: []),
+                Row(
+                    id: 5, name: "Potatoes", amount: 1, unitID: 1,
+                    doneAt: "2026-08-26T09:00:00Z", tagIDs: [10]
+                ),
+            ]
+            itemsTotal = itemsTruncated ? 340 : Int64(rows.count)
+        }
+
+        // MARK: - Reading
+
+        func listsJSON() -> String {
+            lock.lock()
+            defer { lock.unlock() }
+            return """
+            {"items": [{"id": 1, "name": "Home", "owner_id": 1, "role": "\(listRole)"}],
+             "total": \(listTotal), "total_pages": 1, "has_more": false}
+            """
+        }
+
+        func itemsJSON() -> String {
+            lock.lock()
+            defer { lock.unlock() }
+            // Outstanding first, then done — the order the real route is asked for.
+            let ordered = rows.filter { $0.doneAt == nil } + rows.filter { $0.doneAt != nil }
+            let items = ordered.map { row in
+                """
+                {"id": \(row.id), "name": "\(row.name)", "amount": \(row.amount),
+                 "unit_id": \(row.unitID.map(String.init) ?? "null"),
+                 "done_at": \(row.doneAt.map { "\"\($0)\"" } ?? "null"),
+                 "tag_ids": \(row.tagIDs)}
+                """
+            }
+            return """
+            {"items": [\(items.joined(separator: ","))], "total": \(itemsTotal),
+             "total_pages": 1, "has_more": \(itemsTruncated)}
+            """
+        }
+
+        func unitsJSON() -> String {
+            let items = units.map { #"{"id": \#($0.0), "name": "\#($0.1)"}"# }
+            return page(items)
+        }
+
+        func tagsJSON() -> String {
+            let items = tags.map { tag in
+                """
+                {"id": \(tag.0), "name": "\(tag.1)", "sort_order": \(tag.2),
+                 "emoji": \(tag.3.map { "\"\($0)\"" } ?? "null")}
+                """
+            }
+            return page(items)
+        }
+
+        func tagsOnItemJSON(_ id: Int64) -> String {
+            lock.lock()
+            defer { lock.unlock() }
+            let held = rows.first { $0.id == id }?.tagIDs ?? []
+            let items = tags.filter { held.contains($0.0) }.map { tag in
+                """
+                {"id": \(tag.0), "name": "\(tag.1)", "sort_order": \(tag.2),
+                 "emoji": \(tag.3.map { "\"\($0)\"" } ?? "null")}
+                """
+            }
+            return "[\(items.joined(separator: ","))]"
+        }
+
+        private func page(_ items: [String]) -> String {
+            """
+            {"items": [\(items.joined(separator: ","))], "total": \(items.count),
+             "total_pages": 1, "has_more": false}
+            """
+        }
+
+        // MARK: - Writing
+
+        func setDone(_ id: Int64, _ done: Bool) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard let at = rows.firstIndex(where: { $0.id == id }) else { return }
+            rows[at].doneAt = done ? "2026-08-26T10:00:00Z" : nil
+        }
+
+        func update(_ id: Int64, name: String, amount: Double, unitID: Int64?) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard let at = rows.firstIndex(where: { $0.id == id }) else { return }
+            rows[at].name = name
+            rows[at].amount = amount
+            rows[at].unitID = unitID
+        }
+
+        func attach(_ tagID: Int64, to id: Int64) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard let at = rows.firstIndex(where: { $0.id == id }),
+                  !rows[at].tagIDs.contains(tagID)
+            else { return }
+            // Kept in shop order, as the real route returns them.
+            rows[at].tagIDs = (rows[at].tagIDs + [tagID]).sorted { lhs, rhs in
+                (tags.first { $0.0 == lhs }?.2 ?? 0) < (tags.first { $0.0 == rhs }?.2 ?? 0)
+            }
+        }
+
+        func detach(_ tagID: Int64, from id: Int64) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard let at = rows.firstIndex(where: { $0.id == id }) else { return }
+            rows[at].tagIDs.removeAll { $0 == tagID }
+        }
+
+        func add(line: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            // The real parsing happens on the server. This is the smallest thing that
+            // behaves like it for the one shape the tests type.
+            let next = (rows.map(\.id).max() ?? 0) + 1
+            let parts = line.split(separator: " ").map(String.init)
+            if parts.count >= 3, let amount = Double(parts[0]),
+               let unit = units.first(where: { $0.1 == parts[1] })
+            {
+                rows.append(
+                    Row(
+                        id: next, name: parts.dropFirst(2).joined(separator: " ").capitalisedFirst,
+                        amount: amount, unitID: unit.0, doneAt: nil, tagIDs: []
+                    )
+                )
+            } else {
+                rows.append(
+                    Row(
+                        id: next, name: line.capitalisedFirst, amount: 1,
+                        unitID: nil, doneAt: nil, tagIDs: []
+                    )
+                )
+            }
+            itemsTotal = itemsTruncated ? itemsTotal : Int64(rows.count)
+        }
+
+        func delete(_ id: Int64) {
+            lock.lock()
+            defer { lock.unlock() }
+            rows.removeAll { $0.id == id }
+            itemsTotal = itemsTruncated ? itemsTotal : Int64(rows.count)
+        }
+
+        func clearDone() {
+            lock.lock()
+            defer { lock.unlock() }
+            rows.removeAll { $0.doneAt != nil }
+            itemsTotal = itemsTruncated ? itemsTotal : Int64(rows.count)
+        }
+    }
+
+    extension String {
+        /// The server capitalises names where it stores them; this keeps the fixture
+        /// honest about what comes back.
+        var capitalisedFirst: String {
+            guard let first = first else { return self }
+            return first.uppercased() + dropFirst()
+        }
+    }
+
+#endif

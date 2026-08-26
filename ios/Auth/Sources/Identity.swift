@@ -50,6 +50,17 @@ final class Identity {
 
     /// Picks up a session left from last time, without showing anything.
     func restore() async {
+        #if DEBUG
+            // A UI test cannot sign in: the flow leaves the app and asks a person for
+            // a passkey. It gets a signed-in person and a token that the stubbed wire
+            // never checks; everything the test is actually about runs unchanged.
+            if UITesting.isRunning {
+                StubWorld.shared.reset(scenario: UITesting.scenario)
+                state = .signedIn(name: "Test")
+                return
+            }
+        #endif
+
         guard isConfigured else {
             state = .signedOut
             return
@@ -88,6 +99,10 @@ final class Identity {
     /// Returns nil rather than throwing: every caller's answer to "no token" is the
     /// same, and it is the sign-in screen.
     func token() async -> String? {
+        #if DEBUG
+            if UITesting.isRunning { return "ui-test-token" }
+        #endif
+
         guard let user = GIDSignIn.sharedInstance.currentUser else { return nil }
 
         do {

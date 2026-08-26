@@ -137,6 +137,24 @@ targets:
         # keychain group to hold a token that is already the phone's.
         ENABLE_HARDENED_RUNTIME: "NO"
 
+  # Drives the Mac app the way a person does. Against `-uiTesting`, which swaps the
+  # wire for an in-memory world and the sign-in for a signed-in person -- a UI test
+  # cannot complete a Google flow, and should not need a server or a network to say
+  # what the app does.
+  MacUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: MacUITests
+    dependencies:
+      - target: ShoppingListMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cernauskas.shoppinglist.macuitests
+        SWIFT_VERSION: "5.0"
+        TEST_TARGET_NAME: ShoppingListMac
+        GENERATE_INFOPLIST_FILE: "YES"
+
   ShoppingListTests:
     type: bundle.unit-test
     platform: iOS
@@ -154,6 +172,10 @@ schemes:
     build:
       targets:
         ShoppingListMac: all
+        MacUITests: [test]
+    test:
+      targets:
+        - MacUITests
   ShoppingList:
     build:
       targets:
