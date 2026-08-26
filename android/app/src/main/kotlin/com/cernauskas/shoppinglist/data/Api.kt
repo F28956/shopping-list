@@ -66,6 +66,14 @@ class Api(
      * which is what it is.
      */
     private val remembered: () -> Boolean = { false },
+    /**
+     * A fresh token, for when the server refuses the one it was given.
+     *
+     * A token expires roughly hourly and nothing about holding one says when. Without
+     * this, the first request after that point signed somebody out -- which is why the
+     * app appeared to need signing in again every time it was left alone for a while.
+     */
+    private val renew: suspend () -> String? = { null },
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -302,9 +310,19 @@ class Api(
     private suspend inline fun <reified T> get(path: String): T =
         json.decodeFromString(send("GET", path, null))
 
-    private suspend fun send(method: String, path: String, body: String?): String =
+    private suspend fun send(method: String, path: String, body: String?): String {
+        return try {
+            attempt(method, path, body, token())
+        } catch (_: ApiError.Unauthorized) {
+            // Once, and only once. A second refusal is the server meaning it.
+            val fresh = renew() ?: throw ApiError.Unauthorized
+            attempt(method, path, body, fresh)
+        }
+    }
+
+    private suspend fun attempt(method: String, path: String, body: String?, bearer: String?): String =
         withContext(Dispatchers.IO) {
-            val bearer = token() ?: throw noToken()
+            val bearer = bearer ?: throw noToken()
 
             val request = Request.Builder()
                 .url("$baseUrl$path")

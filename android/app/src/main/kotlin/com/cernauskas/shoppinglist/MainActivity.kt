@@ -35,7 +35,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val identity = Identity(this)
-        val api = Api(token = { identity.tokenNow() }, remembered = { identity.isRemembered })
+        val api = Api(
+            token = { identity.tokenNow() },
+            remembered = { identity.isRemembered },
+            renew = { identity.renew() },
+        )
         val cache = Cache(this)
 
         setContent {
@@ -57,12 +61,22 @@ class MainActivity : ComponentActivity() {
                     is Identity.State.SignedIn -> Shopping(
                         api = api,
                         cache = cache,
-                        onSignedOut = { problem ->
+                        onSignedOut = { why ->
                             identity.signOut()
-                            // What was cached belongs to whoever just signed out. The
-                            // next person to use this phone is a different person.
-                            scope.launch { cache.forgetEverything() }
-                            state = Identity.State.SignedOut(problem)
+                            // Only what was asked for. A session that ended because
+                            // somebody tapped Sign out belongs to a person who is
+                            // leaving, and their shopping should not be waiting for
+                            // whoever picks the phone up next. A session that ended
+                            // because the server refused a token is not that: it is
+                            // the same person with an expired credential, and throwing
+                            // away their unsent changes over it would be losing work to
+                            // a clock.
+                            if (why is Identity.Departure.Deliberate) {
+                                scope.launch { cache.forgetEverything() }
+                            }
+                            state = Identity.State.SignedOut(
+                                (why as? Identity.Departure.Refused)?.problem
+                            )
                         },
                     )
                 }
@@ -123,7 +137,7 @@ private fun SignIn(configured: Boolean, problem: String?, onSignIn: () -> Unit) 
 }
 
 @Composable
-private fun Shopping(api: Api, cache: Cache, onSignedOut: (String?) -> Unit) {
+private fun Shopping(api: Api, cache: Cache, onSignedOut: (Identity.Departure) -> Unit) {
     val nav = rememberNavController()
     var open by remember { mutableStateOf<ShoppingList?>(null) }
 
@@ -136,7 +150,7 @@ private fun Shopping(api: Api, cache: Cache, onSignedOut: (String?) -> Unit) {
                 model = model,
                 onOpen = { list -> open = list; nav.navigate("items") },
                 // Deliberately signed out, so nothing to explain on the way back.
-                onSignOut = { onSignedOut(null) },
+                onSignOut = { onSignedOut(Identity.Departure.Deliberate) },
             )
         }
 

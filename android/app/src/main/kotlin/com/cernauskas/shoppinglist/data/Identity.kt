@@ -36,12 +36,29 @@ class Identity(private val context: Context) {
     /** Whether somebody has signed in on this device and not signed out. */
     val isRemembered: Boolean get() = remembered.getBoolean(SIGNED_IN, false)
 
-    private var rememberedName: String?
-        get() = remembered.getString(NAME, null)
-        set(value) = remembered.edit()
-            .putBoolean(SIGNED_IN, value != null || isRemembered)
-            .putString(NAME, value)
-            .apply()
+    /// Records that somebody is signed in, and what to call them.
+    ///
+    /// The flag is set whether or not there is a name: an account with no display name
+    /// is still an account, and making the flag depend on the name meant one of those
+    /// was never remembered at all.
+    private fun remember(name: String?) {
+        remembered.edit().putBoolean(SIGNED_IN, true).putString(NAME, name).apply()
+    }
+
+    private val rememberedName: String? get() = remembered.getString(NAME, null)
+
+    /**
+     * Why a session ended, because the two are not the same thing.
+     *
+     * Somebody tapping Sign out is leaving, and their shopping should not be waiting on
+     * the phone for whoever picks it up next. A server refusing a token is the same
+     * person with an expired credential, and throwing away their unsent changes over it
+     * would be losing work to a clock.
+     */
+    sealed interface Departure {
+        data object Deliberate : Departure
+        data class Refused(val problem: String? = null) : Departure
+    }
 
     sealed interface State {
         data object Unknown : State
@@ -80,11 +97,21 @@ class Identity(private val context: Context) {
         return token
     }
 
-    /** Forgets the token, so the next request asks for a fresh one. Called when the
-     * server refuses one: the age of a token is a guess, and a 401 is the server
-     * saying the guess was wrong. */
-    fun refused() {
+    /**
+     * A fresh token, because the server refused the one it was given.
+     *
+     * Google's ID tokens last about an hour, and nothing about holding one says when it
+     * stopped being good -- a 401 is the only reliable signal, which is why this is
+     * driven by the answer rather than by a timer.
+     *
+     * Before this existed, an expired token signed somebody out. Every hour. That is
+     * the whole of "why does it keep asking me to sign in".
+     */
+    suspend fun renew(): String? {
         token = null
+        if (!isRemembered) return null
+        attempt(onlyAuthorized = true, quiet = true)
+        return token
     }
 
     fun signOut() {
@@ -132,7 +159,7 @@ class Identity(private val context: Context) {
             )
             val credential = GoogleIdTokenCredential.createFrom(response.credential.data)
             token = credential.idToken
-            rememberedName = credential.displayName
+            remember(credential.displayName)
             State.SignedIn(credential.displayName)
         } catch (e: GetCredentialException) {
             // Restoring quietly is allowed to fail silently: it is the path for

@@ -51,11 +51,16 @@ final class Identity {
     var isRemembered: Bool { UserDefaults.standard.bool(forKey: Remembered.signedIn) }
 
     private var rememberedName: String? {
-        get { UserDefaults.standard.string(forKey: Remembered.name) }
-        set {
-            UserDefaults.standard.set(true, forKey: Remembered.signedIn)
-            UserDefaults.standard.set(newValue, forKey: Remembered.name)
-        }
+        UserDefaults.standard.string(forKey: Remembered.name)
+    }
+
+    /// Records that somebody is signed in, and what to call them.
+    ///
+    /// The flag is set whether or not there is a name: an account with no display name
+    /// is still an account.
+    private func remember(_ name: String?) {
+        UserDefaults.standard.set(true, forKey: Remembered.signedIn)
+        UserDefaults.standard.set(name, forKey: Remembered.name)
     }
 
     /// Whether the app was built with a client id at all.
@@ -91,7 +96,7 @@ final class Identity {
 
         do {
             let user = try await GIDSignIn.sharedInstance.restorePreviousSignIn()
-            rememberedName = user.profile?.name
+            remember(user.profile?.name)
             state = .signedIn(name: user.profile?.name)
         } catch {
             // Google could not be asked, but somebody signed in on this device and has
@@ -111,7 +116,7 @@ final class Identity {
 
         do {
             let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presenting)
-            rememberedName = result.user.profile?.name
+            remember(result.user.profile?.name)
             state = .signedIn(name: result.user.profile?.name)
             lastError = nil
         } catch {

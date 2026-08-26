@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.cernauskas.shoppinglist.data.Api
 import com.cernauskas.shoppinglist.data.ApiError
 import com.cernauskas.shoppinglist.data.Cache
+import com.cernauskas.shoppinglist.data.Identity
 import com.cernauskas.shoppinglist.data.Person
 import com.cernauskas.shoppinglist.data.ShoppingList
 import kotlinx.coroutines.delay
@@ -24,7 +25,7 @@ import kotlinx.coroutines.launch
 class ListsViewModel(
     private val api: Api,
     private val cache: Cache,
-    private val onSignedOut: (String?) -> Unit,
+    private val onSignedOut: (Identity.Departure) -> Unit,
 ) : ViewModel() {
 
     data class State(
@@ -83,7 +84,7 @@ class ListsViewModel(
             } catch (e: ApiError.NotAdmitted) {
                 // Not a dropped connection. Reconnecting every three seconds to be
                 // refused again is a loop nothing ends.
-                onSignedOut(e.message)
+                onSignedOut(Identity.Departure.Refused(e.message))
                 return@launch
             } catch (_: ApiError.Forbidden) {
                 return@launch
@@ -168,8 +169,8 @@ class ListsViewModel(
         // the account itself goes to the same screen and does say something, because
         // asking again will not change it and no list screen can explain it.
         when (e) {
-            is ApiError.Unauthorized -> onSignedOut(null)
-            is ApiError.NotAdmitted -> onSignedOut(e.message)
+            is ApiError.Unauthorized -> onSignedOut(Identity.Departure.Refused())
+            is ApiError.NotAdmitted -> onSignedOut(Identity.Departure.Refused(e.message))
             else -> _state.update { it.copy(message = e.message) }
         }
     }

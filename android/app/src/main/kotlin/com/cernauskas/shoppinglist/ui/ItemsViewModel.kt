@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.cernauskas.shoppinglist.data.Api
 import com.cernauskas.shoppinglist.data.ApiError
 import com.cernauskas.shoppinglist.data.Cache
+import com.cernauskas.shoppinglist.data.Identity
 import com.cernauskas.shoppinglist.data.Item
 import com.cernauskas.shoppinglist.data.QueuedOperation
 import com.cernauskas.shoppinglist.data.done
@@ -30,7 +31,7 @@ class ItemsViewModel(
     private val api: Api,
     private val cache: Cache,
     val list: ShoppingList,
-    private val onSignedOut: (String?) -> Unit,
+    private val onSignedOut: (Identity.Departure) -> Unit,
 ) : ViewModel() {
 
     data class State(
@@ -194,7 +195,7 @@ class ItemsViewModel(
             try {
                 api.changes(list).collect { load() }
             } catch (e: ApiError.NotAdmitted) {
-                onSignedOut(e.message)
+                onSignedOut(Identity.Departure.Refused(e.message))
                 return@launch
             } catch (_: ApiError.Forbidden) {
                 return@launch
@@ -466,8 +467,8 @@ class ItemsViewModel(
     private fun report(e: ApiError) {
         // See ListsViewModel.report.
         when (e) {
-            is ApiError.Unauthorized -> onSignedOut(null)
-            is ApiError.NotAdmitted -> onSignedOut(e.message)
+            is ApiError.Unauthorized -> onSignedOut(Identity.Departure.Refused())
+            is ApiError.NotAdmitted -> onSignedOut(Identity.Departure.Refused(e.message))
             else -> _state.update { it.copy(message = e.message) }
         }
     }
