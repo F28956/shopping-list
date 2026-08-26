@@ -21,6 +21,28 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
  */
 class Identity(private val context: Context) {
 
+    /**
+     * That somebody is signed in on this device, and what to call them.
+     *
+     * Kept because asking Google needs a connection, and a phone opened in a shop with
+     * no signal would otherwise show the sign-in screen with the cached list stranded
+     * behind it -- which is the case this whole piece of work is about. What is
+     * remembered is a boolean and a display name: no token, nothing that grants
+     * anything, and nothing that outlives signing out.
+     */
+    private val remembered =
+        context.getSharedPreferences("session", Context.MODE_PRIVATE)
+
+    /** Whether somebody has signed in on this device and not signed out. */
+    val isRemembered: Boolean get() = remembered.getBoolean(SIGNED_IN, false)
+
+    private var rememberedName: String?
+        get() = remembered.getString(NAME, null)
+        set(value) = remembered.edit()
+            .putBoolean(SIGNED_IN, value != null || isRemembered)
+            .putString(NAME, value)
+            .apply()
+
     sealed interface State {
         data object Unknown : State
         /** Signed out, and why — or null when nothing was attempted. A failed sign-in
@@ -50,6 +72,7 @@ class Identity(private val context: Context) {
 
     fun signOut() {
         token = null
+        remembered.edit().clear().apply()
     }
 
     /**
@@ -59,7 +82,15 @@ class Identity(private val context: Context) {
      * who has signed in before. Failing it is not an error, it is a person who has
      * not.
      */
-    suspend fun restore(): State = attempt(onlyAuthorized = true, quiet = true)
+    suspend fun restore(): State = when (val asked = attempt(onlyAuthorized = true, quiet = true)) {
+        // Google could not be asked, but somebody signed in on this phone and has not
+        // signed out. Let them in to what is already on the device: every request will
+        // fail as a transport error until there is signal, which is a state the app
+        // already knows how to be in. Signing them out instead would hide their own
+        // shopping behind a button that cannot work either.
+        is State.SignedOut -> if (isRemembered) State.SignedIn(rememberedName) else asked
+        else -> asked
+    }
 
     /** The loud path, from a button: offers every account on the device. */
     suspend fun signIn(): State = attempt(onlyAuthorized = false, quiet = false)
@@ -84,6 +115,7 @@ class Identity(private val context: Context) {
             )
             val credential = GoogleIdTokenCredential.createFrom(response.credential.data)
             token = credential.idToken
+            rememberedName = credential.displayName
             State.SignedIn(credential.displayName)
         } catch (e: GetCredentialException) {
             // Restoring quietly is allowed to fail silently: it is the path for
@@ -107,3 +139,6 @@ private fun GetCredentialException.explain(): String = when (this) {
     is GetCredentialCancellationException -> "Sign-in cancelled."
     else -> message ?: "Google would not sign you in."
 }
+
+private const val SIGNED_IN = "signed_in"
+private const val NAME = "name"

@@ -35,6 +35,29 @@ final class Identity {
     private(set) var state: State = .unknown
     private(set) var lastError: String?
 
+    /// That somebody is signed in on this device, and what to call them.
+    ///
+    /// Kept because refreshing a Google token needs a connection, and a phone opened in
+    /// a shop with no signal would otherwise show the sign-in screen with the cached
+    /// list stranded behind it — which is the case this whole piece of work is about.
+    /// What is remembered is a flag and a display name: no token, nothing that grants
+    /// anything, and nothing that outlives signing out.
+    private enum Remembered {
+        static let signedIn = "session.signedIn"
+        static let name = "session.name"
+    }
+
+    /// Whether somebody has signed in on this device and not signed out.
+    var isRemembered: Bool { UserDefaults.standard.bool(forKey: Remembered.signedIn) }
+
+    private var rememberedName: String? {
+        get { UserDefaults.standard.string(forKey: Remembered.name) }
+        set {
+            UserDefaults.standard.set(true, forKey: Remembered.signedIn)
+            UserDefaults.standard.set(newValue, forKey: Remembered.name)
+        }
+    }
+
     /// Whether the app was built with a client id at all.
     ///
     /// Without one the sign-in screen says so rather than failing at the tap: the
@@ -68,9 +91,15 @@ final class Identity {
 
         do {
             let user = try await GIDSignIn.sharedInstance.restorePreviousSignIn()
+            rememberedName = user.profile?.name
             state = .signedIn(name: user.profile?.name)
         } catch {
-            state = .signedOut
+            // Google could not be asked, but somebody signed in on this device and has
+            // not signed out. Let them in to what is already here: every request will
+            // fail as a transport error until there is signal, which is a state the app
+            // already knows how to be in. Signing them out instead would hide their own
+            // shopping behind a button that cannot work either.
+            state = isRemembered ? .signedIn(name: rememberedName) : .signedOut
         }
     }
 
@@ -82,6 +111,7 @@ final class Identity {
 
         do {
             let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presenting)
+            rememberedName = result.user.profile?.name
             state = .signedIn(name: result.user.profile?.name)
             lastError = nil
         } catch {
@@ -97,6 +127,8 @@ final class Identity {
     /// question they did not ask. A plain sign-out clears any stale reason.
     func signOut(because reason: String? = nil) {
         GIDSignIn.sharedInstance.signOut()
+        UserDefaults.standard.removeObject(forKey: Remembered.signedIn)
+        UserDefaults.standard.removeObject(forKey: Remembered.name)
         state = .signedOut
         lastError = reason
     }

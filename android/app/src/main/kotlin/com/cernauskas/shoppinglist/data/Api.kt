@@ -55,6 +55,17 @@ sealed class ApiError(message: String) : Exception(message) {
 class Api(
     private val baseUrl: String = BuildConfig.API_BASE_URL,
     private val token: suspend () -> String?,
+    /**
+     * Whether somebody is signed in on this device, whether or not there is a token to
+     * hand right now.
+     *
+     * The two are different questions offline. Google cannot be asked for a token
+     * without a connection, and treating that as "signed out" would put the sign-in
+     * screen in front of somebody whose own list is sitting on the phone -- so a
+     * missing token with a remembered session is reported as a transport failure,
+     * which is what it is.
+     */
+    private val remembered: () -> Boolean = { false },
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -283,7 +294,7 @@ class Api(
 
     private suspend fun send(method: String, path: String, body: String?): String =
         withContext(Dispatchers.IO) {
-            val bearer = token() ?: throw ApiError.Unauthorized
+            val bearer = token() ?: throw noToken()
 
             val request = Request.Builder()
                 .url("$baseUrl$path")
@@ -332,6 +343,10 @@ class Api(
         } else {
             ApiError.Forbidden
         }
+
+    /** What a missing token means, which depends on whether anybody is signed in. */
+    private fun noToken(): ApiError =
+        if (remembered()) ApiError.Transport(IOException("No connection to sign in with")) else ApiError.Unauthorized
 
     /** The API answers errors as `{"error": "..."}`. */
     private fun messageIn(text: String): String? =

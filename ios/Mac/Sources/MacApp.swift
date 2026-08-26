@@ -35,7 +35,11 @@ struct MacRootView: View {
             MacSignInView()
         case .signedIn:
             MacShoppingView(
-                api: API(baseURL: Config.apiBaseURL, token: { await identity.token() })
+                api: API(
+                    baseURL: Config.apiBaseURL,
+                    token: { await identity.token() },
+                    remembered: { identity.isRemembered }
+                )
             )
         }
     }

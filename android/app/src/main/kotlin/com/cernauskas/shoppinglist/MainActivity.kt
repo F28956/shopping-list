@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val identity = Identity(this)
-        val api = Api(token = { identity.current() })
+        val api = Api(token = { identity.current() }, remembered = { identity.isRemembered })
         val cache = Cache(this)
 
         setContent {

@@ -35,7 +35,13 @@ struct RootView: View {
         case .signedOut:
             SignInView()
         case .signedIn:
-            ListsView(api: API(baseURL: Config.apiBaseURL, token: { await identity.token() }))
+            ListsView(
+                api: API(
+                    baseURL: Config.apiBaseURL,
+                    token: { await identity.token() },
+                    remembered: { identity.isRemembered }
+                )
+            )
         }
     }
 }

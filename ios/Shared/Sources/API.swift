@@ -48,10 +48,24 @@ actor API {
     private let baseURL: URL
     private let session: URLSession
     private let token: () async -> String?
+    /// Whether somebody is signed in on this device, whether or not there is a token to
+    /// hand right now.
+    ///
+    /// The two are different questions offline. Google cannot refresh a token without a
+    /// connection, and treating that as "signed out" would put the sign-in screen in
+    /// front of somebody whose own list is sitting on the phone — so a missing token
+    /// with a remembered session is reported as a transport failure, which is what it
+    /// is.
+    private let remembered: () -> Bool
 
-    init(baseURL: URL, token: @escaping () async -> String?) {
+    init(
+        baseURL: URL,
+        token: @escaping () async -> String?,
+        remembered: @escaping () -> Bool = { false }
+    ) {
         self.baseURL = baseURL
         self.token = token
+        self.remembered = remembered
 
         let configuration = URLSessionConfiguration.default
         #if DEBUG
@@ -331,7 +345,7 @@ actor API {
         // The default is 60 seconds of silence, which would hang up on a quiet list.
         // The server sends a keep-alive comment well inside this.
         request.timeoutInterval = 3600
-        guard let token = await token() else { throw APIError.unauthorized }
+        guard let token = await token() else { throw noToken() }
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         let bytes: URLSession.AsyncBytes
@@ -422,7 +436,7 @@ actor API {
         var request = URLRequest(url: url)
         request.httpMethod = method
 
-        guard let token = await token() else { throw APIError.unauthorized }
+        guard let token = await token() else { throw noToken() }
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         if let encoded {
@@ -472,6 +486,18 @@ actor API {
             object["reason"] as? String == "not_admitted"
         else { return .forbidden }
         return .notAdmitted
+    }
+
+    /// What a missing token means, which depends on whether anybody is signed in.
+    private func noToken() -> APIError {
+        guard remembered() else { return .unauthorized }
+        return .transport(
+            NSError(
+                domain: NSURLErrorDomain,
+                code: NSURLErrorNotConnectedToInternet,
+                userInfo: [NSLocalizedDescriptionKey: "No connection to sign in with."]
+            )
+        )
     }
 
     /// The API answers errors as `{"error": "..."}`.
