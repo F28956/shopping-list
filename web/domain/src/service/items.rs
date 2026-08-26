@@ -246,8 +246,22 @@ async fn split(ctx: &Ctx, actor: &Actor, current: &Item, name: Name, seen: Seen)
 
 /// Ticks an item off, or puts it back.
 pub async fn set_done(ctx: &Ctx, actor: &Actor, id: item::Id, done: bool) -> Result<Item> {
+    set_done_at(ctx, actor, id, done, time::OffsetDateTime::now_utc()).await
+}
+
+/// Ticks an item off as of a particular moment, for a tick that is being replayed.
+///
+/// See [`Item::set_done_at`]. The moment has already been clamped by the caller: this
+/// layer decides who may tick, not whether a clock is telling the truth.
+pub async fn set_done_at(
+    ctx: &Ctx,
+    actor: &Actor,
+    id: item::Id,
+    done: bool,
+    at: time::OffsetDateTime,
+) -> Result<Item> {
     editable(ctx, actor.person()?, id).await?;
-    let item = Item::set_done(&ctx.db, id, done).await?;
+    let item = Item::set_done_at(&ctx.db, id, done, at).await?;
     ctx.changes.announce(item.list_id);
     Ok(item)
 }

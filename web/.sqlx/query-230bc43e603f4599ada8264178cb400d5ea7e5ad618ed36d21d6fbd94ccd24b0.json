@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO applied_operations (id, user_id, kind) VALUES (?1, ?2, ?3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "230bc43e603f4599ada8264178cb400d5ea7e5ad618ed36d21d6fbd94ccd24b0"
+}

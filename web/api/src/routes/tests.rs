@@ -1292,3 +1292,112 @@ async fn history_can_be_read_and_forgotten(#[future(awt)] pool: SqlitePool) {
     let (_, after) = send(&app, req("GET", &history, &me(), None)).await;
     assert!(after.as_array().unwrap().is_empty(), "{after}");
 }
+
+/// The wire shape of `POST /api/sync`, end to end.
+///
+/// The service tests cover what each operation means; this covers that the route can be
+/// spoken to — the tagged JSON, the RFC 3339 stamp, the uuids in place of ids, and the
+/// answer coming back per operation rather than as one status code.
+#[rstest]
+#[tokio::test]
+async fn a_batch_replays_over_the_wire(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+
+    let (_, list) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &me(), None)).await;
+    let list_uuid = list["uuid"].as_str().unwrap().to_string();
+
+    let (_, page) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}/items"), &me(), None),
+    )
+    .await;
+    let apples = page["items"][0]["uuid"].as_str().unwrap().to_string();
+
+    let mine = "11111111-1111-4111-8111-111111111111";
+    let batch = json!({
+        "operations": [
+            {
+                "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "at": "2026-08-26T10:00:00Z",
+                "list": list_uuid,
+                "kind": "set_done",
+                "item": apples,
+                "done": true
+            },
+            {
+                "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                "at": "2026-08-26T10:01:00Z",
+                "list": list_uuid,
+                "kind": "add",
+                "item": mine,
+                "name": "Bread"
+            }
+        ]
+    });
+
+    let (status, replayed) = send(&app, req("POST", "/api/sync", &me(), Some(batch.clone()))).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replayed["operations"][0]["outcome"], "applied");
+    assert_eq!(replayed["operations"][1]["outcome"], "applied");
+    // The row the device made is handed back, so it can learn the id it never had.
+    assert_eq!(replayed["operations"][1]["item"]["uuid"], mine);
+    assert!(replayed["operations"][1]["item"]["id"].as_i64().unwrap() > 0);
+    // Stamped with what the device claimed, not with now.
+    assert_eq!(
+        replayed["operations"][0]["item"]["done_at"],
+        "2026-08-26T10:00:00Z"
+    );
+
+    // And again, which is what a lost answer produces.
+    let (status, again) = send(&app, req("POST", "/api/sync", &me(), Some(batch))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["operations"][0]["outcome"], "already_applied");
+    assert_eq!(again["operations"][1]["outcome"], "already_applied");
+
+    let (_, page) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}/items"), &me(), None),
+    )
+    .await;
+    assert_eq!(page["total"], 2, "the resend added a row");
+}
+
+/// A refusal is data, not a status code.
+///
+/// Somebody who is not on the list gets `200` with every operation refused, because the
+/// request was fine — it is the changes in it that were not.
+#[rstest]
+#[tokio::test]
+async fn a_refused_batch_is_still_a_two_hundred(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+
+    let (_, list) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &me(), None)).await;
+    let list_uuid = list["uuid"].as_str().unwrap().to_string();
+
+    let (status, replayed) = send(
+        &app,
+        req(
+            "POST",
+            "/api/sync",
+            &them(),
+            Some(json!({
+                "operations": [{
+                    "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+                    "at": "2026-08-26T10:00:00Z",
+                    "list": list_uuid,
+                    "kind": "add",
+                    "item": "22222222-2222-4222-8222-222222222222",
+                    "name": "Not theirs"
+                }]
+            })),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replayed["operations"][0]["outcome"], "refused");
+    assert_eq!(replayed["operations"][0]["why"], "not_allowed");
+}

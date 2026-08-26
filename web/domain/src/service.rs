@@ -9,6 +9,8 @@
 
 #[cfg(test)]
 mod authorization_tests;
+#[cfg(test)]
+mod sync_tests;
 
 pub mod admission;
 pub mod changes;
@@ -16,6 +18,7 @@ pub mod identity;
 pub mod items;
 pub mod lists;
 pub mod notes;
+pub mod sync;
 pub mod tags;
 pub mod units;
 pub mod users;

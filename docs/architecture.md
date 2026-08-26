@@ -203,6 +203,14 @@ turned its counter. Minted by whoever creates the row — the model on the onlin
 the device on the offline one — with a mint-if-missing trigger in the schema so no
 row can exist unnamed. See `docs/offline.md`.
 
+**`POST /api/sync`** (`domain::service::sync`). One route for everything a device did
+while it could not reach the server: operations named by uuid, carrying the device's
+own clock, applied in order, answered one at a time. Idempotent through
+`applied_operations`; a refusal is data with a reason, not a status code that fails the
+batch; the row each operation produced comes back so a device can learn the id of
+something it created offline. Push only — the event streams remain how a client learns
+to re-read.
+
 **Working offline** (`Cache`/`Outbox` on both native clients). The last-loaded lists
 and items are kept on the device, so the app never claims an emptiness it has not
 verified, and changes made with no signal go into a durable queue that drains on the

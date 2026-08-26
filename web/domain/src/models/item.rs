@@ -259,10 +259,27 @@ impl Item {
     /// already done restamps it with the later time, which is the honest answer to
     /// "when was this done" for the tick that actually happened.
     pub async fn set_done(pool: &sqlx::SqlitePool, id: Id, done: bool) -> Result<Item> {
+        Self::set_done_at(pool, id, done, OffsetDateTime::now_utc()).await
+    }
+
+    /// Ticks an item off as of a particular moment.
+    ///
+    /// For a tick that is being replayed: it happened when the device says it happened,
+    /// not when the request reached the server. Stamping it with the arrival time would
+    /// make a queue that sat in a pocket for an hour claim the shopping was done an
+    /// hour after it was. The caller is responsible for the claim being plausible --
+    /// see [`crate::service::sync::clamp`].
+    pub async fn set_done_at(
+        pool: &sqlx::SqlitePool,
+        id: Id,
+        done: bool,
+        at: OffsetDateTime,
+    ) -> Result<Item> {
+        let at = at.unix_timestamp();
         let item = sqlx::query_as!(
             Item,
             r#"
-            UPDATE items SET done_at = CASE WHEN ?1 THEN unixepoch() ELSE NULL END
+            UPDATE items SET done_at = CASE WHEN ?1 THEN ?3 ELSE NULL END
             WHERE id = ?2
             RETURNING
                 id          as "id!: Id",
@@ -276,6 +293,7 @@ impl Item {
             "#,
             done,
             id,
+            at,
         )
         .fetch_one(pool)
         .await?;

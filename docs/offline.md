@@ -131,23 +131,61 @@ clock loses the right write.
   list is decided by arrival at the server, and never by the device's claim
   about when it acted.
 
-## The wire
+## The wire — built
 
-One route, because a batch is the unit that has to succeed or fail:
+One route, because a batch is the unit a device has: everything it did since it
+was last heard from, in the order it did it.
 
 ```
 POST /api/sync
-{ "since": "<cursor>", "operations": [ … ] }
-→ { "applied": ["<op-id>", …], "rejected": [{ "id": …, "why": … }],
-    "changes": { … }, "cursor": "<new cursor>" }
+{ "operations": [
+    { "id": "<uuid>", "at": "2026-08-26T10:00:00Z", "list": "<list uuid>",
+      "kind": "set_done", "item": "<item uuid>", "done": true },
+    …
+] }
+→ { "operations": [
+    { "id": "<uuid>", "outcome": "applied", "item": { … } },
+    { "id": "<uuid>", "outcome": "already_applied", "item": { … } },
+    { "id": "<uuid>", "outcome": "refused", "why": "gone" }
+] }
 ```
 
-* **Idempotent**: applied operation ids are recorded; a resend is a no-op.
-* **Atomic per operation**, not per batch: one refusal must not discard the rest.
-* **Rejections are data**, not errors — an operation on a list you have been
-  removed from comes back with a reason the app can show.
+* **Everything is named by uuid**, never by id. That is what `items.uuid` is for:
+  a device that added something with no signal has no id for it and never will
+  until this route answers.
+* **Idempotent**: applied operation ids are recorded in `applied_operations`; a
+  resend comes back `already_applied` and changes nothing. That is what a lost
+  answer produces, and "most of these operations are naturally idempotent" is not
+  a promise worth making when a table costs so little.
+* **Atomic per operation**, not per batch. Somebody who ticked six things off and
+  edited a seventh that had been deleted loses the seventh, not all seven.
+* **Rejections are data.** `200` even when every operation was refused: the
+  request was fine, the changes in it were not. `gone`, `list_gone`,
+  `not_allowed`, `invalid` — each is a sentence an app can put in front of
+  somebody.
+* **The row each operation produced comes back.** Not news about other people —
+  the answer to "what did my own change turn into". It is the only way a device
+  learns the id of something it created offline, or the row a rename split off.
+* **The device's clock travels with each change**, clamped forward only. A tick
+  is stamped with when it was made, not when it arrived; a phone in a drawer for
+  a month is telling the truth about the past, and a clock set to next year is
+  not telling the truth about the future.
 * The existing event streams stay: they are how a client learns to pull. Sync is
   how it pushes.
+
+**Push only, deliberately.** The sketch above once had a cursor and a `changes`
+payload coming back. It does not: the event streams already say "something moved,
+re-read", and a second way to learn the same thing is a second thing to keep in
+step.
+
+### What is decided where
+
+| Decision | Where | Why there |
+|---|---|---|
+| May this person write to this list? | On arrival | A device can claim any time it likes — (8) |
+| When did this tick happen? | The device's clock, clamped | Stale work must not lose to fresh work — (7) |
+| Rename, or split? | The `seen` fields on the operation | Only the device knows what it was looking at — (5) |
+| Which rows did the sweep mean? | The ids on the operation | Only the device could see them — (4) |
 
 ## On the device
 
@@ -202,7 +240,8 @@ Offline handling is mostly a communication problem:
    with no signal changes the screen, goes in the queue, and is sent on the next
    successful load from anywhere in the app.
 4. **The rest of the operations**, in the table's order.
-5. **`POST /api/sync`** and batch replay, once the operations exist.
+5. ~~**`POST /api/sync`** and batch replay.~~ **Done.** Every operation, named by
+   uuid, carrying the device's clock, answered one by one.
 6. **The "what changed" note**, once there is something worth telling.
 
 Each step is useful on its own, and the app is never half-migrated: an operation
@@ -352,11 +391,11 @@ The rule, precisely:
 * **It inherits the original's tags.** A rename is not a re-filing, and an
   unfiled row is a worse answer than one filed where its predecessor was.
 
-*Known rough edge, until step 5.* A device that renames and then ticks off, all
-offline, sends both against the id it knew. If the rename splits, the tick lands
-on the original row rather than on the new one — the device has no way to learn
-the new row's id until it reloads. `POST /api/sync` can answer that in the same
-round trip; the REST routes cannot.
+*The rough edge this used to have is gone.* A device that renames and then ticks
+off, all offline, once sent both against the id it knew, and a rename that split
+left the tick landing on the wrong row. Over `POST /api/sync` the rename's answer
+carries the new row, so the device knows which row it made before the next
+operation is sent.
 
 ### 6. A rename that splits or merges a row
 

@@ -1,0 +1,532 @@
+//! What a batch does when it lands, including the cases nobody enjoys.
+//!
+//! Every rule in `docs/offline.md` that this route is responsible for has a test here,
+//! and each is written as the situation it comes from rather than as the rule it
+//! enforces — a test that reads like the rule is a test that passes because it repeats
+//! the code.
+
+use rstest::rstest;
+use sqlx::SqlitePool;
+use time::OffsetDateTime;
+
+use super::sync::{self, Operation, Outcome, Refusal, What};
+use super::{Actor, Ctx, items, lists};
+use crate::models::item::{self, Amount, Item, Name};
+use crate::models::list::{self, Role};
+use crate::models::pool;
+use crate::models::user;
+
+/// Two people who share one list, which is the shape every conflict needs.
+struct Two {
+    ctx: Ctx,
+    anna: Actor,
+    ben: Actor,
+    list: list::List,
+}
+
+async fn person(pool: &SqlitePool, sub: &str) -> Actor {
+    let user = user::User::find_or_create(
+        pool,
+        user::Sub(sub.into()),
+        Some(user::Name(sub.into())),
+        Some(user::Email(format!("{sub}@example.com"))),
+    )
+    .await
+    .unwrap();
+    Actor::User(user)
+}
+
+async fn two(pool: SqlitePool) -> Two {
+    let ctx = Ctx::new(pool.clone());
+    let anna = person(&pool, "anna").await;
+    let ben = person(&pool, "ben").await;
+
+    let list = lists::create(&ctx, &anna, list::Name("Home".into()))
+        .await
+        .unwrap();
+
+    let token = lists::invite(&ctx, &anna, list.id, Role::Editor).await.unwrap();
+    lists::join(&ctx, &ben, &token).await.unwrap();
+
+    Two { ctx, anna, ben, list }
+}
+
+impl Two {
+    /// Something on the list, added the ordinary way.
+    async fn add(&self, name: &str) -> Item {
+        items::create(
+            &self.ctx,
+            &self.anna,
+            self.list.id,
+            None,
+            Name(name.into()),
+            Amount(1.0),
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn rows(&self) -> Vec<Item> {
+        items::for_list(
+            &self.ctx,
+            &self.anna,
+            self.list.id,
+            super::everything(),
+            crate::models::OrderBy {
+                field: item::Field::Id,
+                direction: crate::models::Direction::Ascending,
+            },
+        )
+        .await
+        .unwrap()
+        .items
+    }
+
+    fn op(&self, id: &str, what: What) -> Operation {
+        Operation {
+            id: uuid(id),
+            at: OffsetDateTime::now_utc(),
+            list: self.list.uuid.clone(),
+            what,
+        }
+    }
+}
+
+/// A readable stand-in for a minted operation id: the table wants 36 characters.
+fn uuid(seed: &str) -> String {
+    format!("{seed:->36}")
+}
+
+// ----------------------------------------------------------------- the ordinary case
+
+/// A batch of things done in a shop lands, in order, and says what each became.
+///
+/// Seeded with the units, because this is the one test that leans on `2 kg apples`
+/// being read the way a person means it -- and `kg` is only a unit if the table says so.
+#[rstest]
+#[tokio::test]
+async fn a_batch_is_applied_in_order(
+    #[with(crate::models::fixtures::UNITS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+    let named = item::Uuid::mint();
+
+    let answers = sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![
+            s.op(
+                "add",
+                What::Add {
+                    item: named.clone(),
+                    line: Some("2 kg apples".into()),
+                    name: None,
+                    amount: Amount(1.0),
+                    unit: None,
+                },
+            ),
+            s.op(
+                "tick",
+                What::SetDone {
+                    item: milk.uuid.clone(),
+                    done: true,
+                },
+            ),
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(answers[0].outcome, Outcome::Applied { .. }));
+    assert!(matches!(answers[1].outcome, Outcome::Applied { .. }));
+
+    // The row the device created is handed back, which is the only way it can learn
+    // the id it did not have when it made the row.
+    let Outcome::Applied { item: Some(added) } = &answers[0].outcome else {
+        panic!("no row came back for the add");
+    };
+    assert_eq!(added.uuid, named, "the device's name for it was kept");
+    assert_eq!(added.name, Name("Apples".into()));
+    assert_eq!(added.amount, Amount(2.0));
+
+    let rows = s.rows().await;
+    assert!(rows.iter().any(|r| r.name == Name("Apples".into())));
+    assert!(rows.iter().find(|r| r.id == milk.id).unwrap().done_at.is_some());
+}
+
+/// Sending the same batch twice does nothing the second time.
+///
+/// Which is what a lost answer produces: the device sent it, the server applied it,
+/// and the reply never arrived. A resend is the device asking again, not asking twice.
+#[rstest]
+#[tokio::test]
+async fn a_resend_changes_nothing(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let batch = || {
+        vec![s.op(
+            "add",
+            What::Add {
+                item: item::Uuid::mint(),
+                line: Some("Bread".into()),
+                name: None,
+                amount: Amount(1.0),
+                unit: None,
+            },
+        )]
+    };
+
+    // The same operation id both times; the item uuid inside differs, which is the
+    // point -- it is the operation's name that makes this a resend, not the row's.
+    let first = sync::replay(&s.ctx, &s.ben, batch()).await.unwrap();
+    let again = sync::replay(&s.ctx, &s.ben, batch()).await.unwrap();
+
+    assert!(matches!(first[0].outcome, Outcome::Applied { .. }));
+    assert!(matches!(again[0].outcome, Outcome::AlreadyApplied { .. }));
+    assert_eq!(
+        s.rows().await.iter().filter(|r| r.name == Name("Bread".into())).count(),
+        1,
+        "the second send added a second row"
+    );
+}
+
+// -------------------------------------------------------------------- delete is final
+
+/// Anna deletes Milk. Ben, offline, ticks it off and renames it.
+///
+/// Both are dropped, and both come back saying why. Delete is final: a deletion is a
+/// fact about the server, not an intention held on a device -- docs/offline.md (2).
+#[rstest]
+#[tokio::test]
+async fn a_tick_on_a_deleted_row_is_refused_and_says_so(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+    items::delete(&s.ctx, &s.anna, milk.id).await.unwrap();
+
+    let answers = sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![
+            s.op(
+                "tick",
+                What::SetDone {
+                    item: milk.uuid.clone(),
+                    done: true,
+                },
+            ),
+            s.op(
+                "edit",
+                What::Update {
+                    item: milk.uuid.clone(),
+                    name: Name("Whole milk".into()),
+                    amount: Amount(1.0),
+                    unit: None,
+                    seen: None,
+                },
+            ),
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(answers[0].outcome, Outcome::Refused { why: Refusal::Gone });
+    assert_eq!(answers[1].outcome, Outcome::Refused { why: Refusal::Gone });
+    assert!(s.rows().await.is_empty(), "the row came back from the dead");
+}
+
+/// One refusal must not discard the rest.
+///
+/// Somebody who ticked six things off and edited a seventh that had been deleted
+/// should lose the seventh, not all seven.
+#[rstest]
+#[tokio::test]
+async fn a_refusal_does_not_stop_the_batch(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let gone = s.add("Milk").await;
+    let here = s.add("Bread").await;
+    items::delete(&s.ctx, &s.anna, gone.id).await.unwrap();
+
+    let answers = sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![
+            s.op("dead", What::SetDone { item: gone.uuid.clone(), done: true }),
+            s.op("live", What::SetDone { item: here.uuid.clone(), done: true }),
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(answers[0].outcome, Outcome::Refused { why: Refusal::Gone });
+    assert!(matches!(answers[1].outcome, Outcome::Applied { .. }));
+    assert!(
+        s.rows().await.iter().find(|r| r.id == here.id).unwrap().done_at.is_some(),
+        "the change behind the refusal was dropped too"
+    );
+}
+
+/// Deleting something already deleted is what the operation wanted.
+///
+/// Refusing it would tell somebody their delete failed when the row is exactly as they
+/// meant to leave it.
+#[rstest]
+#[tokio::test]
+async fn deleting_what_has_already_gone_is_success(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+    items::delete(&s.ctx, &s.anna, milk.id).await.unwrap();
+
+    let answers = sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![s.op("del", What::Delete { item: milk.uuid.clone() })],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(answers[0].outcome, Outcome::Applied { item: None });
+}
+
+// ------------------------------------------------------------------- add is idempotent
+
+/// Anna adds `2 kg apples`. Ben, offline, adds it too.
+///
+/// One row, and it does not become 4 kg. Somebody adding a thing has not looked at the
+/// amount -- docs/offline.md (1).
+#[rstest]
+#[tokio::test]
+async fn two_people_adding_the_same_thing_make_one_row(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    items::quick_add(&s.ctx, &s.anna, s.list.id, None, "2 kg apples")
+        .await
+        .unwrap();
+
+    sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![s.op(
+            "add",
+            What::Add {
+                item: item::Uuid::mint(),
+                line: Some("2 kg apples".into()),
+                name: None,
+                amount: Amount(1.0),
+                unit: None,
+            },
+        )],
+    )
+    .await
+    .unwrap();
+
+    let rows = s.rows().await;
+    assert_eq!(rows.len(), 1, "two rows for one intention");
+    assert_eq!(rows[0].amount, Amount(2.0), "the amount was added up");
+}
+
+// ------------------------------------------------------------------------- the clock
+
+/// A tick is stamped with when the device says it happened, not when it arrived.
+///
+/// The whole reason this route exists rather than a replay through the REST ones: a
+/// queue that sat in a pocket for an hour was claiming the shopping was done an hour
+/// after it was.
+#[rstest]
+#[tokio::test]
+async fn a_tick_keeps_the_time_it_was_made(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+    let an_hour_ago = OffsetDateTime::now_utc() - time::Duration::hours(1);
+
+    let mut operation = s.op("tick", What::SetDone { item: milk.uuid.clone(), done: true });
+    operation.at = an_hour_ago;
+
+    sync::replay(&s.ctx, &s.ben, vec![operation]).await.unwrap();
+
+    let done_at = s.rows().await[0].done_at.unwrap().0;
+    assert!(
+        (done_at - an_hour_ago).abs() < time::Duration::seconds(2),
+        "stamped {done_at}, expected about {an_hour_ago}"
+    );
+}
+
+/// A clock set to next year does not get to say the shopping was done next year.
+///
+/// Behind is believed and unbounded -- a phone in a drawer for a month is telling the
+/// truth. Ahead is not: nothing that has happened can have happened after it arrived.
+#[rstest]
+#[tokio::test]
+async fn a_clock_that_runs_fast_is_pulled_back(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+    let next_year = OffsetDateTime::now_utc() + time::Duration::days(365);
+
+    let mut operation = s.op("tick", What::SetDone { item: milk.uuid.clone(), done: true });
+    operation.at = next_year;
+
+    sync::replay(&s.ctx, &s.ben, vec![operation]).await.unwrap();
+
+    let done_at = s.rows().await[0].done_at.unwrap().0;
+    assert!(done_at < next_year - time::Duration::days(1), "stamped {done_at}");
+}
+
+// ------------------------------------------------------------------------- the sweep
+
+/// Ben sweeps two rows in a shop. Anna ticks a third off meanwhile.
+///
+/// Ben's sweep names the two it meant, so Anna's third survives -- docs/offline.md (4).
+#[rstest]
+#[tokio::test]
+async fn a_sweep_takes_only_what_the_device_could_see(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let bread = s.add("Bread").await;
+    let milk = s.add("Milk").await;
+    let eggs = s.add("Eggs").await;
+
+    for row in [&bread, &milk] {
+        items::set_done(&s.ctx, &s.ben, row.id, true).await.unwrap();
+    }
+    // Anna, at home, after Ben pressed the button.
+    items::set_done(&s.ctx, &s.anna, eggs.id, true).await.unwrap();
+
+    sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![s.op(
+            "sweep",
+            What::ClearDone {
+                items: vec![bread.uuid.clone(), milk.uuid.clone()],
+            },
+        )],
+    )
+    .await
+    .unwrap();
+
+    let left: Vec<_> = s.rows().await.into_iter().map(|r| r.id).collect();
+    assert_eq!(left, vec![eggs.id], "somebody else's tick was swept away");
+}
+
+// -------------------------------------------------------------------------- the rename
+
+/// Anna sets Milk to 5. Ben, offline, renames the copy that still said 1.
+///
+/// Both survive -- docs/offline.md (5).
+#[rstest]
+#[tokio::test]
+async fn a_rename_against_a_changed_row_splits_it(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+
+    items::update(
+        &s.ctx,
+        &s.anna,
+        milk.id,
+        Name("Milk".into()),
+        Amount(5.0),
+        milk.unit_id,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let answers = sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![s.op(
+            "rename",
+            What::Update {
+                item: milk.uuid.clone(),
+                name: Name("Whole milk".into()),
+                amount: Amount(1.0),
+                unit: milk.unit_id,
+                seen: Some(items::Seen {
+                    name: Name("Milk".into()),
+                    amount: Amount(1.0),
+                    unit_id: milk.unit_id,
+                }),
+            },
+        )],
+    )
+    .await
+    .unwrap();
+
+    let Outcome::Applied { item: Some(renamed) } = &answers[0].outcome else {
+        panic!("the rename did not apply");
+    };
+    assert_ne!(renamed.id, milk.id);
+    assert_eq!(renamed.amount, Amount(1.0), "it took the other person's number");
+
+    let rows = s.rows().await;
+    assert_eq!(rows.len(), 2, "one of the two edits was lost");
+    assert_eq!(rows[0].amount, Amount(5.0));
+}
+
+// -------------------------------------------------------------------------- losing access
+
+/// Ben is removed at 14:00 and reaches signal at 14:30, with edits stamped 13:50.
+///
+/// Refused, whatever his phone says about when he did the work: access is decided by
+/// arrival, never by the removed device's clock -- docs/offline.md (8).
+#[rstest]
+#[tokio::test]
+async fn work_from_somebody_removed_is_refused_however_it_is_stamped(
+    #[future(awt)] pool: SqlitePool,
+) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+
+    let ben = s.ben.person().unwrap().id;
+    lists::remove_member(&s.ctx, &s.anna, s.list.id, ben).await.unwrap();
+
+    let mut operation = s.op("tick", What::SetDone { item: milk.uuid.clone(), done: true });
+    operation.at = OffsetDateTime::now_utc() - time::Duration::minutes(40);
+
+    let answers = sync::replay(&s.ctx, &s.ben, vec![operation]).await.unwrap();
+
+    assert_eq!(answers[0].outcome, Outcome::Refused { why: Refusal::NotAllowed });
+    assert!(s.rows().await[0].done_at.is_none(), "a removed person still wrote");
+}
+
+/// A refused operation is not remembered as applied.
+///
+/// If Ben is invited back, the work his phone kept must still land -- and it cannot if
+/// the server thinks it has already seen it.
+#[rstest]
+#[tokio::test]
+async fn refused_work_lands_if_they_are_invited_back(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+    let ben = s.ben.person().unwrap().id;
+
+    lists::remove_member(&s.ctx, &s.anna, s.list.id, ben).await.unwrap();
+    let operation = s.op("tick", What::SetDone { item: milk.uuid.clone(), done: true });
+    sync::replay(&s.ctx, &s.ben, vec![operation.clone()]).await.unwrap();
+
+    let token = lists::invite(&s.ctx, &s.anna, s.list.id, Role::Editor).await.unwrap();
+    lists::join(&s.ctx, &s.ben, &token).await.unwrap();
+
+    let answers = sync::replay(&s.ctx, &s.ben, vec![operation]).await.unwrap();
+
+    assert!(matches!(answers[0].outcome, Outcome::Applied { .. }));
+    assert!(s.rows().await[0].done_at.is_some());
+}
+
+// ----------------------------------------------------------------------- a list that went
+
+/// A fortnight of changes for a list somebody deleted. They cannot be applied and never
+/// will be -- docs/offline.md (9). Dropped, and said.
+#[rstest]
+#[tokio::test]
+async fn changes_for_a_list_that_has_gone_are_refused(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+    let operation = s.op("tick", What::SetDone { item: milk.uuid.clone(), done: true });
+
+    lists::delete(&s.ctx, &s.anna, s.list.id).await.unwrap();
+
+    let answers = sync::replay(&s.ctx, &s.ben, vec![operation]).await.unwrap();
+
+    assert_eq!(answers[0].outcome, Outcome::Refused { why: Refusal::ListGone });
+}

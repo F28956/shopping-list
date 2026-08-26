@@ -12,6 +12,7 @@ pub mod me;
 pub mod notes;
 pub mod reference;
 pub mod sharing;
+pub mod sync;
 
 use domain::models::{Direction, OrderBy, Paging};
 

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            UPDATE items SET done_at = CASE WHEN ?1 THEN unixepoch() ELSE NULL END\n            WHERE id = ?2\n            RETURNING\n                id          as \"id!: Id\",\n                uuid        as \"uuid!: Uuid\",\n                list_id     as \"list_id: list::Id\",\n                name        as \"name: Name\",\n                amount      as \"amount: Amount\",\n                unit_id     as \"unit_id?: unit::Id\",\n                done_at     as \"done_at?: DoneAt\",\n                created_at  as \"created_at: CreatedAt\"\n            ",
+  "query": "\n            UPDATE items SET done_at = CASE WHEN ?1 THEN ?3 ELSE NULL END\n            WHERE id = ?2\n            RETURNING\n                id          as \"id!: Id\",\n                uuid        as \"uuid!: Uuid\",\n                list_id     as \"list_id: list::Id\",\n                name        as \"name: Name\",\n                amount      as \"amount: Amount\",\n                unit_id     as \"unit_id?: unit::Id\",\n                done_at     as \"done_at?: DoneAt\",\n                created_at  as \"created_at: CreatedAt\"\n            ",
   "describe": {
     "columns": [
       {
@@ -93,7 +93,7 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 3
     },
     "nullable": [
       false,
@@ -106,5 +106,5 @@
       false
     ]
   },
-  "hash": "675889a6b5e03efec178728c4c6cdf0d3d6c2466cf24fba2c791f00c5e85ebda"
+  "hash": "34b0e5da284151541503f20157006ab4cd18010629de1d9dc4a70b1f2355359d"
 }
