@@ -1533,6 +1533,44 @@ async fn ownership_cannot_be_invited(#[future(awt)] pool: SqlitePool) {
     );
 }
 
+/// A spent link grants nothing, not even to somebody already on the list.
+///
+/// The narrow version of the same leak: a viewer who came by their own link and later
+/// got hold of a used editor one would be promoted by it.
+#[rstest]
+#[tokio::test]
+async fn a_used_link_cannot_promote_a_member(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let third = person(&s.ctx.db, "google-oauth2|third").await;
+
+    // They arrive as a viewer, by a link of their own.
+    let viewing = lists::invite(&s.ctx, &s.mine, s.list.id, Role::Viewer)
+        .await
+        .unwrap();
+    lists::join(&s.ctx, &s.theirs, &viewing).await.unwrap();
+
+    // Somebody else is invited as an editor and uses their link.
+    let editing = lists::invite(&s.ctx, &s.mine, s.list.id, Role::Editor)
+        .await
+        .unwrap();
+    lists::join(&s.ctx, &third, &editing).await.unwrap();
+
+    // The viewer then gets hold of that spent editor link.
+    lists::join(&s.ctx, &s.theirs, &editing).await.unwrap();
+
+    assert_eq!(
+        lists::role(&s.ctx, &s.theirs, s.list.id).await.unwrap(),
+        Role::Viewer,
+        "a spent link promoted somebody"
+    );
+    assert_eq!(
+        items::quick_add(&s.ctx, &s.theirs, s.list.id, "not allowed")
+            .await
+            .err(),
+        Some(ServiceError::Forbidden)
+    );
+}
+
 /// A spent link is spent for everybody else.
 ///
 /// A link lives a week. Without this, a forwarded message or a screenshot let somebody

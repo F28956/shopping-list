@@ -142,10 +142,17 @@ pub async fn join(ctx: &Ctx, actor: &Actor, token: &Token) -> Result<List> {
         .map(|l| l.owner_id == joiner.id)
         .unwrap_or(false);
 
-    if invite.used_at.is_some() && held.is_none() && !owner {
+    let spent = invite.used_at.is_some();
+
+    if spent && held.is_none() && !owner {
         return Err(ServiceError::NotFound);
     }
-    if held.is_none_or(|held| held < invite.role) {
+
+    // A spent link grants nothing — not even to somebody already here. Without the
+    // `!spent`, a viewer who came by their own link and later got hold of a used
+    // editor one would be promoted by it: narrower than admitting a stranger, but
+    // still a link doing something after it was spent.
+    if !spent && held.is_none_or(|held| held < invite.role) {
         ListMember::put(&ctx.db, invite.list_id, joiner.id, invite.role).await?;
     }
     Invite::mark_used(&ctx.db, token).await?;
