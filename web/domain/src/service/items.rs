@@ -78,16 +78,7 @@ pub async fn create(
         return Err(ServiceError::InvalidInput);
     }
 
-    // Counted rather than measured is still a unit, and `unit` is the one that says
-    // so. Left as NULL, "milk" and "1 unit milk" are different units and so different
-    // rows, and the list grows a near-duplicate that nothing will ever merge.
-    let unit_id = match unit_id {
-        Some(given) => Some(given),
-        None => unit::Unit::get(&ctx.db, unit::Lookup::Name(unit::Name("unit".into())))
-            .await
-            .map(|u| u.id)
-            .ok(),
-    };
+    let unit_id = measured_or_counted(ctx, unit_id).await;
 
     // Adding something the list already wants changes nothing: it is already there,
     // and that is the whole answer. Two rows saying `Milk` are never two intentions,
@@ -120,6 +111,29 @@ pub async fn create(
 
     ctx.changes.announce(list_id);
     Ok(item)
+}
+
+/// The unit an item ends up with, given what a caller asked for.
+///
+/// Counted rather than measured is still a unit, and `unit` is the one that says so.
+/// Left as NULL, "milk" and "1 unit milk" are different units and so different rows,
+/// and the list grows a near-duplicate that nothing will ever merge.
+///
+/// Applied on every write, not only on the first. It used to live inside `create`
+/// alone, so an item added measured and then edited back to nothing kept the NULL --
+/// and became exactly the near-duplicate this exists to prevent.
+///
+/// `unit` missing from the units table is not an error. It is seeded by migration, so
+/// its absence means somebody has deliberately taken it out, and refusing every write
+/// on a shopping list over that would be the wrong size of reaction.
+async fn measured_or_counted(ctx: &Ctx, asked: Option<unit::Id>) -> Option<unit::Id> {
+    match asked {
+        Some(given) => Some(given),
+        None => unit::Unit::get(&ctx.db, unit::Lookup::Name(unit::Name("unit".into())))
+            .await
+            .map(|u| u.id)
+            .ok(),
+    }
 }
 
 /// One page of a list's items, if the list is the actor's.
@@ -186,6 +200,7 @@ pub async fn update(
         return split(ctx, actor, &current, name, seen).await;
     }
 
+    let unit_id = measured_or_counted(ctx, unit_id).await;
     let item = Item::update(&ctx.db, id, name, amount, unit_id).await?;
 
     // Correcting a name teaches the correction. The typo it replaced stays until it

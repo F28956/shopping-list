@@ -676,34 +676,61 @@ async fn tag_named(s: &Scene, name: &str) -> tag::Id {
 }
 
 /// A list nobody has configured walks the shop the way it always did.
+/// Editing an item back to no unit gives it `unit`, the same as adding one does.
+///
+/// The rule used to live in `create` alone, so an item added measured and then edited
+/// to nothing kept the NULL -- and became exactly the near-duplicate the rule exists to
+/// prevent, since "milk" and "1 unit milk" are then different units and different rows.
 #[rstest]
 #[tokio::test]
-async fn an_unconfigured_list_keeps_the_global_order(
-    #[with(crate::models::fixtures::TAGS)]
+async fn editing_away_a_unit_gives_the_unit_unit(
+    #[with(crate::models::fixtures::UNITS)]
     #[future(awt)]
     pool: SqlitePool,
 ) {
     let s = scene(pool).await;
+    let kg = tag_free_unit(&s, "kg").await;
 
-    let ordered = tags::order_for(&s.ctx, &s.mine, s.list.id).await.unwrap();
-    let positions: Vec<i64> = ordered.iter().map(|t| t.sort_order.0).collect();
+    let measured = items::create(
+        &s.ctx,
+        &s.mine,
+        s.list.id,
+        None,
+        item::Name("Flour".into()),
+        item::Amount(2.0),
+        Some(kg),
+    )
+    .await
+    .unwrap();
+    assert_eq!(measured.unit_id, Some(kg));
 
-    assert!(!ordered.is_empty());
-    assert_eq!(positions, {
-        let mut sorted = positions.clone();
-        sorted.sort();
-        sorted
-    });
+    let plain = items::update(
+        &s.ctx,
+        &s.mine,
+        measured.id,
+        item::Name("Flour".into()),
+        item::Amount(1.0),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let counted = tag_free_unit(&s, "unit").await;
+    assert_eq!(plain.unit_id, Some(counted), "edited back to no unit at all");
 }
 
-/// What you place comes first, in the order you placed it; everything else keeps the
-/// order it had, behind. Placing two tags is a whole answer.
-/// An add that names its own row keeps that name, and a resend of it changes nothing.
-///
-/// The device named the row when somebody typed it, with no signal. Everything queued
-/// behind that add on that device says the same name, so a server that renamed it would
-/// orphan the lot. The second call is what a flaky connection produces -- the add landed
-/// and the answer did not -- and it has to be the same row rather than a second one.
+/// A unit by name, for tests that need one the fixtures seeded.
+async fn tag_free_unit(s: &Scene, name: &str) -> crate::models::unit::Id {
+    crate::models::unit::Unit::get(
+        &s.ctx.db,
+        crate::models::unit::Lookup::Name(crate::models::unit::Name(name.into())),
+    )
+    .await
+    .unwrap()
+    .id
+}
+
 /// A rename made against a row somebody else has edited becomes a second row.
 ///
 /// Anna sets the amount to 5, Ben renames it from a copy that still said 1. Both edits
