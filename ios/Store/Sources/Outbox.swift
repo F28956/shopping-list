@@ -10,59 +10,96 @@ struct QueuedOperation: Identifiable, Equatable {
     var kind: String
     var listID: Int64
     var listUUID: String
+    /// The row's id on the server, where there is one. Negative for a row this device
+    /// made offline, and used only for marking the screen — what goes on the wire is
+    /// always the uuid.
     var itemID: Int64
-    /// What the item is called once operations name rows rather than ids — see
-    /// `docs/offline.md`. Carried from the first day so the table needs no migration
-    /// when `POST /api/sync` lands.
+    /// What operations call the row. The only name that travels.
     var itemUUID: String
-    /// The arguments, as JSON. `{"done":true}` for ``Kind/setDone``.
+    /// The arguments, as JSON — whatever the kind needs beyond the columns beside it.
     var payload: String
-    /// When this device says it happened. Not sent yet: the REST routes stamp their
-    /// own time, and carrying this is what `POST /api/sync` is for. Recorded anyway,
-    /// so the queue is not lying about when it was written.
+    /// When this device says it happened. Sent with the operation and clamped forward
+    /// by the server; behind is believed.
     var at: Date
 
     enum Kind {
+        static let add = "add"
         static let setDone = "set_done"
+        static let update = "update"
+        static let delete = "delete"
+        static let clearDone = "clear_done"
+    }
+
+    // MARK: - Reading the payload
+    //
+    // The five kinds want different arguments, and five sets of nullable columns would
+    // be worse than one blob. These are the readings the screen needs to lay unsent work
+    // back over the server's answer — see `ItemsView.withUnsent`.
+
+    private var fields: [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] ?? [:]
     }
 
     /// Whether a queued ``Kind/setDone`` is a tick or an untick.
-    var done: Bool { payload.contains("\"done\":true") }
+    var done: Bool { fields["done"] as? Bool ?? false }
+    /// The name a queued ``Kind/update`` gives the row.
+    var editedName: String? { fields["name"] as? String }
+    /// The amount a queued ``Kind/update`` gives the row.
+    var editedAmount: Double? { fields["amount"] as? Double }
+    /// The unit a queued ``Kind/update`` gives the row.
+    var editedUnitID: Int64? { (fields["unit_id"] as? NSNumber)?.int64Value }
+    /// The rows a queued ``Kind/clearDone`` named.
+    var sweptUUIDs: Set<String> { Set(fields["items"] as? [String] ?? []) }
 
-    /// What to call this when telling somebody it could not be applied.
-    var described: String {
-        switch kind {
-        case Kind.setDone: return done ? "crossing something off" : "putting something back"
-        default: return "a change"
-        }
+    /// This operation as the route wants it.
+    var onTheWire: SyncOperation {
+        let seen = fields["seen"] as? [String: Any]
+        return SyncOperation(
+            id: id,
+            at: at,
+            list: listUUID,
+            kind: kind,
+            item: itemUUID.isEmpty ? nil : itemUUID,
+            items: fields["items"] as? [String],
+            line: fields["line"] as? String,
+            name: editedName,
+            amount: editedAmount,
+            unitID: editedUnitID,
+            seen: seen.map {
+                SeenOn(
+                    name: $0["name"] as? String ?? "",
+                    amount: $0["amount"] as? Double ?? 1,
+                    unitID: ($0["unit_id"] as? NSNumber)?.int64Value
+                )
+            },
+            done: kind == Kind.setDone ? done : nil
+        )
     }
 }
 
 /// What happened when the queue was last drained.
 ///
-/// `sent` is how many reached the server, `waiting` how many are still here, and
-/// `dropped` names the ones that will never land — an item somebody deleted while this
-/// device was away. Dropped work is worth telling somebody about: they watched
-/// themselves do it. Refused work is *not* dropped; see ``Outbox/drain(through:)``.
+/// `sent` reached the server. `waiting` is still here — either because there was no
+/// connection, or because it was refused for want of access and is being kept in case
+/// that changes. `lost` names what will never land, in words for a person: they watched
+/// themselves do it, so it is worth saying.
 struct Drained: Equatable {
     var sent: Int = 0
     var waiting: Int = 0
-    var dropped: [String] = []
+    var lost: [String] = []
+    /// Something was refused. The one state of the three that interrupts.
+    var refused: Bool = false
 }
 
 /// Changes made on this device that the server has not been told about yet.
 ///
 /// The counterpart of ``Cache``: that one holds what the server said, this one holds
-/// what this device said back. Together they are what lets somebody cross things off
-/// in a shop with no signal and find the list right when they come out.
+/// what this device said back. Together they are what lets somebody shop with no signal
+/// and find the list right when they come out.
 ///
 /// Unlike the cache, **this is not disposable**. A queued change exists nowhere else in
 /// the world until it is sent, which is why the database it shares with the cache is
 /// migrated by hand rather than thrown away on a schema change.
-///
-/// Ordering is `sequence`, which is the row id and therefore monotonic: a device's own
-/// changes replay in the order they were made, always. Ordering *between* devices is a
-/// different question, decided by `at` — see `docs/offline.md`.
 final class Outbox: @unchecked Sendable {
 
     private let queue: DatabaseQueue?
@@ -71,12 +108,69 @@ final class Outbox: @unchecked Sendable {
         self.queue = queue
     }
 
-    /// Queues a tick.
-    ///
-    /// The caller has already changed what is on screen. This is the promise that the
-    /// change will reach the server eventually, and the only place it exists until it
-    /// does.
+    // MARK: - Queueing
+    //
+    // Every one of these is called after the screen has already changed. They are the
+    // promise that the change will reach the server eventually, and the only place it
+    // exists until it does.
+
+    /// Puts something on the list, under a name this device mints now.
+    func add(uuid: String, localID: Int64, line: String, on list: List) {
+        queue(Kind.add, uuid, localID, list, ["line": line])
+    }
+
     func setDone(_ item: Item, on list: List, done: Bool) {
+        queue(Kind.setDone, item.uuid, item.id, list, ["done": done])
+    }
+
+    /// Corrects what somebody typed, carrying what the row looked like at the time.
+    ///
+    /// `seen` is not decoration: it is what lets the server tell a plain rename from a
+    /// rename of something somebody else has edited meanwhile, and split rather than
+    /// overwrite. See `docs/offline.md` (5).
+    func update(
+        _ item: Item,
+        on list: List,
+        name: String,
+        amount: Double,
+        unitID: Int64?
+    ) {
+        var seen: [String: Any] = ["name": item.name, "amount": item.amount]
+        if let was = item.unitID { seen["unit_id"] = was }
+
+        var fields: [String: Any] = ["name": name, "amount": amount, "seen": seen]
+        if let unitID { fields["unit_id"] = unitID }
+
+        queue(Kind.update, item.uuid, item.id, list, fields)
+    }
+
+    func delete(_ item: Item, on list: List) {
+        queue(Kind.delete, item.uuid, item.id, list, [:])
+    }
+
+    /// Empties the trolley of exactly the rows this device could see.
+    ///
+    /// The ids are the point. "Clear everything that is done" replayed an hour later is
+    /// a different sentence, and would sweep away what somebody else ticked off
+    /// meanwhile — `docs/offline.md` (4).
+    func clearDone(_ done: [Item], on list: List) {
+        // A sweep is about a list, not a row, so there is no item to name. The column is
+        // not nullable and an empty string is the honest value for "no row".
+        queue(Kind.clearDone, "", 0, list, ["items": done.map(\.uuid)])
+    }
+
+    private typealias Kind = QueuedOperation.Kind
+
+    private func queue(
+        _ kind: String,
+        _ itemUUID: String,
+        _ itemID: Int64,
+        _ list: List,
+        _ fields: [String: Any]
+    ) {
+        let payload = (try? JSONSerialization.data(withJSONObject: fields))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+
         write { db in
             try db.execute(
                 sql: """
@@ -85,18 +179,14 @@ final class Outbox: @unchecked Sendable {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 arguments: [
-                    UUID().uuidString.lowercased(),
-                    QueuedOperation.Kind.setDone,
-                    list.id,
-                    list.uuid,
-                    item.id,
-                    item.uuid,
-                    done ? "{\"done\":true}" : "{\"done\":false}",
-                    Date(),
+                    UUID().uuidString.lowercased(), kind, list.id, list.uuid,
+                    itemID, itemUUID, payload, Date(),
                 ]
             )
         }
     }
+
+    // MARK: - Reading
 
     /// Everything queued, oldest first.
     func all() -> [QueuedOperation] {
@@ -122,75 +212,59 @@ final class Outbox: @unchecked Sendable {
         write { db in try db.execute(sql: "DELETE FROM operations") }
     }
 
-    /// Sends what is queued, oldest first, and stops at the first thing it cannot send.
-    ///
-    /// **In order, and stopping.** The queue is this device's story of what happened,
-    /// and skipping past a stuck operation to send a later one would tell that story
-    /// out of order — ticking something off after a delete that has not gone yet.
-    ///
-    /// What each outcome means:
-    ///
-    /// - **Sent** — forgotten. The server has it.
-    /// - **No connection** — kept, and the drain stops. The ordinary case, and not an
-    ///   error.
-    /// - **The row is gone** — dropped, and named in the result. Delete is final (see
-    ///   `docs/offline.md`): a tick has nothing to land on and never will. The person
-    ///   is told, because they watched themselves tick it.
-    /// - **Refused** — kept, and the drain stops. Somebody removed from a list keeps
-    ///   their queue: if they are invited back the work is still there, and nothing was
-    ///   quietly binned behind them.
-    /// - **Anything else** — dropped. A malformed operation the server will refuse
-    ///   forever would block everything behind it for good.
-    func drain(through api: API) async -> Drained {
-        var sent = 0
-        var dropped: [String] = []
+    // MARK: - Sending
 
-        for operation in all() {
-            do {
-                try await send(operation, through: api)
-                forget(operation)
+    /// Sends the whole queue in one request and acts on what comes back.
+    ///
+    /// One request rather than one per operation: the batch is this device's story of
+    /// what it did, and the server replays it in order. Each operation gets its own
+    /// answer, so a refusal costs that change and no other.
+    ///
+    /// What each answer means:
+    ///
+    /// - **Applied**, or applied on an earlier send — forgotten. The server has it.
+    /// - **Refused because the list will not have you** — kept. If they are invited back
+    ///   the work is still here, and nothing was binned behind them. Reported, because
+    ///   this is the state worth interrupting somebody for.
+    /// - **Refused for any other reason** — forgotten, and named. A row somebody deleted
+    ///   is not coming back, and blocking the queue on it would cost every change behind
+    ///   it too.
+    /// - **No connection** — nothing is forgotten and nothing is said. The ordinary case.
+    func drain(through api: API) async -> Drained {
+        let queued = all()
+        guard !queued.isEmpty else { return Drained() }
+
+        let answers: [AppliedOperation]
+        do {
+            answers = try await api.sync(queued.map(\.onTheWire))
+        } catch {
+            // The request itself did not get through, or the route refused it rather
+            // than the changes in it. Either way nothing here is thrown away.
+            return Drained(waiting: queued.count)
+        }
+
+        var sent = 0
+        var lost: [String] = []
+        var refused = false
+
+        for answer in answers {
+            if answer.landed {
+                forget(answer.id)
                 sent += 1
-            } catch let problem as APIError {
-                switch problem {
-                case .transport, .forbidden, .notAdmitted, .unauthorized:
-                    return Drained(sent: sent, waiting: waiting, dropped: dropped)
-                case .notFound:
-                    forget(operation)
-                    dropped.append(operation.described)
-                case .badInput, .server:
-                    forget(operation)
-                    dropped.append(operation.described)
-                }
-            } catch {
-                forget(operation)
-                dropped.append(operation.described)
+            } else if answer.keepForLater {
+                refused = true
+            } else {
+                forget(answer.id)
+                if let said = answer.lost { lost.append(said) }
             }
         }
 
-        return Drained(sent: sent, waiting: waiting, dropped: dropped)
+        return Drained(sent: sent, waiting: waiting, lost: lost, refused: refused)
     }
 
-    private func send(_ operation: QueuedOperation, through api: API) async throws {
-        switch operation.kind {
-        case QueuedOperation.Kind.setDone:
-            try await api.setDone(
-                itemID: operation.itemID,
-                listID: operation.listID,
-                done: operation.done
-            )
-        default:
-            // A kind this build does not know is a downgrade, which cannot arise yet.
-            // Refused rather than skipped, so it is never silent.
-            throw APIError.badInput("Unknown queued operation: \(operation.kind)")
-        }
-    }
-
-    private func forget(_ operation: QueuedOperation) {
+    private func forget(_ id: String) {
         write { db in
-            try db.execute(
-                sql: "DELETE FROM operations WHERE sequence = ?",
-                arguments: [operation.sequence]
-            )
+            try db.execute(sql: "DELETE FROM operations WHERE id = ?", arguments: [id])
         }
     }
 

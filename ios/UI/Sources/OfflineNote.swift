@@ -13,18 +13,29 @@ struct OfflineNote: View {
     /// "syncing…", because a person can act on a number — it is the difference between
     /// staying put for a moment and walking out of the shop.
     var waiting: Int = 0
+    /// Something was refused and will not retry itself. The one state of the three
+    /// worth colouring: the other two heal on their own and this one does not.
+    var refused: Bool = false
 
     var body: some View {
-        Label(said, systemImage: offline ? "icloud.slash" : "clock.arrow.circlepath")
+        Label(said, systemImage: symbol)
             .font(.footnote)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(refused ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
             .accessibilityIdentifier("offline.note")
+    }
+
+    private var symbol: String {
+        if refused { return "exclamationmark.triangle" }
+        return offline ? "icloud.slash" : "clock.arrow.circlepath"
     }
 
     /// The three states of `docs/offline.md`, minus the one that interrupts: up to
     /// date, and offline with N changes waiting.
     private var said: String {
         let changes = waiting == 1 ? "change" : "changes"
+        if refused {
+            return "\(waiting) \(changes) could not be sent. You are no longer on that list."
+        }
         switch (offline, waiting) {
         case (true, 0): return "Offline. Showing what was last loaded."
         case (true, _): return "Offline. \(waiting) \(changes) waiting to be sent."

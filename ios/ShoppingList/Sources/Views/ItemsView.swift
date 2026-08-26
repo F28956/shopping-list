@@ -33,7 +33,10 @@ struct ItemsView: View {
     @State private var waiting = 0
     /// The rows carrying one of them. Marked on the row itself rather than with a
     /// banner: it is a detail about that line, not news about the app.
-    @State private var unsent: Set<Int64> = []
+    @State private var unsent: Set<String> = []
+    /// Something was refused and will not retry itself. The one state of the three in
+    /// `docs/offline.md` that is worth interrupting somebody for.
+    @State private var refused = false
     /// Guards against a drain and a reload calling each other round in a circle.
     @State private var draining = false
     @FocusState private var typing: Bool
@@ -83,8 +86,8 @@ struct ItemsView: View {
                 Section { suggestionSection }
             }
 
-            if offline || waiting > 0 {
-                Section { OfflineNote(offline: offline, waiting: waiting) }
+            if offline || waiting > 0 || refused {
+                Section { OfflineNote(offline: offline, waiting: waiting, refused: refused) }
             }
 
             if truncated {
@@ -296,7 +299,7 @@ struct ItemsView: View {
                 // detail about that line, not news about the app -- and somebody in a
                 // shop with no signal would have every line marked, which is a banner
                 // by another name.
-                if unsent.contains(item.id) {
+                if unsent.contains(item.uuid) {
                     Image(systemName: "clock")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -360,7 +363,28 @@ struct ItemsView: View {
         typing = true
         suggestions.clear()
 
-        await attempt { try await api.add(typed, to: list) }
+        // The row appears at once, under a uuid minted here and a **negative id**. The
+        // negative id never leaves the device: it is a placeholder so the screen has
+        // something to key on, and the uuid is what the operation actually names. When
+        // the add lands, the reload replaces it with the server's row — same uuid, real
+        // id.
+        //
+        // The name shown until then is the line as typed, near enough. `2 kg apples` is
+        // parsed on the server, so the amount and unit arrive with the reload; guessing
+        // them here would be a second parser to disagree with the first.
+        let uuid = UUID().uuidString.lowercased()
+        let local = Item(
+            id: -Int64(Date().timeIntervalSince1970 * 1000),
+            uuid: uuid,
+            name: typed,
+            amount: 1,
+            unitID: nil,
+            doneAt: nil,
+            tagIDs: []
+        )
+        cache.outbox.add(uuid: uuid, localID: local.id, line: typed, on: list)
+        show { $0 + [local] }
+        await drain()
     }
 
     /// Opens the editor, once we know what the item is already filed under.
@@ -386,14 +410,31 @@ struct ItemsView: View {
     /// the diff. Only what changed is sent -- re-attaching a tag an item already has
     /// would be a conflict, and detaching one it never had a miss.
     private func apply(_ edit: ItemEdit, to target: Editing) async throws {
-        try await api.update(
+        cache.outbox.update(
             target.item,
             on: list,
             name: edit.name,
             amount: edit.amount,
             unitID: edit.unitID
         )
+        show { rows in
+            rows.map {
+                guard $0.uuid == target.item.uuid else { return $0 }
+                return Item(
+                    id: $0.id,
+                    uuid: $0.uuid,
+                    name: edit.name,
+                    amount: edit.amount,
+                    unitID: edit.unitID,
+                    doneAt: $0.doneAt,
+                    tagIDs: $0.tagIDs
+                )
+            }
+        }
+        await drain()
 
+        // Tags are still online-only, and say so by failing rather than by pretending.
+        // They are the last operations without an offline path; see docs/offline.md.
         let before = Set(target.attached.map(\.id))
         for tag in tags where edit.tagIDs.contains(tag.id) && !before.contains(tag.id) {
             try await api.attach(tag, to: target.item, on: list)
@@ -418,13 +459,7 @@ struct ItemsView: View {
 
         let done = !item.isDone
         cache.outbox.setDone(item, on: list, done: done)
-        items = items.map {
-            $0.id == item.id ? $0.withDone(done) : $0
-        }
-        cache.remember(items: items, on: list)
-        unsent.insert(item.id)
-        waiting = cache.outbox.waiting
-
+        show { rows in rows.map { $0.uuid == item.uuid ? $0.withDone(done) : $0 } }
         await drain()
     }
 
@@ -444,18 +479,27 @@ struct ItemsView: View {
         draining = false
 
         refreshUnsent()
-        if let lost = drained.dropped.first {
-            error = "Someone had already deleted what you were \(lost)."
-        }
-        // Read back what the server made of it. Re-entry stops here: the queue this
-        // guards on is empty now.
+        refused = drained.refused
+        if let lost = drained.lost.first { error = lost }
+        // Read back what the server made of it — which is also how a row created here
+        // gets its real id. Re-entry stops at the guard above: the queue is empty now.
         if drained.sent > 0 { await load() }
     }
 
     private func refreshUnsent() {
         let queued = cache.outbox.forList(list)
-        unsent = Set(queued.map(\.itemID))
+        unsent = Set(queued.map(\.itemUUID))
         waiting = queued.count
+    }
+
+    /// Rewrites what is on screen, and remembers it.
+    ///
+    /// One place, so an optimistic change cannot end up on the screen but not in the
+    /// cache — which is how a change survives the app being killed before it is sent.
+    private func show(_ change: ([Item]) -> [Item]) {
+        items = change(items)
+        cache.remember(items: items, on: list)
+        refreshUnsent()
     }
 
     /// The server's answer with this device's unsent changes laid back over it.
@@ -463,25 +507,74 @@ struct ItemsView: View {
     /// Without this a successful load would visibly undo a tick that is still queued —
     /// the server has not been told, so it answers with the old state, and the row
     /// would flick back for as long as the queue is stuck.
-    private func withUnsent(_ items: [Item]) -> [Item] {
+    /// The server's answer with this device's unsent changes laid back over it.
+    ///
+    /// Without this a successful load would visibly undo work that is still queued: the
+    /// server has not been told, so it answers with the old state, and the rows would
+    /// flick back for as long as the queue is stuck.
+    ///
+    /// Rows this device created and has not sent are not in the server's answer at all,
+    /// so they are carried across from what is already on screen rather than rebuilt.
+    private func withUnsent(_ fromServer: [Item]) -> [Item] {
         let queued = cache.outbox.forList(list)
-        guard !queued.isEmpty else { return items }
+        guard !queued.isEmpty else { return fromServer }
 
-        var result = items
+        let known = Set(fromServer.map(\.uuid))
+        let mine = Set(queued.map(\.itemUUID))
+        var rows = fromServer + items.filter { !known.contains($0.uuid) && mine.contains($0.uuid) }
+
         for operation in queued {
-            result = result.map {
-                $0.id == operation.itemID ? $0.withDone(operation.done) : $0
+            switch operation.kind {
+            case QueuedOperation.Kind.setDone:
+                rows = rows.map {
+                    $0.uuid == operation.itemUUID ? $0.withDone(operation.done) : $0
+                }
+
+            case QueuedOperation.Kind.delete:
+                rows = rows.filter { $0.uuid != operation.itemUUID }
+
+            case QueuedOperation.Kind.update:
+                rows = rows.map { row in
+                    guard row.uuid == operation.itemUUID else { return row }
+                    return Item(
+                        id: row.id,
+                        uuid: row.uuid,
+                        name: operation.editedName ?? row.name,
+                        amount: operation.editedAmount ?? row.amount,
+                        unitID: operation.editedUnitID ?? row.unitID,
+                        doneAt: row.doneAt,
+                        tagIDs: row.tagIDs
+                    )
+                }
+
+            case QueuedOperation.Kind.clearDone:
+                rows = rows.filter { !operation.sweptUUIDs.contains($0.uuid) }
+
+            default:
+                break
             }
         }
-        return result
+        return rows
     }
 
     private func remove(_ item: Item) async {
-        await attempt { try await api.delete(item, on: list) }
+        guard list.mayEdit else { return }
+        cache.outbox.delete(item, on: list)
+        show { rows in rows.filter { $0.uuid != item.uuid } }
+        await drain()
     }
 
+    /// Empties the trolley of what is on this screen, and says so on the wire.
+    ///
+    /// The rows are named rather than described. "Everything that is done" replayed an
+    /// hour later would also take what somebody else ticked off meanwhile, which nobody
+    /// asked for — `docs/offline.md` (4).
     private func clearDone() async {
-        await attempt { try await api.clearDone(on: list) }
+        guard list.mayEdit, !done.isEmpty else { return }
+        let swept = done
+        cache.outbox.clearDone(swept, on: list)
+        show { rows in rows.filter { row in !swept.contains { $0.uuid == row.uuid } } }
+        await drain()
     }
 
     /// Keeps this screen in step with the same list open somewhere else.

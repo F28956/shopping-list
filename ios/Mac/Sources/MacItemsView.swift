@@ -31,7 +31,9 @@ struct MacItemsView: View {
     /// How many changes made here are still waiting to be sent.
     @State private var waiting = 0
     /// The rows carrying one of them — see the phone's `ItemsView`.
-    @State private var unsent: Set<Int64> = []
+    @State private var unsent: Set<String> = []
+    /// See the phone's `ItemsView.refused`.
+    @State private var refused = false
     /// Guards against a drain and a reload calling each other round in a circle.
     @State private var draining = false
     @FocusState private var typing: Bool
@@ -70,8 +72,8 @@ struct MacItemsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if offline || waiting > 0 {
-                OfflineNote(offline: offline, waiting: waiting)
+            if offline || waiting > 0 || refused {
+                OfflineNote(offline: offline, waiting: waiting, refused: refused)
             }
 
             // "Nothing on this list yet" is a claim, and after a load that failed
@@ -345,7 +347,20 @@ struct MacItemsView: View {
         line = ""
         typing = true
         suggestions.clear()
-        await attempt { try await api.add(typed, to: list) }
+        // See the phone's `ItemsView.add` for the negative id and why it never leaves.
+        let uuid = UUID().uuidString.lowercased()
+        let local = Item(
+            id: -Int64(Date().timeIntervalSince1970 * 1000),
+            uuid: uuid,
+            name: typed,
+            amount: 1,
+            unitID: nil,
+            doneAt: nil,
+            tagIDs: []
+        )
+        cache.outbox.add(uuid: uuid, localID: local.id, line: typed, on: list)
+        show { $0 + [local] }
+        await drain()
     }
 
     /// Crosses something off, or puts it back, whether or not there is a connection —
@@ -355,11 +370,7 @@ struct MacItemsView: View {
 
         let done = !item.isDone
         cache.outbox.setDone(item, on: list, done: done)
-        items = items.map { $0.id == item.id ? $0.withDone(done) : $0 }
-        cache.remember(items: items, on: list)
-        unsent.insert(item.id)
-        waiting = cache.outbox.waiting
-
+        show { rows in rows.map { $0.uuid == item.uuid ? $0.withDone(done) : $0 } }
         await drain()
     }
 
@@ -371,38 +382,74 @@ struct MacItemsView: View {
         draining = false
 
         refreshUnsent()
-        if let lost = drained.dropped.first {
-            error = "Someone had already deleted what you were \(lost)."
-        }
+        refused = drained.refused
+        if let lost = drained.lost.first { error = lost }
         if drained.sent > 0 { await load() }
     }
 
     private func refreshUnsent() {
         let queued = cache.outbox.forList(list)
-        unsent = Set(queued.map(\.itemID))
+        unsent = Set(queued.map(\.itemUUID))
         waiting = queued.count
     }
 
-    /// The server's answer with this device's unsent changes laid back over it.
-    private func withUnsent(_ items: [Item]) -> [Item] {
-        let queued = cache.outbox.forList(list)
-        guard !queued.isEmpty else { return items }
+    /// Rewrites what is on screen, and remembers it — see the phone's copy.
+    private func show(_ change: ([Item]) -> [Item]) {
+        items = change(items)
+        cache.remember(items: items, on: list)
+        refreshUnsent()
+    }
 
-        var result = items
+    /// The server's answer with this device's unsent changes laid back over it.
+    private func withUnsent(_ fromServer: [Item]) -> [Item] {
+        let queued = cache.outbox.forList(list)
+        guard !queued.isEmpty else { return fromServer }
+
+        let known = Set(fromServer.map(\.uuid))
+        let mine = Set(queued.map(\.itemUUID))
+        var rows = fromServer + items.filter { !known.contains($0.uuid) && mine.contains($0.uuid) }
+
         for operation in queued {
-            result = result.map {
-                $0.id == operation.itemID ? $0.withDone(operation.done) : $0
+            switch operation.kind {
+            case QueuedOperation.Kind.setDone:
+                rows = rows.map { $0.uuid == operation.itemUUID ? $0.withDone(operation.done) : $0 }
+            case QueuedOperation.Kind.delete:
+                rows = rows.filter { $0.uuid != operation.itemUUID }
+            case QueuedOperation.Kind.update:
+                rows = rows.map { row in
+                    guard row.uuid == operation.itemUUID else { return row }
+                    return Item(
+                        id: row.id,
+                        uuid: row.uuid,
+                        name: operation.editedName ?? row.name,
+                        amount: operation.editedAmount ?? row.amount,
+                        unitID: operation.editedUnitID ?? row.unitID,
+                        doneAt: row.doneAt,
+                        tagIDs: row.tagIDs
+                    )
+                }
+            case QueuedOperation.Kind.clearDone:
+                rows = rows.filter { !operation.sweptUUIDs.contains($0.uuid) }
+            default:
+                break
             }
         }
-        return result
+        return rows
     }
 
     private func remove(_ item: Item) async {
-        await attempt { try await api.delete(item, on: list) }
+        guard list.mayEdit else { return }
+        cache.outbox.delete(item, on: list)
+        show { rows in rows.filter { $0.uuid != item.uuid } }
+        await drain()
     }
 
     private func clearDone() async {
-        await attempt { try await api.clearDone(on: list) }
+        guard list.mayEdit, !done.isEmpty else { return }
+        let swept = done
+        cache.outbox.clearDone(swept, on: list)
+        show { rows in rows.filter { row in !swept.contains { $0.uuid == row.uuid } } }
+        await drain()
     }
 
     private func beginEditing(_ item: Item) async {
@@ -414,13 +461,30 @@ struct MacItemsView: View {
     }
 
     private func apply(_ edit: ItemEdit, to target: Editing) async throws {
-        try await api.update(
+        cache.outbox.update(
             target.item,
             on: list,
             name: edit.name,
             amount: edit.amount,
             unitID: edit.unitID
         )
+        show { rows in
+            rows.map {
+                guard $0.uuid == target.item.uuid else { return $0 }
+                return Item(
+                    id: $0.id,
+                    uuid: $0.uuid,
+                    name: edit.name,
+                    amount: edit.amount,
+                    unitID: edit.unitID,
+                    doneAt: $0.doneAt,
+                    tagIDs: $0.tagIDs
+                )
+            }
+        }
+        await drain()
+
+        // Tags are still online-only, and say so by failing rather than by pretending.
 
         let before = Set(target.attached.map(\.id))
         for tag in tags where edit.tagIDs.contains(tag.id) && !before.contains(tag.id) {
