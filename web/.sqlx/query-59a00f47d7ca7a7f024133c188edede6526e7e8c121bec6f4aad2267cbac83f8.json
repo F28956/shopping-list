@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM item_history_tags WHERE list_id = ?1 AND name = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "59a00f47d7ca7a7f024133c188edede6526e7e8c121bec6f4aad2267cbac83f8"
+}

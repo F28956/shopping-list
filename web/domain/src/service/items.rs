@@ -167,8 +167,9 @@ pub async fn quick_add(ctx: &Ctx, actor: &Actor, list_id: list::Id, line: &str) 
     )
     .await?;
 
-    // File it where this person filed it last time.
-    if let Some(tag_id) = remembered.as_ref().and_then(|e| e.tag_id) {
+    // File it where this person filed it last time -- under everything it was filed
+    // under, not just one of them.
+    for tag_id in Entry::tags_for(&ctx.db, list_id, &name).await.unwrap_or_default() {
         // A tag deleted since it was remembered is not the caller's problem: the item
         // is already added, and an unfiled item beats a failed add.
         let _ = tag::Tag::attach(&ctx.db, item.id, tag_id).await;

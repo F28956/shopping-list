@@ -561,6 +561,113 @@ async fn a_remembered_item_returns_measured_and_filed(#[future(awt)] pool: Sqlit
     );
 }
 
+/// Every tag comes back, not the last one attached.
+///
+/// The memory had a column for one tag, so filing something under a shop and a
+/// category kept whichever was attached second. Clearing the list and adding it again
+/// brought back half of it, which reads as the memory forgetting at random.
+#[rstest]
+#[tokio::test]
+async fn every_remembered_tag_comes_back(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let produce = tags::create(&s.ctx, &Actor::System, tag::Name("produce".into()), None, None)
+        .await
+        .unwrap();
+    let aldi = tags::create(&s.ctx, &Actor::System, tag::Name("aldi".into()), None, None)
+        .await
+        .unwrap();
+
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, "potatoes")
+        .await
+        .unwrap();
+    for tag in [produce.id, aldi.id] {
+        tags::attach(&s.ctx, &s.mine, first.id, tag).await.unwrap();
+    }
+
+    // Crossed off and cleared, the way a shop ends.
+    items::set_done(&s.ctx, &s.mine, first.id, true).await.unwrap();
+    items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap();
+
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, "potatoes")
+        .await
+        .unwrap();
+
+    let mut filed: Vec<_> = tags::for_item(&s.ctx, &s.mine, again.id)
+        .await
+        .unwrap()
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    filed.sort();
+    let mut both = vec![produce.id, aldi.id];
+    both.sort();
+
+    assert_eq!(filed, both, "only some of the filing came back");
+}
+
+/// Taking a tag off is remembered too, and only that one.
+#[rstest]
+#[tokio::test]
+async fn unfiling_forgets_one_tag_and_keeps_the_rest(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let produce = tags::create(&s.ctx, &Actor::System, tag::Name("produce".into()), None, None)
+        .await
+        .unwrap();
+    let aldi = tags::create(&s.ctx, &Actor::System, tag::Name("aldi".into()), None, None)
+        .await
+        .unwrap();
+
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, "potatoes")
+        .await
+        .unwrap();
+    for tag in [produce.id, aldi.id] {
+        tags::attach(&s.ctx, &s.mine, first.id, tag).await.unwrap();
+    }
+    tags::detach(&s.ctx, &s.mine, first.id, aldi.id).await.unwrap();
+
+    items::set_done(&s.ctx, &s.mine, first.id, true).await.unwrap();
+    items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap();
+
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, "potatoes")
+        .await
+        .unwrap();
+
+    let filed: Vec<_> = tags::for_item(&s.ctx, &s.mine, again.id)
+        .await
+        .unwrap()
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    assert_eq!(filed, vec![produce.id], "unfiling was not remembered");
+}
+
+/// Forgetting an item forgets what it was filed under, without a second delete.
+#[rstest]
+#[tokio::test]
+async fn forgetting_an_item_forgets_its_filing(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let produce = tags::create(&s.ctx, &Actor::System, tag::Name("produce".into()), None, None)
+        .await
+        .unwrap();
+
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, "potatoes")
+        .await
+        .unwrap();
+    tags::attach(&s.ctx, &s.mine, first.id, produce.id)
+        .await
+        .unwrap();
+
+    items::forget(&s.ctx, &s.mine, s.list.id, item::Name("potatoes".into()))
+        .await
+        .unwrap();
+
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM item_history_tags")
+        .fetch_one(&s.ctx.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "the filing outlived the memory it hung on");
+}
+
 /// A line that says a unit outranks the remembered one — this week is two litres,
 /// whatever last week was.
 #[rstest]

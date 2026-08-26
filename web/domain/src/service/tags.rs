@@ -83,6 +83,18 @@ pub async fn for_list(
 }
 
 /// Tagging is an edit to the item, so it needs the item, not the tag.
+/// Teaches the memory what this item is now filed under.
+///
+/// The whole set is read back and stored, rather than the one tag that just moved.
+/// Remembering a single tag was the bug: attaching a second overwrote the first, so
+/// an item filed under a shop and a category came back with only whichever was last.
+async fn remember(ctx: &Ctx, item: &item::Item) -> Result<()> {
+    let held = Tag::for_item(&ctx.db, item.id).await?;
+    let ids: Vec<tag::Id> = held.iter().map(|t| t.id).collect();
+    Entry::remember_tags(&ctx.db, item.list_id, &item.name, &ids).await?;
+    Ok(())
+}
+
 pub async fn attach(ctx: &Ctx, actor: &Actor, item_id: item::Id, tag_id: tag::Id) -> Result<()> {
     let owner = actor.person()?;
     let item = items::editable(ctx, owner, item_id).await?;
@@ -92,7 +104,7 @@ pub async fn attach(ctx: &Ctx, actor: &Actor, item_id: item::Id, tag_id: tag::Id
     // Filing something is the strongest signal about where it belongs, so the next
     // time it is added it arrives already filed. Best-effort: an item that has never
     // been through quick-add has no history row, and that is not a failure to tag.
-    let _ = Entry::remember_tag(&ctx.db, item.list_id, &item.name, Some(tag_id)).await;
+    let _ = remember(ctx, &item).await;
 
     Ok(())
 }
@@ -104,11 +116,7 @@ pub async fn detach(ctx: &Ctx, actor: &Actor, item_id: item::Id, tag_id: tag::Id
     ctx.changes.announce(item.list_id);
 
     // Unfiling is a signal too: stop putting it there.
-    if let Ok(Some(entry)) = Entry::get(&ctx.db, item.list_id, &item.name).await
-        && entry.tag_id == Some(tag_id)
-    {
-        let _ = Entry::remember_tag(&ctx.db, item.list_id, &item.name, None).await;
-    }
+    let _ = remember(ctx, &item).await;
 
     Ok(())
 }

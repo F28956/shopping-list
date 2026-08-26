@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT h.tag_id as \"tag_id!: tag::Id\"\n            FROM item_history_tags h\n            JOIN tags t ON t.id = h.tag_id\n            WHERE h.list_id = ?1 AND h.name = ?2\n            ORDER BY t.sort_order, t.name\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "tag_id!: tag::Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "item_history_tags",
+            "name": "tag_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d5e1e413a24267b3423422ba13c3c80d4f30e6b017be32d3b34209ddc0ddd929"
+}

@@ -33,7 +33,6 @@ pub struct Entry {
     /// The spelling last used, for showing back.
     pub display: Display,
     pub unit_id: Option<unit::Id>,
-    pub tag_id: Option<tag::Id>,
     pub uses: Uses,
     pub last_used_at: LastUsedAt,
 }
@@ -89,24 +88,77 @@ impl Entry {
     ///
     /// Separate from [`Entry::record`] because tagging happens after the item exists,
     /// and because a tag being removed should not count as another use.
-    pub async fn remember_tag(
+    /// Remembers everything an item is filed under, replacing what was there.
+    ///
+    /// The whole set, not one tag at a time: this is called after an item's tags have
+    /// changed, and what it stores is what the item now carries. A column held one,
+    /// so attaching a second overwrote the first and the memory looked like it was
+    /// forgetting at random.
+    ///
+    /// Best-effort by its caller: an item that has never been through quick-add has
+    /// no entry to hang these on, and that is not a failure to tag it.
+    pub async fn remember_tags(
         pool: &sqlx::SqlitePool,
         list_id: list::Id,
         name: &item::Name,
-        tag_id: Option<tag::Id>,
+        tag_ids: &[tag::Id],
     ) -> Result<()> {
         let key = key(name);
 
+        let mut tx = pool.begin().await?;
+
+        // Replaced rather than merged: an item that has just had a tag taken off
+        // should not be remembered as still carrying it.
         sqlx::query!(
-            r#"UPDATE item_history SET tag_id = ?3 WHERE list_id = ?1 AND name = ?2"#,
+            r#"DELETE FROM item_history_tags WHERE list_id = ?1 AND name = ?2"#,
             list_id,
             key,
-            tag_id,
         )
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
+        for tag_id in tag_ids {
+            sqlx::query!(
+                r#"
+                INSERT INTO item_history_tags (list_id, name, tag_id)
+                VALUES (?1, ?2, ?3)
+                ON CONFLICT DO NOTHING
+                "#,
+                list_id,
+                key,
+                tag_id,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
         Ok(())
+    }
+
+    /// What this item was filed under last time, in the order a shop is walked.
+    pub async fn tags_for(
+        pool: &sqlx::SqlitePool,
+        list_id: list::Id,
+        name: &item::Name,
+    ) -> Result<Vec<tag::Id>> {
+        let key = key(name);
+
+        let ids = sqlx::query_scalar!(
+            r#"
+            SELECT h.tag_id as "tag_id!: tag::Id"
+            FROM item_history_tags h
+            JOIN tags t ON t.id = h.tag_id
+            WHERE h.list_id = ?1 AND h.name = ?2
+            ORDER BY t.sort_order, t.name
+            "#,
+            list_id,
+            key,
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(ids)
     }
 
     /// One entry, if this person has bought it before.
@@ -124,7 +176,6 @@ impl Entry {
                 name         as "name: item::Name",
                 display      as "display: Display",
                 unit_id      as "unit_id?: unit::Id",
-                tag_id       as "tag_id?: tag::Id",
                 uses         as "uses: Uses",
                 last_used_at as "last_used_at: LastUsedAt"
             FROM item_history
@@ -154,7 +205,6 @@ impl Entry {
                 name         as "name: item::Name",
                 display      as "display: Display",
                 unit_id      as "unit_id?: unit::Id",
-                tag_id       as "tag_id?: tag::Id",
                 uses         as "uses: Uses",
                 last_used_at as "last_used_at: LastUsedAt"
             FROM item_history

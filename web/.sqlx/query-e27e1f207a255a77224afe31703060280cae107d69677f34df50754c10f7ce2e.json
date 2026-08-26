@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE items\n            SET amount = amount + ?2, done_at = NULL\n            WHERE id = ?1\n            RETURNING\n                id          as \"id!: Id\",\n                list_id     as \"list_id: list::Id\",\n                name        as \"name: Name\",\n                amount      as \"amount: Amount\",\n                unit_id     as \"unit_id?: unit::Id\",\n                done_at     as \"done_at?: DoneAt\",\n                created_at  as \"created_at!: CreatedAt\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "list_id: list::Id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "list_id"
+          }
+        }
+      },
+      {
+        "name": "name: Name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "amount: Amount",
+        "ordinal": 3,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "amount"
+          }
+        }
+      },
+      {
+        "name": "unit_id?: unit::Id",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "unit_id"
+          }
+        }
+      },
+      {
+        "name": "done_at?: DoneAt",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "done_at"
+          }
+        }
+      },
+      {
+        "name": "created_at!: CreatedAt",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "e27e1f207a255a77224afe31703060280cae107d69677f34df50754c10f7ce2e"
+}

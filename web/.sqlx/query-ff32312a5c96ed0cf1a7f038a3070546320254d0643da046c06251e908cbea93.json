@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                INSERT INTO item_history_tags (list_id, name, tag_id)\n                VALUES (?1, ?2, ?3)\n                ON CONFLICT DO NOTHING\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "ff32312a5c96ed0cf1a7f038a3070546320254d0643da046c06251e908cbea93"
+}
