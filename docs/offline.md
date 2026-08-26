@@ -122,6 +122,9 @@ clock loses the right write.
   arrival and clamps a client timestamp that is wildly ahead.
 * For the LWW rules above, ties break on device id — arbitrary but stable, so
   every replica reaches the same answer.
+* This governs **items only**. Whether somebody is still allowed to write to a
+  list is decided by arrival at the server, and never by the device's claim
+  about when it acted.
 
 ## The wire
 
@@ -193,7 +196,10 @@ online-only until they get one.
 
 * **Every change is an event.** Devices accumulate them offline and send them
   when they can; the server replays them in order and that dictates the state.
-* **The latest event wins** where two events genuinely contradict.
+* **The latest event wins** where two events genuinely contradict. "Latest" for
+  items means the device's own clock, clamped by the server to a plausible
+  window; a tampered clock is accepted, because the most it wins is an argument
+  about a shopping list.
 * **A queue never expires.** A phone left in a drawer for a month still has its
   changes applied when it comes back.
 * **Losing access ends your influence.** Somebody removed from a list has no
@@ -302,18 +308,27 @@ timing, which is the uncomfortable part.
 *Recommendation: (a),* on the grounds that (b) makes `add` behave differently
 depending on what was on screen, which is harder to explain than an extra row.
 
-### 7. Whose clock decides "latest"?
+### 7. Whose clock decides "latest"? — settled
 
 Every rule above says "later". Devices disagree about the time, sometimes by
 hours, and a phone that is wrong by a day would win every conflict for a day.
 
-* **(a) Trust the device**, and accept that a wrong clock beats a right one.
-* **(b) Order by arrival at the server.** Nobody can lie, but a person who was
-  genuinely offline for a day loses to somebody who edited a minute ago.
-* **(c) Trust the device but clamp it** to a plausible window, ordering ties by
-  device id so every replica agrees.
+**For items, the device's clock decides, clamped.** The device stamps each
+operation; the server clamps a timestamp that is wildly ahead of arrival back
+into a plausible window; ties break on device id so every replica reaches the
+same answer.
 
-*Recommendation: (c).*
+A tampered clock is accepted here. The worst it buys somebody is winning an
+argument about what a shopping list says — with a person they already share the
+list with, who can simply change it back. That is not worth the cost of the
+alternative: ordering items by arrival would let a phone left in a drawer for a
+month sync last and overwrite a month of everybody else's work with its stale
+view. Stale work clobbering fresh work is the more common harm and the more
+confusing one, because nothing was lost in transit — it was silently reverted.
+
+**Access is the exception, and does not use this clock at all** — see (8). The
+distinction is deliberate: what the list says is a matter between people who
+trust each other, and who is allowed to write to it is not.
 
 ### 8. Losing access, and what "after that time" means — settled
 
