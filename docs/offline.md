@@ -60,7 +60,7 @@ timestamp, and its arguments.
 | `rename(item, name, at)` | Last write per field by `at` | Two people renaming the same row is rare and one of them must win |
 | `setAmount(item, amount, at)` | Last write by `at` | **Not** the same as adding — see below |
 | `attach/detach(item, tag)` | Attach wins over a concurrent detach | Filing something is a positive act; losing it is worse than an extra tag |
-| `delete(item)` | Delete wins over earlier edits; a *later* `add` of the same name creates a new row | You cannot edit what somebody removed, but re-adding is a new intention |
+| `delete(item)` | Delete is final — it beats edits arriving after it too; a *later* `add` of the same name creates a new row | Deletion is a fact about the server, not an intention on a device; re-adding is a new intention |
 | `clearDone(list, ids)` | Deletes **only the listed ids** | See "the dangerous one" |
 | `createList / renameList` | Last write by `at` | Single-owner data |
 | `deleteList(list)` | Delete wins | Owner-only already |
@@ -198,6 +198,9 @@ online-only until they get one.
   changes applied when it comes back.
 * **Losing access ends your influence.** Somebody removed from a list has no
   effect on it from that moment, whatever is still queued on their device.
+* **Delete is final.** Deletion is a fact about the server, not an intention held
+  on a device. Nothing that arrives afterwards resurrects the row; the person
+  whose work was dropped is told.
 
 Most pairs of changes never contradict and need no rule: two people crossing the
 same thing off agree; one crossing off while the other files it under a tag are
@@ -226,28 +229,36 @@ milk on the list" can arrive twice, or an hour late, or interleaved with anybody
 else's, and mean the same thing every time. There is no increment to double-apply
 and no need for the server to remember which adds it has already seen.
 
-### 2. Editing something that has been deleted
+### 2. Editing something that has been deleted — settled
 
 *Anna deletes `Milk`. Ben, offline, renames it to `Whole milk` and ticks it off.*
 
 Ben's events are later, so "latest wins" says apply them — but there is nothing
 to apply them to.
 
-* **(a) Delete is final.** Ben's edits are dropped. Simple, and he loses work he
-  believes he did.
-* **(b) The edit brings it back.** The row returns, renamed and ticked. Nothing
-  is lost, but a deliberate deletion undoes itself and Anna sees a ghost.
-* **(c) Delete is final, and Ben is told** in a "what changed" note.
+**Delete is final.** A deletion is a fact about the server, not an intention held
+on somebody's device: once the row is gone it is gone, and no event that arrives
+afterwards brings it back. Ben's rename and tick are dropped.
 
-*Recommendation: (c).* Deleting is the more deliberate act, and the surprise is
-survivable if it is explained.
+This is deliberately not symmetrical with the other rules. Everything else is a
+claim about what the list should say, and the latest claim wins; a delete is a
+statement that there is no longer anything to make claims about. Resurrection by
+edit would mean no deletion is ever safe while any device is offline.
 
-### 3. Crossing off something that has been deleted
+Ben is told, in the "what changed" note (see *What the screen must say*), so
+that the work he watched himself do does not vanish unexplained.
+
+Re-adding is untouched by this: a *later* `add` of `Milk` is a new intention and
+creates a new row, as it always did.
+
+### 3. Crossing off something that has been deleted — settled
 
 The same shape as (2) but far more common — you tick things off in a shop while
-somebody at home tidies the list. Almost certainly wants the same answer as (2),
-but it is worth confirming, because "my tick did nothing" is more annoying than
-"my rename did nothing".
+somebody at home tidies the list. It takes the same answer: the row is gone, the
+tick has nothing to land on and is dropped, and Ben is told.
+
+"My tick did nothing" is the more annoying of the two, which is why the note
+matters more here than anywhere else.
 
 ### 4. Clear done, replayed late
 
