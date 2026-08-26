@@ -34,10 +34,12 @@ struct ItemsView: View {
     }
 
     private var outstanding: [Item] { items.filter { !$0.isDone } }
-    /// Outstanding items under their category heading, in the order the shop is laid
-    /// out. The rule is shared with the watch and matches the browser's — see
-    /// `grouped(_:by:)`.
-    private var categories: [ItemGroup] { grouped(outstanding, by: tags) }
+    /// Outstanding items in the order this list is walked, with no headings.
+    ///
+    /// The tag that decides the order rides on the row instead. A heading says the
+    /// same thing as the chip beneath it, and one of the two is redundant on a screen
+    /// this narrow — see `row(_:)`.
+    private var ordered: [Item] { grouped(outstanding, by: tags).flatMap(\.items) }
     private var done: [Item] { items.filter(\.isDone) }
 
     /// Rows print a unit, the editor picks one. Built here rather than fetched twice.
@@ -79,17 +81,9 @@ struct ItemsView: View {
                 }
             }
 
-            ForEach(categories) { category in
-                Section {
-                    ForEach(category.items) { item in
-                        row(item)
-                    }
-                } header: {
-                    // Only worth a heading when there is more than one: a single
-                    // "Other" above every item on the list says nothing.
-                    if categories.count > 1 {
-                        Text(category.heading)
-                    }
+            Section {
+                ForEach(ordered) { item in
+                    row(item)
                 }
             }
 
@@ -228,11 +222,25 @@ struct ItemsView: View {
         Button {
             Task { await toggle(item) }
         } label: {
-            HStack {
+            HStack(spacing: 8) {
                 Text(item.name)
                     .strikethrough(item.isDone)
                     .foregroundStyle(item.isDone ? .secondary : .primary)
-                Spacer()
+
+                // The tag that put it here, and only that one. The others are on the
+                // item but had no say in where it sits, and naming them beside it
+                // would point at places the item is not.
+                if let primary = primaryTag(of: item, in: tags) {
+                    Text(primary.heading)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(.quaternary, in: Capsule())
+                        .accessibilityHidden(true)
+                }
+
+                Spacer(minLength: 4)
                 if let measure = item.measure(units: unitNames) {
                     Text(measure)
                         .font(.footnote)
@@ -243,6 +251,7 @@ struct ItemsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(spoken(item))
         // A viewer is given a list to read, not one covered in controls that would
         // refuse them — the same rule the browser follows.
         .swipeActions(edge: .trailing) {
@@ -264,6 +273,17 @@ struct ItemsView: View {
             .tint(.accentColor)
             }
         }
+    }
+
+    /// What the row says when it is read aloud rather than looked at.
+    ///
+    /// Strikethrough and a grey chip are not information to a screen reader, and the
+    /// chip is hidden from it so that it does not arrive as a loose word.
+    private func spoken(_ item: Item) -> String {
+        let measure = item.measure(units: unitNames).map { ", \($0)" } ?? ""
+        let filed = primaryTag(of: item, in: tags).map { ", in \($0.name)" } ?? ""
+        let state = item.isDone ? ", crossed off" : ""
+        return "\(item.name)\(measure)\(filed)\(state)"
     }
 
     // MARK: - Doing things

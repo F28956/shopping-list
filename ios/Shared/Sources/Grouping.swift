@@ -8,6 +8,32 @@ struct ItemGroup: Identifiable, Equatable {
     var id: String { heading }
 }
 
+/// The tag an item is filed under: the first of its tags in this list's order.
+///
+/// The one that decides where the item sits, which is why a screen showing a single
+/// tag beside an item should show this one — any other would name a place the item is
+/// not.
+///
+/// `tags` must be in the list's order, as the service resolves it.
+func primaryTag(of item: Item, in tags: [Tag]) -> Tag? {
+    let placed = Dictionary(
+        uniqueKeysWithValues: tags.enumerated().map { ($0.element.id, $0.offset) }
+    )
+
+    return item.tagIDs
+        .compactMap { id in placed[id].map { (at: $0, tag: tags[$0]) } }
+        .min { $0.at < $1.at }?
+        .tag
+}
+
+extension Tag {
+    /// The tag as a heading or a chip: its emoji, when it has one, then its name.
+    var heading: String {
+        guard let emoji, !emoji.isEmpty else { return name }
+        return "\(emoji) \(name)"
+    }
+}
+
 /// The items under their category heading, in the order this list is walked.
 ///
 /// `tags` arrives already in that order — resolved by the service, per person, per
@@ -22,16 +48,10 @@ func grouped(_ items: [Item], by tags: [Tag]) -> [ItemGroup] {
 
     /// Where this item sits, and what to call the group.
     func category(_ item: Item) -> (order: Int, heading: String) {
-        let primary = item.tagIDs
-            .compactMap { id in placed[id].map { (at: $0, tag: tags[$0]) } }
-            .min { $0.at < $1.at }
-
-        guard let primary else { return (.max, "Other") }
-
-        guard let emoji = primary.tag.emoji, !emoji.isEmpty else {
-            return (primary.at, primary.tag.name)
+        guard let primary = primaryTag(of: item, in: tags), let at = placed[primary.id] else {
+            return (.max, "Other")
         }
-        return (primary.at, "\(emoji) \(primary.tag.name)")
+        return (at, primary.heading)
     }
 
     // Built in encounter order and sorted at the end, so items keep the order they

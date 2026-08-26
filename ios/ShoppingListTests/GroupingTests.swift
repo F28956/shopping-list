@@ -124,6 +124,38 @@ struct GroupingTests {
         #expect(groups.first?.items.map(\.name) == ["Yoghurt", "Milk"])
     }
 
+    // MARK: - The one tag that decides where an item sits
+
+    /// The tag a row should name beside an item: the first of its tags in this
+    /// list's order. Any other would point at a place the item is not.
+    @Test func thePrimaryTagIsTheOneThatDecidesTheOrder() {
+        let butter = Self.item(1, "Butter", tags: [2, 1])
+
+        #expect(primaryTag(of: butter, in: Self.tags)?.name == "produce")
+        // Handed a different order, a different tag leads -- the whole point.
+        #expect(primaryTag(of: butter, in: [Self.dairy, Self.produce])?.name == "dairy")
+    }
+
+    @Test func anUntaggedItemHasNoPrimaryTag() {
+        #expect(primaryTag(of: Self.item(1, "Batteries"), in: Self.tags) == nil)
+    }
+
+    /// A tag the client has not heard of, or one left out of the order, cannot be the
+    /// primary: it has no place to be first in.
+    @Test func aTagOutsideTheOrderIsNotPrimary() {
+        let peas = Self.item(1, "Peas", tags: [3])
+
+        #expect(primaryTag(of: peas, in: [Self.produce]) == nil)
+        #expect(primaryTag(of: Self.item(2, "Mystery", tags: [99]), in: Self.tags) == nil)
+    }
+
+    /// The chip and the heading are the same string, so a row and a group cannot
+    /// disagree about what a tag is called.
+    @Test func aTagReadsTheSameAsAChipOrAHeading() {
+        #expect(Self.frozen.heading == "🧊 frozen")
+        #expect(Self.produce.heading == "produce", "no stray space without an emoji")
+    }
+
     @Test func nothingGroupsToNothing() {
         #expect(grouped([], by: Self.tags).isEmpty)
     }
