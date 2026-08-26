@@ -32,7 +32,15 @@ struct MacItemsView: View {
 
     private var outstanding: [Item] { items.filter { !$0.isDone } }
     private var done: [Item] { items.filter(\.isDone) }
-    private var categories: [ItemGroup] { grouped(outstanding, by: tags) }
+    /// Outstanding items in the order the shop is walked, with no headings.
+    ///
+    /// The categories decide the order and then get out of the way: what tells you
+    /// where a thing lives is the tag on its own row, not a band across the list.
+    private var ordered: [Item] { grouped(outstanding, by: tags).flatMap(\.items) }
+
+    private var tagsByID: [Int64: Tag] {
+        Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0) })
+    }
     private var unitNames: [Int64: String] {
         Dictionary(uniqueKeysWithValues: units.map { ($0.id, $0.name) })
     }
@@ -50,17 +58,7 @@ struct MacItemsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            ForEach(categories) { category in
-                Section {
-                    ForEach(category.items) { row($0) }
-                } header: {
-                    if categories.count > 1 {
-                        Text(category.heading)
-                            .accessibilityAddTraits(.isHeader)
-                            .accessibilityLabel(category.heading)
-                    }
-                }
-            }
+            ForEach(ordered) { row($0) }
 
             if !done.isEmpty {
                 Section {
@@ -139,55 +137,116 @@ struct MacItemsView: View {
                     Divider()
                 }
 
-                HStack {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundStyle(.tint)
+                        .imageScale(.large)
+
+                    // Bordered, not plain. A plain field on a bar background is the
+                    // background, and the one control the screen exists for should
+                    // not have to be discovered.
                     TextField("Add an item — try 2 kg apples", text: $line)
-                        .textFieldStyle(.plain)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.large)
                         .focused($typing)
                         .onSubmit { Task { await add() } }
+
                     Button("Add") { Task { await add() } }
+                        .buttonStyle(.borderedProminent)
                         .disabled(line.trimmingCharacters(in: .whitespaces).isEmpty)
                         .keyboardShortcut(.defaultAction)
                 }
-                .padding(10)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
             }
             .background(.bar)
+            .overlay(alignment: .top) { Divider() }
         }
     }
 
     private func row(_ item: Item) -> some View {
-        // A Button, not an HStack with a tap gesture on it. A gesture leaves the row
-        // with no accessibility action at all: VoiceOver cannot press it, and neither
-        // can anything else driving the app. One click still ticks it off, which is
-        // the thing being done most.
-        Button {
-            Task { await toggle(item) }
-        } label: {
-            HStack {
-                Text(item.name)
-                    .strikethrough(item.isDone)
-                    .foregroundStyle(item.isDone ? .secondary : .primary)
-                Spacer()
-                if let measure = item.measure(units: unitNames) {
-                    Text(measure)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
+        // The row opens the editor; the checkbox crosses off. That is the other way
+        // round from the phone and the watch on purpose: those are held in a shop,
+        // where crossing off is nearly all you do, and this is where the list gets
+        // written. The phone has no checkbox for the same reason -- there, tapping
+        // the row already means cross off, and a box would only repeat it.
+        HStack(spacing: 8) {
+            Toggle("", isOn: crossedOff(item))
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+                .disabled(!list.mayEdit)
+                .accessibilityLabel(
+                    item.isDone ? "Put \(item.name) back" : "Cross \(item.name) off"
+                )
+
+            Button {
+                Task { await beginEditing(item) }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(item.name)
+                        .strikethrough(item.isDone)
+                        .foregroundStyle(item.isDone ? .secondary : .primary)
+
+                    // Where it lives, on the row itself. The list is ordered by the
+                    // same tags, so these read as a label on a sorted list rather
+                    // than as a second organising scheme.
+                    ForEach(item.tagIDs.compactMap { tagsByID[$0] }) { tag in
+                        chip(tag)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if let measure = item.measure(units: unitNames) {
+                        Text(measure)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
                 }
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(!list.mayEdit)
+            .accessibilityLabel(accessibleName(item))
+            .accessibilityHint(list.mayEdit ? "Opens the editor" : "")
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(accessibleName(item))
         .contextMenu {
             if list.mayEdit {
+                Button("Edit…") { Task { await beginEditing(item) } }
                 Button(item.isDone ? "Put back" : "Cross off") {
                     Task { await toggle(item) }
                 }
-                Button("Edit…") { Task { await beginEditing(item) } }
                 Divider()
                 Button("Delete", role: .destructive) { Task { await remove(item) } }
             }
         }
+    }
+
+    /// The checkbox's state, and what ticking it means.
+    ///
+    /// The value comes from the item rather than from anything held here, so a change
+    /// made on the phone moves this box too -- there is no second copy of "done" to
+    /// fall out of step.
+    private func crossedOff(_ item: Item) -> Binding<Bool> {
+        Binding(
+            get: { item.isDone },
+            set: { _ in Task { await toggle(item) } }
+        )
+    }
+
+    /// A tag beside an item: quiet, and not a control.
+    ///
+    /// Nothing here is tappable. Changing what an item is filed under is the editor's
+    /// job, and a chip that sometimes removes a tag when you meant to cross the item
+    /// off is the reason the phone keeps them in the sheet too.
+    private func chip(_ tag: Tag) -> some View {
+        Text(tag.emoji.flatMap { $0.isEmpty ? nil : "\($0) \(tag.name)" } ?? tag.name)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(.quaternary, in: Capsule())
+            .accessibilityHidden(true)
     }
 
     /// What the row says when it is read aloud rather than looked at.
@@ -197,7 +256,12 @@ struct MacItemsView: View {
     private func accessibleName(_ item: Item) -> String {
         let measure = item.measure(units: unitNames).map { ", \($0)" } ?? ""
         let state = item.isDone ? ", crossed off" : ""
-        return "\(item.name)\(measure)\(state)"
+        // Spoken here rather than by the chips, which are hidden from VoiceOver: read
+        // separately they arrive as loose words after the item with nothing to say
+        // what they are.
+        let filed = item.tagIDs.compactMap { tagsByID[$0]?.name }
+        let under = filed.isEmpty ? "" : ", in \(filed.joined(separator: ", "))"
+        return "\(item.name)\(measure)\(under)\(state)"
     }
 
     // MARK: - Doing things
