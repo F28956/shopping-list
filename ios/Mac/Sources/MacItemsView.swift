@@ -54,7 +54,11 @@ struct MacItemsView: View {
                 Section {
                     ForEach(category.items) { row($0) }
                 } header: {
-                    if categories.count > 1 { Text(category.heading) }
+                    if categories.count > 1 {
+                        Text(category.heading)
+                            .accessibilityAddTraits(.isHeader)
+                            .accessibilityLabel(category.heading)
+                    }
                 }
             }
 
@@ -75,6 +79,7 @@ struct MacItemsView: View {
         }
         .safeAreaInset(edge: .bottom) { addBar }
         .navigationTitle(list.name)
+        .task { await loadReference() }
         .task { await load() }
         .task { await watch() }
         .sheet(item: $editing) { target in
@@ -150,21 +155,29 @@ struct MacItemsView: View {
     }
 
     private func row(_ item: Item) -> some View {
-        HStack {
-            Text(item.name)
-                .strikethrough(item.isDone)
-                .foregroundStyle(item.isDone ? .secondary : .primary)
-            Spacer()
-            if let measure = item.measure(units: unitNames) {
-                Text(measure)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+        // A Button, not an HStack with a tap gesture on it. A gesture leaves the row
+        // with no accessibility action at all: VoiceOver cannot press it, and neither
+        // can anything else driving the app. One click still ticks it off, which is
+        // the thing being done most.
+        Button {
+            Task { await toggle(item) }
+        } label: {
+            HStack {
+                Text(item.name)
+                    .strikethrough(item.isDone)
+                    .foregroundStyle(item.isDone ? .secondary : .primary)
+                Spacer()
+                if let measure = item.measure(units: unitNames) {
+                    Text(measure)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
             }
+            .contentShape(Rectangle())
         }
-        .contentShape(Rectangle())
-        // One click ticks it off, which is the thing being done most.
-        .onTapGesture { Task { await toggle(item) } }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibleName(item))
         .contextMenu {
             if list.mayEdit {
                 Button(item.isDone ? "Put back" : "Cross off") {
@@ -175,6 +188,16 @@ struct MacItemsView: View {
                 Button("Delete", role: .destructive) { Task { await remove(item) } }
             }
         }
+    }
+
+    /// What the row says when it is read aloud rather than looked at.
+    ///
+    /// Struck-through text and grey are not information to a screen reader, and the
+    /// measure sits in a separate label it would read as a loose number.
+    private func accessibleName(_ item: Item) -> String {
+        let measure = item.measure(units: unitNames).map { ", \($0)" } ?? ""
+        let state = item.isDone ? ", crossed off" : ""
+        return "\(item.name)\(measure)\(state)"
     }
 
     // MARK: - Doing things
@@ -264,17 +287,22 @@ struct MacItemsView: View {
         }
     }
 
-    private func load() async {
+    /// Reference data, fetched once when the screen appears rather than on every
+    /// reload — see the phone's copy for what that was costing.
+    private func loadReference() async {
         do {
-            async let items = api.items(on: list)
             async let units = api.units()
             async let tags = api.tags()
-            let (listing, loadedUnits, loadedTags) = try await (items, units, tags)
+            (self.units, self.tags) = try await (units, tags)
+        } catch {}
+    }
+
+    private func load() async {
+        do {
+            let listing = try await api.items(on: list)
             self.items = listing.items
             self.total = listing.total
             self.truncated = listing.truncated
-            self.units = loadedUnits
-            self.tags = loadedTags
             error = nil
         } catch let problem as APIError {
             if case .unauthorized = problem {

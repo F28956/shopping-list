@@ -135,6 +135,7 @@ struct ItemsView: View {
         .navigationTitle(list.name)
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
+        .task { await loadReference() }
         .task { await load() }
         .task { await watch() }
         // Coming back from the background is the one gap the stream cannot cover:
@@ -384,17 +385,31 @@ struct ItemsView: View {
         }
     }
 
-    private func load() async {
+    /// Units and tags: fetched once, when the screen appears.
+    ///
+    /// They are seeded by migration and change when the server is deployed, not when
+    /// somebody ticks something off — and `load()` runs on every change anyone makes
+    /// to this list, from any device. Fetching them there meant thirty-one units and
+    /// twenty-one tags crossing the network for each tick, to say what they said the
+    /// time before.
+    private func loadReference() async {
         do {
-            async let items = api.items(on: list)
             async let units = api.units()
             async let tags = api.tags()
-            let (listing, loadedUnits, loadedTags) = try await (items, units, tags)
+            (self.units, self.tags) = try await (units, tags)
+        } catch {
+            // Not shown: without these, rows lose their measure and their grouping,
+            // which is a poorer list rather than no list. `load()` reports what
+            // actually stops the screen working.
+        }
+    }
+
+    private func load() async {
+        do {
+            let listing = try await api.items(on: list)
             self.items = listing.items
             self.total = listing.total
             self.truncated = listing.truncated
-            self.units = loadedUnits
-            self.tags = loadedTags
             error = nil
         } catch let problem as APIError {
             if case .unauthorized = problem {

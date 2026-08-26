@@ -77,6 +77,7 @@ struct WatchItemsView: View {
             }
         }
         .navigationTitle(list.name)
+        .task { await loadReference() }
         .task { await load() }
         .task { await watch() }
         // watchOS suspends a connection the moment the app stops being frontmost, so
@@ -183,17 +184,24 @@ struct WatchItemsView: View {
         }
     }
 
-    private func load() async {
+    /// Reference data, once. On a watch this matters twice over: it is the slowest
+    /// connection of the three, and it is relayed through a phone.
+    private func loadReference() async {
         do {
-            async let items = api.items(on: list)
             async let units = api.units()
             async let tags = api.tags()
-            let (listing, loadedUnits, loadedTags) = try await (items, units, tags)
+            let (loadedUnits, loadedTags) = try await (units, tags)
+            self.units = Dictionary(uniqueKeysWithValues: loadedUnits.map { ($0.id, $0.name) })
+            self.tags = loadedTags
+        } catch {}
+    }
+
+    private func load() async {
+        do {
+            let listing = try await api.items(on: list)
             self.items = listing.items
             self.truncated = listing.truncated
             self.total = listing.total
-            self.units = Dictionary(uniqueKeysWithValues: loadedUnits.map { ($0.id, $0.name) })
-            self.tags = loadedTags
             problem = nil
         } catch {
             problem = Problem(error, identity: identity)
