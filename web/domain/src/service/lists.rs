@@ -131,6 +131,20 @@ pub async fn join(ctx: &Ctx, actor: &Actor, token: &Token) -> Result<List> {
     let invite = Invite::claim(&ctx.db, token).await?;
 
     let held = ListMember::role_of(&ctx.db, invite.list_id, joiner.id).await?;
+
+    // A spent link still works for the person who spent it — following it twice is a
+    // double-click, and refusing the second is a worse answer than doing nothing. It
+    // does not work for anybody else: a link lives for a week, and without this a
+    // forwarded message or a screenshot let a stranger join long after the person it
+    // was written for already had.
+    let owner = List::get(&ctx.db, list::Lookup::Id(invite.list_id))
+        .await
+        .map(|l| l.owner_id == joiner.id)
+        .unwrap_or(false);
+
+    if invite.used_at.is_some() && held.is_none() && !owner {
+        return Err(ServiceError::NotFound);
+    }
     if held.is_none_or(|held| held < invite.role) {
         ListMember::put(&ctx.db, invite.list_id, joiner.id, invite.role).await?;
     }
@@ -164,6 +178,48 @@ pub async fn share_counts(ctx: &Ctx, actor: &Actor) -> Result<std::collections::
 pub async fn members(ctx: &Ctx, actor: &Actor, id: list::Id) -> Result<Vec<ListMember>> {
     readable(ctx, actor.person()?, id).await?;
     Ok(ListMember::for_list(&ctx.db, id).await?)
+}
+
+/// Everyone on a list, as a person rather than an id.
+///
+/// The owner comes first and is included — [`members`] leaves them out, because
+/// membership is a row in `list_members` and the owner has none, but "who can see
+/// this list" plainly means them too.
+///
+/// Names and addresses are shown to other members and nowhere else. Somebody invited
+/// to a shared list already knows who they are sharing it with; not saying so leaves
+/// a screen full of "Someone", which tells you a list is shared and nothing about who
+/// with.
+pub async fn people_on(ctx: &Ctx, actor: &Actor, id: list::Id) -> Result<Vec<Person>> {
+    let asking = actor.person()?;
+    let list = readable(ctx, asking, id).await?;
+
+    let mut people = Vec::new();
+
+    if let Ok(owner) = user::User::get(&ctx.db, user::Lookup::Id(list.owner_id)).await {
+        people.push(Person {
+            user: owner,
+            role: Role::Owner,
+        });
+    }
+
+    for member in ListMember::for_list(&ctx.db, id).await? {
+        if let Ok(user) = user::User::get(&ctx.db, user::Lookup::Id(member.user_id)).await {
+            people.push(Person {
+                user,
+                role: member.role,
+            });
+        }
+    }
+
+    Ok(people)
+}
+
+/// Somebody who can see a list, and what they may do with it.
+#[derive(Debug, Clone)]
+pub struct Person {
+    pub user: user::User,
+    pub role: Role,
 }
 
 /// Withdraws every outstanding invitation to a list.

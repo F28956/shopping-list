@@ -1533,6 +1533,33 @@ async fn ownership_cannot_be_invited(#[future(awt)] pool: SqlitePool) {
     );
 }
 
+/// A spent link is spent for everybody else.
+///
+/// A link lives a week. Without this, a forwarded message or a screenshot let somebody
+/// join days after the person it was written for already had — and the owner, who
+/// never sees the link again, has no way to tell one outstanding link from another.
+#[rstest]
+#[tokio::test]
+async fn a_used_link_does_not_admit_anybody_else(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let third = person(&s.ctx.db, "google-oauth2|third").await;
+
+    let token = lists::invite(&s.ctx, &s.mine, s.list.id, Role::Editor)
+        .await
+        .unwrap();
+
+    lists::join(&s.ctx, &s.theirs, &token).await.unwrap();
+
+    assert_eq!(
+        lists::join(&s.ctx, &third, &token).await.err(),
+        Some(ServiceError::NotFound),
+        "a spent link admitted a second person"
+    );
+
+    // ... and the person it was written for can still follow it again.
+    assert!(lists::join(&s.ctx, &s.theirs, &token).await.is_ok());
+}
+
 /// Following the same link twice is a double-click, and a stale lesser invitation
 /// must not demote anybody.
 #[rstest]

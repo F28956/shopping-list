@@ -36,6 +36,11 @@ fn them() -> String {
     "Bearer google-oauth2|someone-else".to_string()
 }
 
+/// A third party, for the questions that need somebody who is not either of us.
+fn third() -> String {
+    "Bearer google-oauth2|third".to_string()
+}
+
 async fn send(app: &Router, req: Request<Body>) -> (StatusCode, Value) {
     let res = app.clone().oneshot(req).await.expect("router panicked");
     let status = res.status();
@@ -941,6 +946,135 @@ async fn a_stranger_cannot_touch_a_tag_order(
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// Sharing a list, end to end: invite, join, see who is on it, and leave.
+#[rstest]
+#[tokio::test]
+async fn sharing_a_list(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+    let members = format!("/api/lists/{list_id}/members");
+
+    // On my own list, I am on it and I own it.
+    let (status, people) = send(&app, req("GET", &members, &me(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(people.as_array().unwrap().len(), 1);
+    assert_eq!(people[0]["role"], "owner");
+    // The keys are carried even when this harness has nobody to put in them: it
+    // signs people in from a bearer subject alone, so they have no name or address.
+    // That they are filled from the user is checked where users have one -- see the
+    // service's `people_on` tests.
+    assert!(people[0].get("name").is_some(), "no name field at all: {people}");
+    assert!(people[0].get("email").is_some(), "no email field at all: {people}");
+
+    let (status, invite) = send(
+        &app,
+        req(
+            "POST",
+            &format!("{members}/invites"),
+            &me(),
+            Some(json!({"role": "editor"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let token = invite["token"].as_str().expect("no token").to_string();
+
+    // Before joining, the list is not theirs to see.
+    let (status, theirs) = send(&app, req("GET", "/api/lists", &them(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(theirs["total"], 0, "a list turned up unshared: {theirs}");
+
+    let (status, joined) = send(
+        &app,
+        req("POST", &format!("/api/invites/{token}"), &them(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(joined["id"], list_id);
+
+    // Now both of us are on it, and each is named.
+    let (_, people) = send(&app, req("GET", &members, &me(), None)).await;
+    assert_eq!(people.as_array().unwrap().len(), 2);
+    let roles: Vec<&str> = people
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, vec!["owner", "editor"]);
+
+    // They can see it too, and see who they are sharing with.
+    let (status, theirs) = send(&app, req("GET", &members, &them(), None)).await;
+    assert_eq!(status, StatusCode::OK, "a member cannot see the members");
+    assert_eq!(theirs.as_array().unwrap().len(), 2);
+
+    // Leaving is removing yourself.
+    let mine = people[0]["user_id"].as_i64().unwrap();
+    let theirs_id = people[1]["user_id"].as_i64().unwrap();
+    assert_ne!(mine, theirs_id);
+
+    let (status, _) = send(
+        &app,
+        req("DELETE", &format!("{members}/{theirs_id}"), &them(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, gone) = send(&app, req("GET", "/api/lists", &them(), None)).await;
+    assert_eq!(gone["total"], 0, "leaving did not take");
+}
+
+/// A link admits the person it was written for, and nobody after them.
+///
+/// Following it twice is a double-click and stays harmless; a third party arriving
+/// with the same link a day later does not get in. A withdrawn link never works.
+#[rstest]
+#[tokio::test]
+async fn a_used_invitation_admits_nobody_else(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+    let invites = format!("/api/lists/{list_id}/members/invites");
+
+    let (_, invite) = send(
+        &app,
+        req("POST", &invites, &me(), Some(json!({"role": "editor"}))),
+    )
+    .await;
+    let token = invite["token"].as_str().unwrap().to_string();
+    let follow = format!("/api/invites/{token}");
+
+    let (status, _) = send(&app, req("POST", &follow, &them(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The same person again: a double-click, and harmless.
+    let (status, _) = send(&app, req("POST", &follow, &them(), None)).await;
+    assert_eq!(status, StatusCode::OK, "a double-click was refused");
+
+    // Somebody else with the same link: not admitted.
+    let (status, _) = send(&app, req("POST", &follow, &third(), None)).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a spent link admitted a second person"
+    );
+
+    // And a fresh one, withdrawn before it is followed, works for nobody.
+    let (_, invite) = send(
+        &app,
+        req("POST", &invites, &me(), Some(json!({"role": "editor"}))),
+    )
+    .await;
+    let token = invite["token"].as_str().unwrap().to_string();
+    send(&app, req("DELETE", &invites, &me(), None)).await;
+
+    let (status, _) = send(
+        &app,
+        req("POST", &format!("/api/invites/{token}"), &third(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a withdrawn link still worked");
 }
 
 /// Clearing takes the ticked-off rows and nothing else.

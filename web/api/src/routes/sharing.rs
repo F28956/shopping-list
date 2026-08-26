@@ -7,7 +7,7 @@ use axum::{
     routing::{get, post},
 };
 use domain::models::invite::Token;
-use domain::models::list::{self, List, ListMember, Role};
+use domain::models::list::{self, List, Role};
 use domain::models::user;
 use domain::service::lists;
 
@@ -62,13 +62,36 @@ pub struct Invitation {
     pub role: Role,
 }
 
+/// Somebody who can see this list.
+///
+/// A person rather than an id: a client that shows "user 4" has told you a list is
+/// shared and nothing about who with. Names and addresses go only to other members of
+/// the same list, who already know.
+#[derive(Debug, serde::Serialize)]
+pub struct Person {
+    pub user_id: i64,
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub role: Role,
+}
+
 async fn members(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(list_id): Path<i64>,
-) -> Result<Json<Vec<ListMember>>, AppError> {
+) -> Result<Json<Vec<Person>>, AppError> {
+    let people = lists::people_on(&state.ctx, &user.actor(), list::Id(list_id)).await?;
+
     Ok(Json(
-        lists::members(&state.ctx, &user.actor(), list::Id(list_id)).await?,
+        people
+            .into_iter()
+            .map(|p| Person {
+                user_id: p.user.id.0,
+                name: p.user.name.map(|n| n.0),
+                email: p.user.email.map(|e| e.0),
+                role: p.role,
+            })
+            .collect(),
     ))
 }
 

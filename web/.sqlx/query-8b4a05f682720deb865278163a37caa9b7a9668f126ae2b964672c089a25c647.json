@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            SELECT\n                list_id    as \"list_id: list::Id\",\n                role       as \"role: Role\",\n                created_by as \"created_by: user::Id\",\n                created_at as \"created_at: CreatedAt\",\n                expires_at as \"expires_at: ExpiresAt\"\n            FROM list_invites\n            WHERE token_hash = ?1 AND expires_at > ?2\n            ",
+  "query": "\n            SELECT\n                list_id    as \"list_id: list::Id\",\n                role       as \"role: Role\",\n                created_by as \"created_by: user::Id\",\n                created_at as \"created_at: CreatedAt\",\n                expires_at as \"expires_at: ExpiresAt\",\n                used_at    as \"used_at?: UsedAt\"\n            FROM list_invites\n            -- Not filtered on `used_at`: following the same link twice is a\n            -- double-click, and refusing the second is a worse answer than doing\n            -- nothing. Who a spent link still works *for* is decided in\n            -- `lists::join`, which knows who is asking.\n            WHERE token_hash = ?1 AND expires_at > ?2\n            ",
   "describe": {
     "columns": [
       {
@@ -57,6 +57,17 @@
             "name": "expires_at"
           }
         }
+      },
+      {
+        "name": "used_at?: UsedAt",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "list_invites",
+            "name": "used_at"
+          }
+        }
       }
     ],
     "parameters": {
@@ -67,8 +78,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "2128e29ad5f1674da0dcd32cec9e70b1ce7c4665a34d970fcce93ffefd787cc8"
+  "hash": "8b4a05f682720deb865278163a37caa9b7a9668f126ae2b964672c089a25c647"
 }

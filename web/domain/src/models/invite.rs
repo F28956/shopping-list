@@ -12,7 +12,7 @@ use super::{Error, Result};
 
 // Scaffold Token and the timestamps
 string!(Token);
-timestamp!(CreatedAt);
+timestamp!(CreatedAt, UsedAt);
 timestamp!(ExpiresAt);
 
 /// How long an unused invitation stands.
@@ -29,6 +29,8 @@ pub struct Invite {
     pub created_by: user::Id,
     pub created_at: CreatedAt,
     pub expires_at: ExpiresAt,
+    /// When somebody followed this link, if anybody has.
+    pub used_at: Option<UsedAt>,
 }
 
 /// What a token hashes to, as lowercase hex.
@@ -90,8 +92,13 @@ impl Invite {
                 role       as "role: Role",
                 created_by as "created_by: user::Id",
                 created_at as "created_at: CreatedAt",
-                expires_at as "expires_at: ExpiresAt"
+                expires_at as "expires_at: ExpiresAt",
+                used_at    as "used_at?: UsedAt"
             FROM list_invites
+            -- Not filtered on `used_at`: following the same link twice is a
+            -- double-click, and refusing the second is a worse answer than doing
+            -- nothing. Who a spent link still works *for* is decided in
+            -- `lists::join`, which knows who is asking.
             WHERE token_hash = ?1 AND expires_at > ?2
             "#,
             token_hash,
@@ -102,7 +109,8 @@ impl Invite {
         .ok_or(Error::NotFound)
     }
 
-    /// Marks an invitation as used.
+    /// Marks an invitation as used, which is what spends it — `claim` will not
+    /// return it again.
     ///
     /// Not deleted: a used invitation is a record of how somebody got access, which
     /// is worth keeping until the row is swept.
