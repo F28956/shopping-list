@@ -142,6 +142,7 @@ struct ShareSheet: View {
                 Text(error ?? "")
             }
             .task { await load() }
+            .task { await watch() }
         }
         .frame(minWidth: 380, minHeight: 420)
     }
@@ -171,6 +172,27 @@ struct ShareSheet: View {
             error = problem.localizedDescription
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    /// Reads the members again whenever the list changes, for as long as the sheet is
+    /// up.
+    ///
+    /// Somebody following the link is the one change this sheet exists to show, and it
+    /// arrives while the sheet is open -- you hand over the code and watch. Loading the
+    /// members once meant the sheet still said the list was shared with nobody after
+    /// they were already reading it, which reads as the code not having worked.
+    private func watch() async {
+        while !Task.isCancelled {
+            do {
+                for try await _ in try await api.changes(on: list) {
+                    await load()
+                }
+            } catch {
+                // Losing the stream is ordinary and there is nothing to say about it
+                // on a sheet whose names are already on screen.
+            }
+            try? await Task.sleep(for: .seconds(3))
         }
     }
 

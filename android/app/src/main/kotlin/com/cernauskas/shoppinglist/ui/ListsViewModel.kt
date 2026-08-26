@@ -134,6 +134,10 @@ class ListsViewModel(
     fun join(token: String) = act { api.join(token) }
 
     suspend fun people(list: ShoppingList): List<Person> = api.people(list)
+
+    /** One list's change stream, for a screen that wants to follow a single list. */
+    fun watchList(list: ShoppingList) = api.changes(list)
+
     suspend fun invite(list: ShoppingList): String = api.invite(list)
     suspend fun revokeInvites(list: ShoppingList) = api.revokeInvites(list)
     suspend fun whoAmI(): Long = api.whoAmI().id

@@ -740,6 +740,41 @@ async fn a_chosen_order_leads_and_the_rest_follows(
 
 /// Somebody who has not set an order inherits the earliest one set on the list, so a
 /// list shared with a person who never opens the settings still has a settled shape.
+/// Joining tells everybody it concerns, not just the person who joined.
+///
+/// Three screens go out of date the moment somebody accepts an invitation: their own
+/// list of lists, the owner's (which counts who a list is shared with), and the list
+/// itself (whose share sheet says who can see it). Announcing only the first is what
+/// left that sheet reading "who can see it: you" while somebody else was already
+/// looking at the list.
+#[rstest]
+#[tokio::test]
+async fn joining_is_announced_to_the_owner_and_to_the_list(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    // Subscribed before the join: these channels carry only what is sent afterwards.
+    let mut lists_of_owner = s.ctx.changes.watch_lists();
+    let mut the_list = s.ctx.changes.watch();
+
+    let token = lists::invite(&s.ctx, &s.mine, s.list.id, Role::Editor)
+        .await
+        .unwrap();
+    lists::join(&s.ctx, &s.theirs, &token).await.unwrap();
+
+    let owner = s.mine.person().unwrap().id;
+    let mut told = Vec::new();
+    while let Ok(heard) = lists_of_owner.try_recv() {
+        told.push(heard.user_id);
+    }
+    assert!(told.contains(&owner), "the owner was not told: {told:?}");
+
+    assert_eq!(
+        the_list.try_recv().map(|heard| heard.list_id).ok(),
+        Some(s.list.id),
+        "the list itself was not told"
+    );
+}
+
 #[rstest]
 #[tokio::test]
 async fn an_order_is_inherited_from_whoever_set_one_first(

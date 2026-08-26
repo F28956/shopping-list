@@ -171,10 +171,19 @@ pub async fn join(ctx: &Ctx, actor: &Actor, token: &Token) -> Result<List> {
     }
     Invite::mark_used(&ctx.db, token).await?;
 
-    // They have a list they did not have a moment ago.
-    ctx.changes.announce_lists_of(joiner.id);
+    let list = List::get(&ctx.db, list::Lookup::Id(invite.list_id)).await?;
 
-    Ok(List::get(&ctx.db, list::Lookup::Id(invite.list_id)).await?)
+    // Three streams, because three screens are now out of date, and telling only the
+    // first is what left a share sheet saying "who can see it: you" while somebody
+    // else was already reading the list.
+    //
+    // Removal has told all three since it was written; joining told one. The pair are
+    // the same event in opposite directions and had drifted apart.
+    ctx.changes.announce_lists_of(joiner.id); // they have a list they did not have
+    ctx.changes.announce_lists_of(list.owner_id); // the owner has one more sharer
+    ctx.changes.announce(invite.list_id); // and the list itself has a new reader
+
+    Ok(list)
 }
 
 /// What this person may do on this list.

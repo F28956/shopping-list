@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
 import com.cernauskas.shoppinglist.data.Person
@@ -60,6 +61,30 @@ fun ShareSheet(list: ShoppingList, model: ListsViewModel, onDismiss: () -> Unit)
         } catch (e: Exception) {
             loading = false
             model.say(e.message ?: "Could not read who this is shared with.")
+        }
+    }
+
+    // Read again whenever the list changes, for as long as the sheet is up.
+    //
+    // Somebody following the link is the one change this sheet exists to show, and it
+    // arrives while the sheet is open -- you hand over the code and watch. Loading the
+    // members once meant the sheet still said "who can see it: you" after they were
+    // already reading the list, which reads as the code not having worked.
+    LaunchedEffect(list.id) {
+        while (true) {
+            try {
+                model.watchList(list).collect {
+                    try {
+                        refresh()
+                    } catch (_: Exception) {
+                        // A failed re-read leaves the names that are already up, which
+                        // is a moment out of date rather than blank.
+                    }
+                }
+            } catch (_: Exception) {
+                // Losing the stream is ordinary. Nothing to say about it here.
+            }
+            delay(3_000)
         }
     }
 
