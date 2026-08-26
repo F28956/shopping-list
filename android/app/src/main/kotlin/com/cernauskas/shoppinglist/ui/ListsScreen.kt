@@ -77,7 +77,15 @@ fun ListsScreen(
                 },
                 actions = {
                     var open by remember { mutableStateOf(false) }
-                    IconButton(onClick = { open = true }) {
+                    IconButton(
+                        onClick = { open = true },
+                        // Lined up with the same button on every row below it. A bar
+                        // action sits 4dp from the edge and a list row's trailing
+                        // content sits 16dp from it, so the two columns of dots were
+                        // 12dp apart -- close enough to look like a mistake rather
+                        // than a difference.
+                        modifier = Modifier.padding(end = 12.dp),
+                    ) {
                         Icon(Icons.Default.MoreVert, contentDescription = "More")
                     }
                     DropdownMenu(expanded = open, onDismissRequest = { open = false }) {

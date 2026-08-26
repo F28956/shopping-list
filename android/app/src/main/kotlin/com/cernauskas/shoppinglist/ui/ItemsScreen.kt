@@ -75,7 +75,15 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
                 },
                 actions = {
                     var menu by remember { mutableStateOf(false) }
-                    IconButton(onClick = { menu = true }) {
+                    IconButton(
+                        onClick = { menu = true },
+                        // Lined up with the same button on every row below it. A bar
+                        // action sits 4dp from the edge and a list row's trailing
+                        // content sits 16dp from it, so the two columns of dots were
+                        // 12dp apart -- close enough to look like a mistake rather
+                        // than a difference.
+                        modifier = Modifier.padding(end = 12.dp),
+                    ) {
                         Icon(Icons.Default.MoreVert, contentDescription = "More")
                     }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -325,13 +333,6 @@ private fun ItemRow(
                 }
             }
         },
-        leadingContent = {
-            Checkbox(
-                checked = item.isDone,
-                onCheckedChange = { onToggle() },
-                enabled = mayEdit,
-            )
-        },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Quietly, and on the row itself. A change that has not been sent is a
@@ -368,6 +369,23 @@ private fun ItemRow(
                 }
             }
         },
-        modifier = if (mayEdit) Modifier.clickable { onToggle() } else Modifier,
+        // The row is the control, and always was -- there was a checkbox beside it as
+        // well, repeating in a widget what tapping the row already did and taking a
+        // column of width to do it. What is done is said three ways without it: struck
+        // through, greyed, and under the done heading.
+        //
+        // Named here rather than left to the row's contents, because a screen reader
+        // announcing "Milk, dairy, 2 litre" says what the row *is* and not what
+        // touching it does.
+        modifier = if (mayEdit) {
+            Modifier
+                .clickable { onToggle() }
+                .semantics {
+                    contentDescription =
+                        if (item.isDone) "Put ${item.name} back" else "Cross ${item.name} off"
+                }
+        } else {
+            Modifier
+        },
     )
 }
