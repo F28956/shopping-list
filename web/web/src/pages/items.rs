@@ -273,12 +273,25 @@ fn item_row(list_id: list::Id, b: &Board, i: &item::Item, open: Option<i64>) -> 
     }
 }
 
+/// The unit that means an item is counted rather than measured.
+///
+/// Stored rather than left NULL, so that `milk` and `1 unit milk` are the same thing
+/// and merge; printed as nothing, because it says nothing a number does not.
+const UNMEASURED: &str = "unit";
+
 /// How much of it, or nothing at all.
 ///
 /// One of something unmeasured is the default and the commonest case, so printing
 /// "1" on most rows is noise dressed as information.
 fn measure(i: &item::Item, units: &std::collections::HashMap<i64, String>) -> Option<String> {
-    let unit = i.unit_id.and_then(|u| units.get(&u.0));
+    // `unit` is the unit that means "counted, not measured", and it is what an item
+    // added without one is given. It says nothing a number does not, so it prints as
+    // nothing: six eggs, not "6 unit".
+    let unit = i
+        .unit_id
+        .and_then(|u| units.get(&u.0))
+        .filter(|name| name.as_str() != UNMEASURED);
+
     match (i.amount.0, unit) {
         (1.0, None) => None,
         (a, None) => Some(trim_amount(item::Amount(a))),

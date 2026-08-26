@@ -2,6 +2,8 @@ package com.cernauskas.shoppinglist.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
@@ -108,9 +110,23 @@ fun EditSheet(
     var draft by remember(item.id) { mutableStateOf(ItemDraft.of(item, attached)) }
     var unitsOpen by remember { mutableStateOf(false) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Fully expanded, not the half-height a sheet opens at by default: there is a
+    // name, an amount, a unit and twenty-one tags in here, and half a screen is not
+    // enough for any of it plus the button that saves it.
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
         Column(
-            Modifier.padding(24.dp).navigationBarsPadding().imePadding(),
+            // Scrollable, because a sheet does not scroll its content on its own: with
+            // a name, an amount, a unit and twenty-one tags in it, Save sat below the
+            // bottom of the screen and could not be reached at all once the keyboard
+            // was up.
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp)
+                .navigationBarsPadding()
+                .imePadding(),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text("Edit item", style = MaterialTheme.typography.titleLarge)
@@ -212,8 +228,19 @@ fun TagOrderSheet(
 ) {
     var order by remember(tags) { mutableStateOf(tags) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.padding(horizontal = 8.dp).navigationBarsPadding()) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        // A fixed share of the screen with the buttons pinned under a scrolling list,
+        // rather than a column that grows past the bottom edge. Twenty-one tags will
+        // not fit on any phone, and Save after them is Save nobody can press.
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 8.dp)
+                .navigationBarsPadding()
+        ) {
             Text(
                 "Tag order",
                 style = MaterialTheme.typography.titleLarge,
@@ -227,7 +254,7 @@ fun TagOrderSheet(
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
 
-            LazyColumn(Modifier.weight(1f, fill = false).heightIn(max = 380.dp)) {
+            LazyColumn(Modifier.weight(1f)) {
                 items(order, key = { it.id }) { tag ->
                     val at = order.indexOf(tag)
                     val used = tag.id in inUse

@@ -156,16 +156,22 @@ class Api(
 
     suspend fun people(list: ShoppingList): List<Person> = get("/api/lists/${list.id}/members")
 
-    /** A link to send, returned exactly once: only its hash is stored, so a lost link
-     * is remade rather than found. */
+    /**
+     * A code to send, returned exactly once: only its hash is stored, so a lost code
+     * is remade rather than found.
+     *
+     * The code alone, not a link. A link carries a host, and the host this app talks
+     * to is 10.0.2.2 or somebody's laptop -- meaningless on the device it is being
+     * sent to. Whoever receives it pastes it into an app that already knows which
+     * server it is talking to.
+     */
     suspend fun invite(list: ShoppingList): String {
         val body = send(
             "POST",
             "/api/lists/${list.id}/members/invites",
             """{"role":"editor"}""",
         )
-        val invitation: Invitation = json.decodeFromString(body)
-        return "$baseUrl/join/${invitation.token}"
+        return json.decodeFromString<Invitation>(body).token
     }
 
     suspend fun revokeInvites(list: ShoppingList) {
@@ -188,9 +194,21 @@ class Api(
      * app a second source of truth for order and content, and one dropped event would
      * leave it confidently disagreeing with the browser.
      */
-    fun changes(list: ShoppingList): Flow<kotlin.Unit> = callbackFlow {
+    fun changes(list: ShoppingList): Flow<kotlin.Unit> =
+        events("/api/lists/${list.id}/events")
+
+    /**
+     * Emits when the set of lists this person can see changes.
+     *
+     * A separate stream from a list's own, because it answers a different question: a
+     * list that has just been made has no watchers, so announcing it to itself
+     * reaches nobody.
+     */
+    fun listChanges(): Flow<kotlin.Unit> = events("/api/me/events")
+
+    private fun events(path: String): Flow<kotlin.Unit> = callbackFlow {
         val request = Request.Builder()
-            .url("$baseUrl/api/lists/${list.id}/events")
+            .url("$baseUrl$path")
             .header("Accept", "text/event-stream")
             .header("Authorization", "Bearer ${token() ?: ""}")
             .build()

@@ -3,7 +3,9 @@ package com.cernauskas.shoppinglist.data
 import android.content.Context
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.NoCredentialException
 import com.cernauskas.shoppinglist.BuildConfig
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -21,7 +23,10 @@ class Identity(private val context: Context) {
 
     sealed interface State {
         data object Unknown : State
-        data object SignedOut : State
+        /** Signed out, and why — or null when nothing was attempted. A failed sign-in
+         * used to land here with nothing to show, which on a button that is already
+         * on the sign-out screen looks exactly like the button not working. */
+        data class SignedOut(val problem: String? = null) : State
         data class SignedIn(val name: String?) : State
     }
 
@@ -54,13 +59,17 @@ class Identity(private val context: Context) {
      * who has signed in before. Failing it is not an error, it is a person who has
      * not.
      */
-    suspend fun restore(): State = attempt(onlyAuthorized = true)
+    suspend fun restore(): State = attempt(onlyAuthorized = true, quiet = true)
 
     /** The loud path, from a button: offers every account on the device. */
-    suspend fun signIn(): State = attempt(onlyAuthorized = false)
+    suspend fun signIn(): State = attempt(onlyAuthorized = false, quiet = false)
 
-    private suspend fun attempt(onlyAuthorized: Boolean): State {
-        if (!isConfigured) return State.SignedOut
+    private suspend fun attempt(onlyAuthorized: Boolean, quiet: Boolean): State {
+        if (!isConfigured) {
+            return State.SignedOut(
+                if (quiet) null else "This build has no Google client id."
+            )
+        }
 
         val option = GetGoogleIdOption.Builder()
             .setFilterByAuthorizedAccounts(onlyAuthorized)
@@ -77,7 +86,24 @@ class Identity(private val context: Context) {
             token = credential.idToken
             State.SignedIn(credential.displayName)
         } catch (e: GetCredentialException) {
-            State.SignedOut
+            // Restoring quietly is allowed to fail silently: it is the path for
+            // somebody who has signed in before, and failing it just means they have
+            // not. A tap on the button is not, and used to produce nothing at all.
+            State.SignedOut(if (quiet) null else e.explain())
         }
     }
+}
+
+/**
+ * What to tell somebody when Credential Manager refuses.
+ *
+ * The library's own messages are for developers -- `[28433]` and a stack of obfuscated
+ * frames. These say what to do about it, and the commonest case by a distance is an
+ * emulator with no Google account on it, where nothing is wrong with the app at all.
+ */
+private fun GetCredentialException.explain(): String = when (this) {
+    is NoCredentialException ->
+        "No Google account on this device. Add one in Settings, then try again."
+    is GetCredentialCancellationException -> "Sign-in cancelled."
+    else -> message ?: "Google would not sign you in."
 }

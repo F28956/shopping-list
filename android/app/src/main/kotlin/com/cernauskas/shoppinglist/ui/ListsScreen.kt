@@ -20,6 +20,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.cernauskas.shoppinglist.data.ShoppingList
@@ -83,6 +85,12 @@ fun ListsScreen(
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { naming = Naming.Create },
+                // Described on the button itself. A floating button does not merge
+                // its content into one node, so a description on the icon stays on
+                // the icon and the clickable part is announced as an unlabelled
+                // button -- which uiautomator flags as NAF, and a screen reader
+                // reads as nothing at all.
+                modifier = Modifier.semantics { contentDescription = "New list" },
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
                 text = { Text("New list") },
             )

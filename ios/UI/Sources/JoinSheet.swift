@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Accepting a link somebody sent you.
+/// Accepting a code somebody sent you.
 ///
-/// Paste the whole link or just the token — both mean the same request, and asking
-/// somebody to trim it themselves is asking them to do the computer's job.
+/// A pasted link works too — the browser still makes those — because both mean the
+/// same request, and asking somebody to trim one themselves is asking them to do the
+/// computer's job.
 struct JoinSheet: View {
     let join: (String) async -> Void
 
@@ -16,11 +17,11 @@ struct JoinSheet: View {
             Text("Join a list")
                 .font(.headline)
                 .accessibilityIdentifier("join.title")
-            Text("Paste the link somebody sent you.")
+            Text("Paste the code somebody sent you.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            TextField("Link", text: $pasted)
+            TextField("Code", text: $pasted)
                 .textFieldStyle(.roundedBorder)
                 .focused($typing)
                 .accessibilityIdentifier("join.field")

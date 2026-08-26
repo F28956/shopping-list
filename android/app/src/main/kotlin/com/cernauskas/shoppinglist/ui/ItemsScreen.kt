@@ -13,6 +13,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.cernauskas.shoppinglist.data.Item
@@ -84,8 +86,12 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
         },
         floatingActionButton = {
             if (model.list.mayEdit) {
-                FloatingActionButton(onClick = { adding = true }) {
-                    Icon(Icons.Default.Add, contentDescription = "Add an item")
+                FloatingActionButton(
+                    onClick = { adding = true },
+                    // On the button, not the icon inside it -- see ListsScreen.
+                    modifier = Modifier.semantics { contentDescription = "Add an item" },
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
                 }
             }
         },

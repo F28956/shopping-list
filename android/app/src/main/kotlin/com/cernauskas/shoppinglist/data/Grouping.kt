@@ -51,7 +51,11 @@ fun Double.asAmount(): String =
  * follows, so they do not disagree about what a row says.
  */
 fun Item.measure(units: Map<Long, String>): String? {
-    val unit = unitId?.let { units[it] }
+    // `unit` is the unit that means "counted, not measured", and it is what an item
+    // added without one is given. It says nothing a number does not, so it prints as
+    // nothing: six eggs, not "6 unit".
+    val unit = unitId?.let { units[it] }?.takeIf { it != "unit" }
+
     return when {
         amount == 1.0 && unit == null -> null
         unit == null -> amount.asAmount()

@@ -6,6 +6,7 @@ import com.cernauskas.shoppinglist.data.Api
 import com.cernauskas.shoppinglist.data.ApiError
 import com.cernauskas.shoppinglist.data.Person
 import com.cernauskas.shoppinglist.data.ShoppingList
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,6 +35,28 @@ class ListsViewModel(private val api: Api, private val onSignedOut: () -> Unit) 
 
     init {
         load()
+        watch()
+    }
+
+    /**
+     * Keeps this screen in step with lists made, renamed, deleted or joined anywhere.
+     *
+     * A list's own stream cannot carry this: one that has just been made has no
+     * watchers at all, which is why a list created on a phone never appeared on a Mac
+     * left open beside it.
+     */
+    private fun watch() = viewModelScope.launch {
+        var reconnecting = false
+        while (true) {
+            if (reconnecting) load()
+            try {
+                api.listChanges().collect { load() }
+            } catch (_: Exception) {
+                // Losing the connection is ordinary and not worth saying.
+            }
+            reconnecting = true
+            delay(3_000)
+        }
     }
 
     fun load() = viewModelScope.launch {

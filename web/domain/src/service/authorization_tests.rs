@@ -1204,6 +1204,32 @@ async fn a_non_positive_amount_cannot_shrink_an_item(
     assert_eq!(unchanged.amount, first.amount, "the item was changed");
 }
 
+/// Counted rather than measured is still a unit.
+///
+/// Left as NULL, "milk" and "1 unit milk" are different units and so different rows,
+/// and a list grows a near-duplicate that nothing will ever merge.
+#[rstest]
+#[tokio::test]
+async fn an_item_with_no_unit_gets_the_unit_unit(
+    #[with(crate::models::fixtures::UNITS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let s = scene(pool).await;
+    let list = lists::create(&s.ctx, &s.mine, list::Name("Empty".into()))
+        .await
+        .unwrap();
+
+    let plain = items::quick_add(&s.ctx, &s.mine, list.id, "milk").await.unwrap();
+    let spelled = items::quick_add(&s.ctx, &s.mine, list.id, "1 unit milk")
+        .await
+        .unwrap();
+
+    assert!(plain.unit_id.is_some(), "no unit was filled in");
+    assert_eq!(spelled.id, plain.id, "the two did not merge");
+    assert_eq!(spelled.amount, item::Amount(2.0));
+}
+
 /// A typo can be taken back.
 #[rstest]
 #[tokio::test]

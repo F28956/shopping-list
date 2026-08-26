@@ -44,7 +44,13 @@ pub(super) async fn readable(ctx: &Ctx, actor: &User, id: list::Id) -> Result<Li
 
 pub async fn create(ctx: &Ctx, actor: &Actor, name: Name) -> Result<List> {
     let owner = actor.person()?;
-    Ok(List::create(&ctx.db, owner.id, name).await?)
+    let list = List::create(&ctx.db, owner.id, name).await?;
+
+    // Told to the person, not to the list: a list that has just been made has no
+    // watchers, so announcing it to itself reaches nobody -- which is why one made on
+    // a phone never turned up on a Mac left open beside it.
+    ctx.changes.announce_lists_of(owner.id);
+    Ok(list)
 }
 
 /// One page of the lists this person can see — the ones they own and the ones they
@@ -69,6 +75,8 @@ pub async fn update(ctx: &Ctx, actor: &Actor, id: list::Id, name: Name) -> Resul
     accessible(ctx, actor.person()?, id, Role::Owner).await?;
     let list = List::update(&ctx.db, id, name).await?;
     ctx.changes.announce(id);
+    // Its name is on everybody's list of lists, not only on the list itself.
+    tell_everyone_on(ctx, id).await;
     Ok(list)
 }
 
@@ -76,10 +84,16 @@ pub async fn update(ctx: &Ctx, actor: &Actor, id: list::Id, name: Name) -> Resul
 /// therefore never `InUse`, unlike a unit some item still points at.
 pub async fn delete(ctx: &Ctx, actor: &Actor, id: list::Id) -> Result<()> {
     accessible(ctx, actor.person()?, id, Role::Owner).await?;
+    // Read before it goes: afterwards there is nobody left to tell.
+    let audience = people_ids(ctx, id).await;
+
     List::delete(&ctx.db, id).await?;
     // Watchers are told last, so that anyone re-reading finds it already gone rather
     // than racing the delete and being told it is still there.
     ctx.changes.announce(id);
+    for who in audience {
+        ctx.changes.announce_lists_of(who);
+    }
     Ok(())
 }
 
@@ -157,6 +171,9 @@ pub async fn join(ctx: &Ctx, actor: &Actor, token: &Token) -> Result<List> {
     }
     Invite::mark_used(&ctx.db, token).await?;
 
+    // They have a list they did not have a moment ago.
+    ctx.changes.announce_lists_of(joiner.id);
+
     Ok(List::get(&ctx.db, list::Lookup::Id(invite.list_id)).await?)
 }
 
@@ -176,6 +193,27 @@ pub async fn role(ctx: &Ctx, actor: &Actor, id: list::Id) -> Result<Role> {
 /// to say so without asking per row.
 pub async fn share_counts(ctx: &Ctx, actor: &Actor) -> Result<std::collections::HashMap<i64, i64>> {
     Ok(ListMember::counts_for(&ctx.db, actor.person()?.id).await?)
+}
+
+/// Everyone who can see a list: the owner, and every member.
+async fn people_ids(ctx: &Ctx, id: list::Id) -> Vec<user::Id> {
+    let mut who = Vec::new();
+
+    if let Ok(list) = List::get(&ctx.db, list::Lookup::Id(id)).await {
+        who.push(list.owner_id);
+    }
+    if let Ok(members) = ListMember::for_list(&ctx.db, id).await {
+        who.extend(members.into_iter().map(|m| m.user_id));
+    }
+
+    who
+}
+
+/// Tells everyone who can see a list that their set of lists has changed.
+async fn tell_everyone_on(ctx: &Ctx, id: list::Id) {
+    for who in people_ids(ctx, id).await {
+        ctx.changes.announce_lists_of(who);
+    }
 }
 
 /// Everyone the list is shared with, and the role each holds.
@@ -251,5 +289,10 @@ pub async fn remove_member(ctx: &Ctx, actor: &Actor, id: list::Id, who: user::Id
         accessible(ctx, actor_user, id, Role::Owner).await?;
     }
 
-    Ok(ListMember::remove(&ctx.db, id, who).await?)
+    ListMember::remove(&ctx.db, id, who).await?;
+
+    // The person removed has one list fewer; the owner has one sharer fewer.
+    ctx.changes.announce_lists_of(who);
+    ctx.changes.announce_lists_of(list.owner_id);
+    Ok(())
 }

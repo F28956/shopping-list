@@ -14,7 +14,7 @@ struct ShareSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var people: [Person] = []
     @State private var me: Int64?
-    @State private var link: URL?
+    @State private var code: String?
     @State private var loaded = false
     @State private var error: String?
     @State private var leaving = false
@@ -24,22 +24,22 @@ struct ShareSheet: View {
     var body: some View {
         NavigationStack {
             SwiftUI.List {
-                if let link {
+                if let code {
                     Section {
                         // Shown once. Only the hash is stored, so a link that is lost
                         // is remade rather than looked up.
-                        Text(link.absoluteString)
+                        Text(code)
                             .font(.footnote.monospaced())
                             .textSelection(.enabled)
                             .accessibilityIdentifier("share.link")
 
-                        Button("Copy link") { copy(link.absoluteString) }
+                        Button("Copy code") { copy(code) }
                             .accessibilityIdentifier("share.copy")
                     } header: {
                         Text("Send this to one person")
                     } footer: {
                         Text(
-                            "It works once, for whoever opens it first, and expires "
+                            "It works once, for whoever uses it first, and expires "
                                 + "in a week. It is shown only now."
                         )
                     }
@@ -82,21 +82,21 @@ struct ShareSheet: View {
 
                 if iOwnIt {
                     Section {
-                        Button("Create a link") {
-                            Task { await act { link = try await api.invite(to: list) } }
+                        Button("Create a code") {
+                            Task { await act { code = try await api.invite(to: list) } }
                         }
                         .accessibilityIdentifier("share.invite")
 
-                        Button("Withdraw all links", role: .destructive) {
+                        Button("Withdraw all codes", role: .destructive) {
                             Task {
                                 await act { try await api.revokeInvites(to: list) }
-                                link = nil
+                                code = nil
                             }
                         }
                         .accessibilityIdentifier("share.revoke")
                     } footer: {
                         Text(
-                            "Withdrawing cancels every link not yet used. People "
+                            "Withdrawing cancels every code not yet used. People "
                                 + "already on the list stay."
                         )
                     }
@@ -105,7 +105,7 @@ struct ShareSheet: View {
                         Button("Leave this list", role: .destructive) { leaving = true }
                             .accessibilityIdentifier("share.leave")
                     } footer: {
-                        Text("You will need a new link to come back.")
+                        Text("You will need a new code to come back.")
                     }
                 }
             }

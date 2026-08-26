@@ -43,11 +43,12 @@ class MainActivity : ComponentActivity() {
 
                 LaunchedEffect(Unit) { state = identity.restore() }
 
-                when (state) {
+                when (val current = state) {
                     Identity.State.Unknown -> Splash()
 
-                    Identity.State.SignedOut -> SignIn(
+                    is Identity.State.SignedOut -> SignIn(
                         configured = identity.isConfigured,
+                        problem = current.problem,
                         onSignIn = { scope.launch { state = identity.signIn() } },
                     )
 
@@ -55,7 +56,7 @@ class MainActivity : ComponentActivity() {
                         api = api,
                         onSignedOut = {
                             identity.signOut()
-                            state = Identity.State.SignedOut
+                            state = Identity.State.SignedOut()
                         },
                     )
                 }
@@ -72,7 +73,7 @@ private fun Splash() {
 }
 
 @Composable
-private fun SignIn(configured: Boolean, onSignIn: () -> Unit) {
+private fun SignIn(configured: Boolean, problem: String?, onSignIn: () -> Unit) {
     Surface(Modifier.fillMaxSize()) {
         Column(
             Modifier.fillMaxSize().padding(32.dp),
@@ -89,6 +90,17 @@ private fun SignIn(configured: Boolean, onSignIn: () -> Unit) {
 
             if (configured) {
                 Button(onClick = onSignIn) { Text("Sign in with Google") }
+
+                // Shown where the tap happened. A refusal that says nothing is
+                // indistinguishable from a button that does nothing.
+                problem?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                    )
+                }
             } else {
                 // Said plainly rather than failing at the tap: a fresh checkout has no
                 // client id, because the file holding it is not committed.

@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.PersonRemove
@@ -61,34 +63,44 @@ fun ShareSheet(list: ShoppingList, model: ListsViewModel, onDismiss: () -> Unit)
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Fully expanded and scrollable. Once a link is showing, the members and the
+    // buttons under it sit past the bottom of a half-height sheet, and Withdraw is a
+    // control nobody can reach.
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
         Column(
-            Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).navigationBarsPadding(),
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp)
+                .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Share ${list.name}", style = MaterialTheme.typography.titleLarge)
 
-            link?.let { url ->
+            link?.let { code ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            url,
+                            code,
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                         )
                         Text(
-                            "Works once, for whoever opens it first, and expires in a "
+                            "Works once, for whoever uses it first, and expires in a "
                                 + "week. Shown only now.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         FilledTonalButton(
-                            onClick = { context.copy(url); model.say("Link copied") },
+                            onClick = { context.copy(code); model.say("Code copied") },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Icon(Icons.Default.ContentCopy, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Copy link")
+                            Text("Copy code")
                         }
                     }
                 }
@@ -134,7 +146,7 @@ fun ShareSheet(list: ShoppingList, model: ListsViewModel, onDismiss: () -> Unit)
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Create a link")
+                    Text("Create a code")
                 }
                 TextButton(
                     onClick = {
@@ -146,7 +158,7 @@ fun ShareSheet(list: ShoppingList, model: ListsViewModel, onDismiss: () -> Unit)
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Withdraw all links")
+                    Text("Withdraw all codes")
                 }
             } else {
                 TextButton(onClick = { leaving = true }, modifier = Modifier.fillMaxWidth()) {

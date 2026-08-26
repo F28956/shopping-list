@@ -55,6 +55,17 @@ pub async fn create(
         return Err(ServiceError::InvalidInput);
     }
 
+    // Counted rather than measured is still a unit, and `unit` is the one that says
+    // so. Left as NULL, "milk" and "1 unit milk" are different units and so different
+    // rows, and the list grows a near-duplicate that nothing will ever merge.
+    let unit_id = match unit_id {
+        Some(given) => Some(given),
+        None => unit::Unit::get(&ctx.db, unit::Lookup::Name(unit::Name("unit".into())))
+            .await
+            .map(|u| u.id)
+            .ok(),
+    };
+
     // Adding something the list already wants adds to it rather than beside it. Two
     // rows saying `Milk` are never two intentions; they are one intention entered
     // twice, and a list that grows a second copy every time somebody reaches for it

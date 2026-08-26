@@ -144,9 +144,14 @@ actor API {
         try await get("/api/lists/\(list.id)/members")
     }
 
-    /// A link to share, returned exactly once — only its hash is kept, so a caller
-    /// that loses it makes another rather than looking the old one up.
-    func invite(to list: List, as role: Role = .editor) async throws -> URL {
+    /// A code to share, returned once and never again — only its hash is stored, so a
+    /// caller that loses it makes another rather than looking the old one up.
+    ///
+    /// The code alone, not a link. A link carries a host, and the host these apps talk
+    /// to is a laptop on somebody's desk — meaningless on the device it is being sent
+    /// to. Whoever receives it pastes it into an app that already knows which server
+    /// it is talking to.
+    func invite(to list: List, as role: Role = .editor) async throws -> String {
         struct Invitation: Decodable { let token: String }
 
         let data = try await send(
@@ -154,19 +159,11 @@ actor API {
             "/api/lists/\(list.id)/members/invites",
             ["role": role.rawValue]
         )
-        let invitation: Invitation
         do {
-            invitation = try Self.decoder.decode(Invitation.self, from: data)
+            return try Self.decoder.decode(Invitation.self, from: data).token
         } catch {
             throw APIError.transport(error)
         }
-
-        // The browser's own join address: whoever it is sent to opens it wherever
-        // they are, and the app reads the token out of it — see `token(in:)`.
-        guard let url = URL(string: "/join/\(invitation.token)", relativeTo: baseURL) else {
-            throw APIError.badInput("Could not make a link")
-        }
-        return url.absoluteURL
     }
 
     /// Withdraws every outstanding link to this list. The only revocation there is:
@@ -277,6 +274,15 @@ actor API {
 
     // MARK: - Watching
 
+    /// A stream that yields when the set of lists this person can see changes.
+    ///
+    /// A separate stream from a list's own, because it answers a different question:
+    /// a list that has just been made has no watchers, so announcing it to itself
+    /// reaches nobody.
+    func listChanges() async throws -> AsyncThrowingStream<Void, Error> {
+        try await stream(at: "/api/me/events")
+    }
+
     /// A stream that yields once each time this list changes anywhere.
     ///
     /// It yields nothing but the fact of the change. Carrying the rows would make the
@@ -288,7 +294,16 @@ actor API {
     /// does not close it, and does not need to: the stream carries no list content,
     /// and every actual read still presents a fresh token.
     func changes(on list: List) async throws -> AsyncThrowingStream<Void, Error> {
-        guard let url = URL(string: "/api/lists/\(list.id)/events", relativeTo: baseURL) else {
+        try await stream(at: "/api/lists/\(list.id)/events")
+    }
+
+    /// Opens an event stream and yields once per event.
+    ///
+    /// Authorised once, when the connection opens. A token that expires mid-stream
+    /// does not close it, and does not need to: the stream carries no content, and
+    /// every actual read still presents a fresh token.
+    private func stream(at path: String) async throws -> AsyncThrowingStream<Void, Error> {
+        guard let url = URL(string: path, relativeTo: baseURL) else {
             throw APIError.badInput("Bad address for events")
         }
 
@@ -321,8 +336,8 @@ actor API {
             let reading = Task {
                 do {
                     for try await line in bytes.lines {
-                        // Keep-alives arrive as comments (":" first) and event names as
-                        // "event:", neither of which is news. A "data:" line is.
+                        // Keep-alives arrive as comments (":" first) and event names
+                        // as "event:", neither of which is news. A "data:" line is.
                         if line.hasPrefix("data:") { continuation.yield(()) }
                     }
                     continuation.finish()

@@ -189,7 +189,10 @@ extension Item {
     /// "1" on most rows is noise dressed as information — the same rule the web UI
     /// follows, so the two do not disagree about what a row says.
     func measure(units: [Int64: String]) -> String? {
-        let unit = unitID.flatMap { units[$0] }
+        // `unit` is the unit that means "counted, not measured", and it is what an
+        // item added without one is given. It says nothing a number does not, so it
+        // prints as nothing: six eggs, not "6 unit".
+        let unit = unitID.flatMap { units[$0] }.flatMap { $0 == "unit" ? nil : $0 }
         // Through `asAmount` rather than repeating its rule: this had its own copy,
         // without the guard that keeps `Int(_:)` from trapping on a value off the
         // end of the number line.

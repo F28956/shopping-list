@@ -148,11 +148,39 @@ struct ListsView: View {
             }
             .refreshable { await load() }
             .task { await load() }
+            .task { await watchLists() }
             .alert("Could not load", isPresented: .constant(error != nil)) {
                 Button("OK") { error = nil }
             } message: {
                 Text(error ?? "")
             }
+        }
+    }
+
+
+    /// Keeps the sidebar in step with lists made, renamed, deleted or joined anywhere.
+    ///
+    /// A list's own stream cannot carry this: one that has just been made has no
+    /// watchers at all, which is why a list created on a phone never appeared here.
+    private func watchLists() async {
+        var reconnecting = false
+
+        while !Task.isCancelled {
+            if reconnecting { await load() }
+
+            do {
+                for try await _ in try await api.listChanges() {
+                    await load()
+                }
+            } catch let problem as APIError {
+                if case .unauthorized = problem {
+                    identity.signOut()
+                    return
+                }
+            } catch {}
+
+            reconnecting = true
+            try? await Task.sleep(for: .seconds(3))
         }
     }
 

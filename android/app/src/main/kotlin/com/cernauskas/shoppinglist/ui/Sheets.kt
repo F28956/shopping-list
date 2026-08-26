@@ -13,6 +13,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.cernauskas.shoppinglist.data.tokenIn
 
 /**
  * Naming a list, whether new or being renamed.
@@ -79,20 +80,23 @@ fun JoinSheet(onDismiss: () -> Unit, onJoin: (String) -> Unit) {
         ) {
             Text("Join a list", style = MaterialTheme.typography.titleLarge)
             Text(
-                "Paste the link somebody sent you.",
+                "Paste the code somebody sent you.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             OutlinedTextField(
                 value = pasted,
                 onValueChange = { pasted = it },
-                label = { Text("Link") },
+                label = { Text("Code") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().focusRequester(focus),
             )
             Button(
                 onClick = { onJoin(pasted) },
-                enabled = pasted.isNotBlank(),
+                // Enabled only for something that could be a link. Offering to send
+                // a sentence and then answering "that does not look like a link" is
+                // the button knowing and asking anyway.
+                enabled = tokenIn(pasted) != null,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Join")

@@ -8,7 +8,7 @@
 
 use tokio::sync::broadcast;
 
-use crate::models::list;
+use crate::models::{list, user};
 
 /// A nudge: this list is not what you last read.
 ///
@@ -21,32 +21,60 @@ pub struct Changed {
     pub list_id: list::Id,
 }
 
+/// A nudge for one person: the set of lists they can see is not what they last read.
+///
+/// Separate from [`Changed`] because it is a different question. A list's watchers are
+/// whoever has it open; the watchers of *which lists exist* are people, and a list
+/// that has just been made has no watchers at all — which is exactly why making one
+/// went unnoticed everywhere else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListsChanged {
+    pub user_id: user::Id,
+}
+
 /// Who to tell when a list changes.
 ///
 /// Cloning shares the channel, which is what makes one of these in `main` reach both
 /// transports. Two separately constructed `Changes` are two separate worlds, and a
 /// browser edit would never reach a phone.
 #[derive(Debug, Clone)]
-pub struct Changes(broadcast::Sender<Changed>);
+pub struct Changes {
+    lists: broadcast::Sender<Changed>,
+    people: broadcast::Sender<ListsChanged>,
+}
 
 impl Changes {
     pub fn new() -> Self {
         // Room for a burst while a watcher is between polls. A watcher that falls
         // further behind than this is told it lagged rather than fed stale nudges,
         // and since a nudge only says "re-read", missing some of them costs nothing.
-        Self(broadcast::channel(64).0)
+        Self {
+            lists: broadcast::channel(64).0,
+            people: broadcast::channel(64).0,
+        }
     }
 
     /// Says a list changed. Silent when nobody is watching, which is the normal case.
     pub fn announce(&self, list_id: list::Id) {
         // `send` fails only when there are no receivers, which is not a problem: an
         // unwatched list still changed, there is simply no one to tell.
-        let _ = self.0.send(Changed { list_id });
+        let _ = self.lists.send(Changed { list_id });
     }
 
-    /// Starts watching. Only nudges sent after this call arrive.
+    /// Says the set of lists this person can see has changed — one made, renamed,
+    /// deleted, joined or left.
+    pub fn announce_lists_of(&self, user_id: user::Id) {
+        let _ = self.people.send(ListsChanged { user_id });
+    }
+
+    /// Starts watching one list. Only nudges sent after this call arrive.
     pub fn watch(&self) -> broadcast::Receiver<Changed> {
-        self.0.subscribe()
+        self.lists.subscribe()
+    }
+
+    /// Starts watching what lists a person can see.
+    pub fn watch_lists(&self) -> broadcast::Receiver<ListsChanged> {
+        self.people.subscribe()
     }
 }
 

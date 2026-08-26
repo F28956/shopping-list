@@ -683,7 +683,13 @@ async fn a_spelled_out_item_is_not_parsed(
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(item["name"], "1 kg bag of rice", "taken literally");
     assert_eq!(item["amount"], 1.0);
-    assert!(item["unit_id"].is_null());
+    // Not null: something counted rather than measured still has a unit, and `unit`
+    // is the one that says so. Left null, this row would never merge with the same
+    // thing added as "1 unit ...".
+    assert!(
+        !item["unit_id"].is_null(),
+        "an unmeasured item did not get the `unit` unit"
+    );
 }
 
 /// Ambiguous or empty is the caller's mistake, not a guess to make on their behalf.
