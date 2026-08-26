@@ -197,9 +197,23 @@ step.
   in a transaction. GRDB is SQLite with the SQL written down, which is also the
   server's mental model, so the two halves of a merge rule can be read side by
   side.
-* **watchOS** — reads only. It already asks the phone for a token; asking it to
-  hold a queue as well is a lot of machinery for a screen you glance at. It
-  stays online-only, and says so when it cannot reach anything.
+* **watchOS** — the same cache and the same outbox. This document used to call the
+  watch read-only, and it was simply wrong: crossing things off is exactly what a
+  watch is for, and it is the screen most likely to be doing it somewhere with no
+  signal. A tick made there used to be thrown away, and the error replaced the
+  list, so the change and the list were lost together.
+
+  It cannot sign in — Google has no watchOS SDK — so the token still comes from
+  the phone, cached for half an hour. **The two stores are separate and have to
+  be**, because they are two devices: an App Group shares a container between an
+  app and its extensions on one device, never across a pair. So each queues its
+  own work and sends its own, and a watch without cellular reaches the server
+  through the phone it is paired to.
+
+  What it says is one dot rather than a sentence. Green: this came from the
+  server and nothing is waiting to go back. Orange: one of those is not true. A
+  wrist has no line to spare, and the difference between "offline" and "queued"
+  is not one anybody acts on mid-shop.
 * **The browser** — online-only, and it says so. The web UI is server-rendered
   HTML with htmx: making it work offline means a service worker and a
   client-side store, which is a second copy of the app rather than a feature of

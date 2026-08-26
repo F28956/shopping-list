@@ -5,6 +5,12 @@ import SwiftUI
 /// There is no adding, no editing, no deleting and no tags. Not because a watch could
 /// not show them, but because the moment this screen is for is one hand on a trolley
 /// — and a row that does two things is a row that does the wrong one.
+///
+/// The one thing it *does* do, it does offline. A tick in a shop is a decision already
+/// taken, and the watch is the screen most likely to be taking it somewhere with no
+/// signal — so it keeps the same cache and the same queue as the phones. It used to
+/// throw the tick away and replace the list with an error, which lost the change and
+/// the list in one go.
 struct WatchItemsView: View {
     let api: API
     let list: List
@@ -21,6 +27,13 @@ struct WatchItemsView: View {
     /// Rows waiting for the server. Kept so a tap looks instant on a wrist, where the
     /// round trip is the phone's connection plus the server's.
     @State private var inFlight: Set<Int64> = []
+    /// Ticks made here that have not been sent — see the phone's `ItemsView`.
+    @State private var unsent: Set<String> = []
+    @State private var waiting = 0
+    @State private var fresh = false
+    @State private var draining = false
+
+    private let cache = Cache.shared
 
     private var outstanding: [Item] { items.filter { !$0.isDone } }
 
@@ -37,11 +50,14 @@ struct WatchItemsView: View {
         Group {
             if !loaded {
                 ProgressView()
-            } else if let problem {
+            } else if let problem, items.isEmpty {
+                // Only when there is nothing to show. A failed request used to replace
+                // the list with this, which threw away the one thing the person came to
+                // look at over a connection they cannot do anything about.
                 WatchProblemView(problem: problem) { Task { await load() } }
             } else {
                 SwiftUI.List {
-                    if outstanding.isEmpty {
+                    if outstanding.isEmpty && fresh {
                         Text(items.isEmpty ? "Nothing on this list." : "All done.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -77,9 +93,19 @@ struct WatchItemsView: View {
             }
         }
         .navigationTitle(list.name)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                WatchStatusDot(waiting: waiting, offline: problem != nil)
+            }
+        }
         .task { await loadReference() }
-        .task { await load() }
+        .task {
+            showWhatWeHave()
+            refreshUnsent()
+            await load()
+        }
         .task { await watch() }
+        .task { await keepTrying() }
         // watchOS suspends a connection the moment the app stops being frontmost, so
         // coming back is the gap the stream cannot cover on its own.
         .onChange(of: phase) { _, now in
@@ -149,6 +175,18 @@ struct WatchItemsView: View {
                     .strikethrough(item.isDone)
                     .foregroundStyle(item.isDone ? .secondary : .primary)
                 Spacer(minLength: 2)
+
+                // Quietly, in the row rather than over it: a tick that has not been
+                // sent is a detail about that line, not news about the app. Laid out
+                // beside the measure rather than on top of it -- a wrist has no room
+                // to spare and an overlay simply sat on the number.
+                if unsent.contains(item.uuid) {
+                    Image(systemName: "clock")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .layoutPriority(1)
+                }
+
                 if let measure = item.measure(units: units) {
                     Text(measure)
                         .font(.caption2)
@@ -173,15 +211,63 @@ struct WatchItemsView: View {
         // comes back unchanged is a worse answer than one that does not move.
         guard list.mayEdit else { return }
 
-        inFlight.insert(item.id)
-        defer { inFlight.remove(item.id) }
+        let done = !item.isDone
+        cache.outbox.setDone(item, on: list, done: done)
+        items = items.map { $0.uuid == item.uuid ? $0.withDone(done) : $0 }
+        cache.remember(items: items, on: list)
+        refreshUnsent()
 
-        do {
-            try await api.setDone(item, on: list, done: !item.isDone)
-            await load()
-        } catch {
-            problem = Problem(error, identity: identity)
+        await drain()
+    }
+
+    /// Sends what is queued. See the phone's `ItemsView.drain` — the rules are the
+    /// same, and only the losses are said out loud.
+    private func drain() async {
+        guard !draining, cache.outbox.waiting > 0 else { return }
+        draining = true
+        let drained = await cache.outbox.drain(through: api)
+        draining = false
+
+        refreshUnsent()
+        if drained.sent > 0 { await load() }
+    }
+
+    /// Tries the queue again while anything is in it, so a tick does not wait for
+    /// somebody else to touch the list.
+    private func keepTrying() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(10))
+            if cache.outbox.waiting > 0 { await drain() }
         }
+    }
+
+    private func refreshUnsent() {
+        let queued = cache.outbox.forList(list)
+        unsent = Set(queued.map(\.itemUUID))
+        waiting = queued.count
+    }
+
+    /// The last list this watch saw, put up before anything is asked of the server.
+    private func showWhatWeHave() {
+        guard !fresh else { return }
+        let remembered = cache.items(on: list)
+        guard !remembered.isEmpty else { return }
+        items = remembered
+        total = Int64(remembered.count)
+        loaded = true
+    }
+
+    /// The server's answer with this watch's unsent ticks laid back over it.
+    private func withUnsent(_ fromServer: [Item]) -> [Item] {
+        let queued = cache.outbox.forList(list)
+        guard !queued.isEmpty else { return fromServer }
+        var rows = fromServer
+        for operation in queued where operation.kind == QueuedOperation.Kind.setDone {
+            rows = rows.map {
+                $0.uuid == operation.itemUUID ? $0.withDone(operation.done) : $0
+            }
+        }
+        return rows
     }
 
     /// Reference data, once. On a watch this matters twice over: it is the slowest
@@ -199,10 +285,14 @@ struct WatchItemsView: View {
     private func load() async {
         do {
             let listing = try await api.items(on: list)
-            self.items = listing.items
+            cache.remember(items: listing.items, on: list)
+            self.items = withUnsent(listing.items)
             self.truncated = listing.truncated
             self.total = listing.total
             problem = nil
+            fresh = true
+            loaded = true
+            await drain()
         } catch {
             problem = Problem(error, identity: identity)
         }

@@ -87,6 +87,14 @@ targets:
     sources:
       - path: ShoppingListWatch/Sources
       - path: Shared/Sources
+      # The watch is not read-only: it crosses things off, which is the one thing
+      # somebody does with a hand on a trolley. So it needs the same cache and the
+      # same outbox as the phones -- a tick made in a shop with no signal is a
+      # decision already taken, whichever screen took it.
+      - path: Store/Sources
+    dependencies:
+      - package: GRDB
+        product: GRDB
     info:
       path: ShoppingListWatch/Info.plist
       properties:
