@@ -266,6 +266,35 @@ equivalent problem for ordering, but there is no such trick for routes.
   actor; that is written down rather than expressed as a function returning `Ok(())`,
   which reads like a check that exists.
 
+## Clients, and how each proves who it is
+
+Every client talks to the same JSON API and carries `Authorization: Bearer <google id
+token>`. The server validates the signature against Google's JWKS, checks the issuer
+and expiry, and checks the `aud` claim against a list it was configured with. What
+differs per platform is only which id lands in that claim.
+
+| Client | Where the token comes from | What `aud` says | Server needs |
+|---|---|---|---|
+| Browser | OIDC code flow, server-side | web client id | `GOOGLE_CLIENT_ID` |
+| iOS / macOS | GoogleSignIn SDK on the device | **iOS** client id | `GOOGLE_IOS_CLIENT_ID` |
+| watchOS | asks the paired phone over WatchConnectivity | iOS client id | nothing more |
+| Android | Credential Manager, given the web client id as `serverClientId` | **web** client id | usually nothing |
+
+The Android row is the one that surprises. Its OAuth client — registered against the
+package name and the signing certificate's SHA-1 — is what lets Google attest the app;
+it does not name the audience. Expecting it to, and adding it as a required audience,
+would be configuring for a claim that never arrives.
+`GOOGLE_ANDROID_CLIENT_ID` exists so that finding otherwise is a line of
+configuration rather than a change to the server.
+
+Reaching the server from a real device is the other half:
+
+* it binds `0.0.0.0`, and logs the address a device on the same network can use —
+  `localhost` on a handset is the handset, which is the first thing to get wrong;
+* Android blocks cleartext HTTP from API 28. On a development network that is a
+  `networkSecurityConfig` exception naming the host, which is the client's business;
+  anywhere else it is a reason to serve TLS, which this does not yet do — see Open.
+
 ## Open
 
 **The credential for MCP.** iOS took the other road: Google's iOS SDK holds the
@@ -287,6 +316,14 @@ An irreversible `DELETE` deserves a confirmation flow designed on purpose.
 Answering it means deciding what a `viewer` may do — and, separately, whose history a
 shared list draws on. History is per-user by design: what you buy is yours, and
 merging two people's habits would make both sets of suggestions worse.
+
+### TLS
+
+Nothing here serves HTTPS. On a laptop talking to its own simulators that costs
+nothing; a phone on the same Wi-Fi already needs a cleartext exception, and anything
+beyond this network needs certificates — a reverse proxy in front, or rustls in the
+server. The token in every request is a bearer credential, so this is the gap that
+matters most once the address stops being `localhost`.
 
 ## Recorded, not taken
 

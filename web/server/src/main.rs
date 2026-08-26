@@ -60,6 +60,12 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     tracing::info!("listening on {}", listener.local_addr()?);
+
+    // Said out loud because `localhost` is the first thing to get wrong once a real
+    // phone is involved: on the handset it means the handset.
+    if let Some(address) = lan_address(8080) {
+        tracing::info!("reachable from this network at {address}");
+    }
     axum::serve(listener, app(api_state, web_state, sessions)).await?;
     Ok(())
 }
@@ -162,17 +168,62 @@ fn admission() -> anyhow::Result<Admission> {
     Ok(admission)
 }
 
-fn google_client_ids() -> anyhow::Result<Vec<String>> {
-    let mut ids = vec![std::env::var("GOOGLE_CLIENT_ID")?];
+/// The address a device on the same network can reach this on.
+///
+/// Found by asking the routing table, not by listing interfaces: connecting a UDP
+/// socket sends no packets, it only resolves which local address would be used to
+/// reach somewhere else — which is the one a phone on the same Wi-Fi can use.
+///
+/// `None` when there is no route out, which is a laptop with the Wi-Fi off rather
+/// than an error worth stopping for.
+fn lan_address(port: u16) -> Option<String> {
+    let probe = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    probe.connect("8.8.8.8:80").ok()?;
+    Some(format!("http://{}:{port}", probe.local_addr().ok()?.ip()))
+}
 
-    if let Ok(ios) = std::env::var("GOOGLE_IOS_CLIENT_ID")
-        && !ios.trim().is_empty()
-    {
-        ids.push(ios);
-    }
+/// The client ids whose tokens this server will accept as its own.
+///
+/// One per way in, because Google decides the `aud` claim differently per platform:
+///
+/// * **Browser** — `GOOGLE_CLIENT_ID`, the web client. Required.
+/// * **iOS** — `GOOGLE_IOS_CLIENT_ID`. The SDK mints tokens addressed to the iOS
+///   client, so without it every request from the phone is a 401.
+/// * **Android** — usually *nothing to add*. Credential Manager is given the web
+///   client id as its `serverClientId`, and the token comes back addressed to that,
+///   already in this list. The Android OAuth client — registered against the package
+///   name and the signing certificate's SHA-1 — exists so Google can attest the app,
+///   not to name the audience. `GOOGLE_ANDROID_CLIENT_ID` is here for the case where
+///   a token does arrive addressed to it, so that discovering as much is a line of
+///   configuration rather than a change to the server.
+fn google_client_ids() -> anyhow::Result<Vec<String>> {
+    let ids = audiences([
+        Some(std::env::var("GOOGLE_CLIENT_ID")?),
+        std::env::var("GOOGLE_IOS_CLIENT_ID").ok(),
+        std::env::var("GOOGLE_ANDROID_CLIENT_ID").ok(),
+    ]);
 
     tracing::info!(audiences = ids.len(), "accepting Google tokens");
     Ok(ids)
+}
+
+/// The configured ids, minus the blanks and the repeats.
+///
+/// Separated from reading the environment so the rules have somewhere to be tested.
+/// Repeats are dropped rather than tolerated: Android is normally configured with the
+/// web client id, and listing an audience twice is a validator doing the same work
+/// twice and a log line that miscounts the ways in.
+fn audiences(configured: impl IntoIterator<Item = Option<String>>) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+
+    for value in configured.into_iter().flatten() {
+        let id = value.trim().to_string();
+        if !id.is_empty() && !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+
+    ids
 }
 
 /// Opens the database, deliberately refusing to create it.
@@ -194,6 +245,31 @@ async fn open_database() -> anyhow::Result<SqlitePool> {
 
 #[cfg(test)]
 mod tests {
+    /// The audiences, which decide whose tokens are ours.
+    #[test]
+    fn audiences_drop_blanks_and_repeats() {
+        assert_eq!(
+            super::audiences([
+                Some("web".to_string()),
+                Some("  ".to_string()),
+                None,
+                Some(" ios ".to_string()),
+                // Android is normally configured with the web client id, because that
+                // is what its tokens are addressed to.
+                Some("web".to_string()),
+            ]),
+            vec!["web".to_string(), "ios".to_string()]
+        );
+    }
+
+    #[test]
+    fn one_way_in_is_enough() {
+        assert_eq!(
+            super::audiences([Some("web".to_string()), None, None]),
+            vec!["web".to_string()]
+        );
+    }
+
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use domain::models::pool;
