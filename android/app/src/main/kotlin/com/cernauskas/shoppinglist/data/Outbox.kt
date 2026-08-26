@@ -10,27 +10,40 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
+import java.time.Instant
 import java.util.UUID
 
 /**
  * Changes made on this device that the server has not been told about yet.
  *
  * The counterpart of [Cache]: that one holds what the server said, this one holds what
- * this device said back. Together they are what lets somebody cross things off in a
- * shop with no signal and find the list right when they come out.
+ * this device said back. Together they are what lets somebody shop with no signal and
+ * find the list right when they come out.
  *
  * Unlike the cache, **this is not disposable**. A queued change exists nowhere else in
- * the world until it is sent, so the database it lives in may not be thrown away on a
- * schema change and its migrations are written by hand.
+ * the world until it is sent, so the database it lives in is migrated by hand.
  *
  * Ordering is `sequence`, which is the row id and therefore monotonic: a device's own
  * changes are replayed in the order they were made, always. Ordering *between* devices
- * is a different question and is decided by `at` -- see docs/offline.md.
+ * is a different question, decided by `at` -- see docs/offline.md.
  */
 @Entity(
     tableName = "operations",
-    // The operation's own name, for the sync route to recognise a resend by. Unique so
-    // a double-tap that somehow produced the same id cannot queue twice.
+    // The operation's own name, which is what the sync route recognises a resend by.
     indices = [Index(value = ["id"], unique = true), Index(value = ["list_id"])],
 )
 data class QueuedOperation(
@@ -41,19 +54,24 @@ data class QueuedOperation(
     val kind: String,
     @ColumnInfo(name = "list_id") val listId: Long,
     @ColumnInfo(name = "list_uuid") val listUuid: String,
+    /** The row's id on the server, where there is one. Negative for a row this device
+     * made offline, and used only for marking the screen -- what goes on the wire is
+     * always the uuid. */
     @ColumnInfo(name = "item_id") val itemId: Long,
-    /** What the item is called once the server has ids to spare -- see docs/offline.md.
-     * Carried now so the row does not need a migration when `POST /api/sync` lands. */
+    /** What operations call the row. The only name that travels. */
     @ColumnInfo(name = "item_uuid") val itemUuid: String,
-    /** The arguments, as JSON. `{"done":true}` for [SET_DONE]. */
+    /** The arguments, as JSON -- whatever the kind needs beyond the columns beside it. */
     val payload: String,
-    /** When this device says it happened, in epoch seconds. Not yet sent -- the REST
-     * routes stamp their own time. Recorded from the first day so the queue is not
-     * lying about when it was written. */
+    /** When this device says it happened, in epoch seconds. Sent with the operation and
+     * clamped forward by the server; behind is believed. */
     val at: Long,
 ) {
     companion object {
+        const val ADD = "add"
         const val SET_DONE = "set_done"
+        const val UPDATE = "update"
+        const val DELETE = "delete"
+        const val CLEAR_DONE = "clear_done"
     }
 }
 
@@ -68,8 +86,8 @@ interface OutboxDao {
     @Query("SELECT * FROM operations WHERE list_id = :listId ORDER BY sequence")
     suspend fun forList(listId: Long): List<QueuedOperation>
 
-    @Query("DELETE FROM operations WHERE sequence = :sequence")
-    suspend fun forget(sequence: Long)
+    @Query("DELETE FROM operations WHERE id = :id")
+    suspend fun forget(id: String)
 
     @Query("SELECT count(*) FROM operations")
     suspend fun waiting(): Int
@@ -81,38 +99,115 @@ interface OutboxDao {
 /**
  * What happened when the queue was last drained.
  *
- * `sent` is how many reached the server, `waiting` how many are still here, and
- * `dropped` names the ones that will never land -- an item somebody deleted while this
- * device was away. Dropped work is worth telling somebody about: they watched
- * themselves do it. Refused work is *not* dropped; see [Outbox.drain].
+ * `sent` reached the server. `waiting` is still here — either because there was no
+ * connection, or because it was refused for want of access and is being kept in case
+ * that changes. `lost` names what will never land, in words for a person: they watched
+ * themselves do it, so it is worth saying.
  */
-data class Drained(val sent: Int, val waiting: Int, val dropped: List<String> = emptyList())
+data class Drained(
+    val sent: Int = 0,
+    val waiting: Int = 0,
+    val lost: List<String> = emptyList(),
+    /** Something was refused. The one state of the three that interrupts. */
+    val refused: Boolean = false,
+)
 
 /** The queue, in the app's own vocabulary. */
 class Outbox(private val dao: OutboxDao) {
 
+    private val json = Json { ignoreUnknownKeys = true }
+
+    // ------------------------------------------------------------------ queueing
+
+    /** Puts something on the list, under a name this device mints now. */
+    suspend fun add(uuid: String, localId: Long, line: String, list: ShoppingList) =
+        queue(QueuedOperation.ADD, uuid, localId, list, buildJsonObject { put("line", line) })
+
+    suspend fun setDone(item: Item, list: ShoppingList, done: Boolean) =
+        queue(
+            QueuedOperation.SET_DONE,
+            item.uuid,
+            item.id,
+            list,
+            buildJsonObject { put("done", done) },
+        )
+
     /**
-     * Queues a tick.
+     * Corrects what somebody typed, carrying what the row looked like at the time.
      *
-     * The caller has already changed what is on screen. This is the promise that the
-     * change will reach the server eventually, and the only place it exists until it
-     * does.
+     * `seen` is not decoration: it is what lets the server tell a plain rename from a
+     * rename of something somebody else has edited meanwhile, and split rather than
+     * overwrite. See docs/offline.md (5).
      */
-    suspend fun setDone(item: Item, list: ShoppingList, done: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun update(
+        item: Item,
+        list: ShoppingList,
+        name: String,
+        amount: Double,
+        unitId: Long?,
+    ) = queue(
+        QueuedOperation.UPDATE,
+        item.uuid,
+        item.id,
+        list,
+        buildJsonObject {
+            put("name", name)
+            put("amount", amount)
+            unitId?.let { put("unit_id", it) }
+            putJsonObject("seen") {
+                put("name", item.name)
+                put("amount", item.amount)
+                item.unitId?.let { put("unit_id", it) }
+            }
+        },
+    )
+
+    suspend fun delete(item: Item, list: ShoppingList) =
+        queue(QueuedOperation.DELETE, item.uuid, item.id, list, buildJsonObject {})
+
+    /**
+     * Empties the trolley of exactly the rows this device could see.
+     *
+     * The ids are the point. "Clear everything that is done" replayed an hour later is
+     * a different sentence, and would sweep away what somebody else ticked off
+     * meanwhile -- docs/offline.md (4).
+     */
+    suspend fun clearDone(done: List<Item>, list: ShoppingList) = queue(
+        QueuedOperation.CLEAR_DONE,
+        // A sweep is about a list, not a row, so there is no item to name. The column
+        // is not nullable and an empty string is the honest value for "no row".
+        itemUuid = "",
+        itemId = 0,
+        list = list,
+        payload = buildJsonObject {
+            putJsonArray("items") { done.forEach { add(JsonPrimitive(it.uuid)) } }
+        },
+    )
+
+    private suspend fun queue(
+        kind: String,
+        itemUuid: String,
+        itemId: Long,
+        list: ShoppingList,
+        payload: JsonObject,
+    ) = withContext(Dispatchers.IO) {
         dao.add(
             QueuedOperation(
-                kind = QueuedOperation.SET_DONE,
+                kind = kind,
                 listId = list.id,
                 listUuid = list.uuid,
-                itemId = item.id,
-                itemUuid = item.uuid,
-                payload = if (done) """{"done":true}""" else """{"done":false}""",
-                at = System.currentTimeMillis() / 1000,
+                itemId = itemId,
+                itemUuid = itemUuid,
+                payload = payload.toString(),
+                at = Instant.now().epochSecond,
             )
         )
     }
 
-    suspend fun waiting(): Int = withContext(Dispatchers.IO) { runCatching { dao.waiting() }.getOrDefault(0) }
+    // ------------------------------------------------------------------- reading
+
+    suspend fun waiting(): Int =
+        withContext(Dispatchers.IO) { runCatching { dao.waiting() }.getOrDefault(0) }
 
     /** What is queued against one list, oldest first. */
     suspend fun forList(listId: Long): List<QueuedOperation> =
@@ -123,74 +218,134 @@ class Outbox(private val dao: OutboxDao) {
         Unit
     }
 
+    // ------------------------------------------------------------------ sending
+
     /**
-     * Sends what is queued, oldest first, and stops at the first thing it cannot send.
+     * Sends the whole queue in one request and acts on what comes back.
      *
-     * **In order, and stopping.** The queue is this device's story of what happened,
-     * and skipping past a stuck operation to send a later one would tell that story out
-     * of order -- ticking something off after a delete that has not gone yet.
+     * One request rather than one per operation: the batch is this device's story of
+     * what it did, and the server replays it in order. Each operation gets its own
+     * answer, so a refusal costs that change and no other.
      *
-     * What each outcome means:
+     * What each answer means:
      *
-     * * **Sent** -- forgotten. The server has it.
-     * * **No connection** -- kept, and the drain stops. This is the ordinary case and
-     *   is not an error.
-     * * **The row is gone** -- dropped, and named in the result. Delete is final (see
-     *   docs/offline.md): a tick has nothing to land on and never will. The person is
-     *   told, because they watched themselves tick it.
-     * * **Refused** -- kept, and the drain stops. Somebody removed from a list keeps
-     *   their queue: if they are invited back the work is still there, and nothing was
-     *   quietly binned behind them.
-     * * **Anything else** -- dropped. A malformed operation the server will refuse
-     *   forever would block the queue behind it for good.
+     * * **Applied**, or applied on an earlier send — forgotten. The server has it.
+     * * **Refused because the list will not have you** — kept. If they are invited back
+     *   the work is still here, and nothing was binned behind them. Reported, because
+     *   this is the state that is worth interrupting somebody for.
+     * * **Refused for any other reason** — forgotten, and named. A row somebody deleted
+     *   is not coming back, and blocking the queue on it would cost every change behind
+     *   it too.
+     * * **No connection** — nothing is forgotten and nothing is said. This is the
+     *   ordinary case.
      */
     suspend fun drain(api: Api): Drained = withContext(Dispatchers.IO) {
         val queued = runCatching { dao.all() }.getOrDefault(emptyList())
-        var sent = 0
-        val dropped = mutableListOf<String>()
+        if (queued.isEmpty()) return@withContext Drained()
 
-        for (operation in queued) {
-            try {
-                send(api, operation)
-                dao.forget(operation.sequence)
-                sent++
-            } catch (_: ApiError.Transport) {
-                break
-            } catch (_: ApiError.NotFound) {
-                dao.forget(operation.sequence)
-                dropped += operation.describe()
-            } catch (_: ApiError.Forbidden) {
-                break
-            } catch (_: ApiError.NotAdmitted) {
-                break
-            } catch (_: ApiError.Unauthorized) {
-                break
-            } catch (_: Exception) {
-                dao.forget(operation.sequence)
-                dropped += operation.describe()
+        val answers = try {
+            api.sync(queued.map(::onTheWire))
+        } catch (_: ApiError.Transport) {
+            return@withContext Drained(waiting = queued.size)
+        } catch (_: ApiError.Unauthorized) {
+            return@withContext Drained(waiting = queued.size)
+        } catch (_: Exception) {
+            // The route itself refused the request rather than the changes in it. Keep
+            // everything: this is a fault to fix, not work to throw away.
+            return@withContext Drained(waiting = queued.size)
+        }
+
+        var sent = 0
+        val lost = mutableListOf<String>()
+        var refused = false
+
+        for (answer in answers) {
+            when {
+                answer.landed -> {
+                    dao.forget(answer.id)
+                    sent++
+                }
+                answer.keepForLater -> refused = true
+                else -> {
+                    dao.forget(answer.id)
+                    answer.lost?.let { lost += it }
+                }
             }
         }
 
-        Drained(sent = sent, waiting = runCatching { dao.waiting() }.getOrDefault(0), dropped = dropped)
+        Drained(
+            sent = sent,
+            waiting = runCatching { dao.waiting() }.getOrDefault(0),
+            lost = lost,
+            refused = refused,
+        )
     }
 
-    private suspend fun send(api: Api, operation: QueuedOperation) {
-        when (operation.kind) {
-            QueuedOperation.SET_DONE ->
-                api.setDone(operation.itemId, operation.listId, operation.done)
+    /**
+     * One queued row as the route wants it.
+     *
+     * The stored payload is the operation's own arguments, so most of this is putting
+     * the columns back beside them.
+     */
+    private fun onTheWire(operation: QueuedOperation): SyncOperation {
+        val payload = runCatching { json.parseToJsonElement(operation.payload).jsonObject }
+            .getOrDefault(JsonObject(emptyMap()))
 
-            // A kind this build does not know is a downgrade, which is not a case that
-            // can arise yet. Refused rather than skipped, so it is never silent.
-            else -> throw ApiError.BadInput("Unknown queued operation: ${operation.kind}")
-        }
+        fun text(key: String) = payload[key]?.jsonPrimitive?.contentOrNull
+        fun number(key: String) = payload[key]?.jsonPrimitive?.double
+        fun flag(key: String) = payload[key]?.jsonPrimitive?.booleanOrNull
+
+        return SyncOperation(
+            id = operation.id,
+            at = Instant.ofEpochSecond(operation.at).toString(),
+            list = operation.listUuid,
+            kind = operation.kind,
+            item = operation.itemUuid.ifEmpty { null },
+            items = payload["items"]?.jsonArray?.map { it.jsonPrimitive.content },
+            line = text("line"),
+            name = text("name"),
+            amount = number("amount"),
+            unitId = payload["unit_id"]?.jsonPrimitive?.content?.toLongOrNull(),
+            seen = payload["seen"]?.jsonObject?.let { seen ->
+                SeenOn(
+                    name = seen["name"]?.jsonPrimitive?.content.orEmpty(),
+                    amount = seen["amount"]?.jsonPrimitive?.double ?: 1.0,
+                    unitId = seen["unit_id"]?.jsonPrimitive?.content?.toLongOrNull(),
+                )
+            },
+            done = flag("done"),
+        )
     }
 }
+
+private val kotlinx.serialization.json.JsonPrimitive.contentOrNull: String?
+    get() = if (this is kotlinx.serialization.json.JsonNull) null else content
+
+// ---------------------------------------------------------------- reading a payload
+//
+// A queued operation's arguments live as JSON, because the five kinds want different
+// things and five sets of nullable columns would be worse. These are the readings the
+// screen needs to lay unsent work back over the server's answer -- see
+// `ItemsViewModel.withUnsent`.
+
+private val PAYLOAD = Json { ignoreUnknownKeys = true }
+
+private fun QueuedOperation.field(key: String): kotlinx.serialization.json.JsonElement? =
+    runCatching { PAYLOAD.parseToJsonElement(payload).jsonObject[key] }.getOrNull()
 
 /** Whether a queued [QueuedOperation.SET_DONE] is a tick or an untick. */
 val QueuedOperation.done: Boolean
-    get() = payload.contains("\"done\":true")
+    get() = field("done")?.jsonPrimitive?.booleanOrNull == true
 
-private fun QueuedOperation.describe(): String = when (kind) {
-    QueuedOperation.SET_DONE -> if (done) "crossing something off" else "putting something back"
-    else -> "a change"
-}
+/** The name a queued [QueuedOperation.UPDATE] gives the row. */
+val QueuedOperation.editedName: String?
+    get() = field("name")?.jsonPrimitive?.contentOrNull
+
+/** The amount a queued [QueuedOperation.UPDATE] gives the row. */
+val QueuedOperation.editedAmount: Double?
+    get() = field("amount")?.jsonPrimitive?.doubleOrNull
+
+/** The rows a queued [QueuedOperation.CLEAR_DONE] named. */
+val QueuedOperation.sweptUuids: Set<String>
+    get() = field("items")?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }?.toSet()
+        ?: emptySet()

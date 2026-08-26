@@ -31,35 +31,59 @@ import androidx.compose.ui.unit.dp
  * delete -- "No lists yet", said by an app that never managed to ask.
  */
 @Composable
-fun OfflineNote(offline: Boolean, waiting: Int = 0, modifier: Modifier = Modifier) {
-    AnimatedVisibility(visible = offline || waiting > 0) {
+fun OfflineNote(
+    offline: Boolean,
+    waiting: Int = 0,
+    /** Something was refused and will not retry itself. The one state of the three that
+     * is worth colouring: the other two heal on their own and this one does not. */
+    refused: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(visible = offline || waiting > 0 || refused) {
         Row(
             modifier = modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .background(
+                    if (refused) {
+                        MaterialTheme.colorScheme.errorContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    }
+                )
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                Icons.Outlined.CloudOff,
+                if (refused) Icons.Outlined.ErrorOutline else Icons.Outlined.CloudOff,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (refused) {
+                    MaterialTheme.colorScheme.onErrorContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
             Text(
-                // The three states of docs/offline.md, minus the one that interrupts:
-                // up to date, and offline with N changes waiting. A count rather than
-                // "syncing…", because the person can act on a number -- it is the
+                // The three states of docs/offline.md: up to date, offline with N
+                // changes waiting, and something refused. A count rather than
+                // "syncing…", because a person can act on a number -- it is the
                 // difference between staying put for a moment and walking out of the
                 // shop.
                 when {
+                    refused ->
+                        "$waiting ${changes(waiting)} could not be sent. " +
+                            "You are no longer on that list."
                     waiting > 0 && offline ->
                         "Offline. $waiting ${changes(waiting)} waiting to be sent."
                     waiting > 0 -> "$waiting ${changes(waiting)} waiting to be sent."
                     else -> "Offline. Showing what was last loaded."
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (refused) {
+                    MaterialTheme.colorScheme.onErrorContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
         }
     }

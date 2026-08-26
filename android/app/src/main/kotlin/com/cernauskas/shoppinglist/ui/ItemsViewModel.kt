@@ -6,7 +6,11 @@ import com.cernauskas.shoppinglist.data.Api
 import com.cernauskas.shoppinglist.data.ApiError
 import com.cernauskas.shoppinglist.data.Cache
 import com.cernauskas.shoppinglist.data.Item
+import com.cernauskas.shoppinglist.data.QueuedOperation
 import com.cernauskas.shoppinglist.data.done
+import com.cernauskas.shoppinglist.data.editedAmount
+import com.cernauskas.shoppinglist.data.editedName
+import com.cernauskas.shoppinglist.data.sweptUuids
 import com.cernauskas.shoppinglist.data.ItemDraft
 import com.cernauskas.shoppinglist.data.ShoppingList
 import com.cernauskas.shoppinglist.data.Tag
@@ -49,7 +53,10 @@ class ItemsViewModel(
         val waiting: Int = 0,
         /** The rows carrying one of them. Marked quietly on the row itself rather than
          * with a banner: it is a detail about that line, not news about the app. */
-        val unsent: Set<Long> = emptySet(),
+        val unsent: Set<String> = emptySet(),
+        /** Something was refused and will not be retried on its own. The one state of
+         * the three in docs/offline.md that is worth interrupting somebody for. */
+        val refused: Boolean = false,
         val message: String? = null,
     )
 
@@ -181,37 +188,123 @@ class ItemsViewModel(
         }
     }
 
-    fun add(line: String) = act { api.add(line, list) }
+    // Every change below follows the same shape: change the screen, queue the
+    // operation, try to send. That order is the whole of offline editing -- a decision
+    // somebody has already made should not wait on a server they cannot influence.
+    //
+    // The queue is what makes the promise good. If the send fails the operation stays
+    // in it, and the next successful load from anywhere in the app sends it. See
+    // [com.cernauskas.shoppinglist.data.Outbox].
 
     /**
-     * Crosses something off, or puts it back, whether or not there is a connection.
+     * Puts something on the list.
      *
-     * The screen changes first and the server is told second. That order is the whole
-     * of offline editing: a tick in a shop with no signal is a decision the person has
-     * already made, and an app that waits for a server before showing it has made them
-     * wait for something they cannot influence.
+     * The row appears at once, under a uuid minted here and a **negative id**. The
+     * negative id never leaves the device: it is a placeholder so the screen has
+     * something to key on, and the uuid is what the operation actually names. When the
+     * add lands, the reload replaces it with the server's row -- same uuid, real id.
      *
-     * The queue is what makes the promise good. If the send fails the operation stays
-     * in it, and the next drain -- on the next load, or the next time this screen opens
-     * -- sends it. See [com.cernauskas.shoppinglist.data.Outbox].
+     * The name shown until then is the line as typed, near enough. `2 kg apples` is
+     * parsed on the server, so the amount and unit arrive with the reload; guessing
+     * them here would be a second parser to disagree with the first.
      */
-    fun toggle(item: Item) = viewModelScope.launch {
-        val done = !item.isDone
-        cache.outbox.setDone(item, list, done)
-        applyLocally(item, done)
-        cache.rememberItems(list, _state.value.outstanding + _state.value.done)
+    fun add(line: String) = viewModelScope.launch {
+        val uuid = java.util.UUID.randomUUID().toString()
+        val local = Item(
+            id = -(Instant.now().toEpochMilli()),
+            uuid = uuid,
+            name = line.trim(),
+            amount = 1.0,
+        )
+        cache.outbox.add(uuid, local.id, line, list)
+        show { rows -> rows + local }
         drain()
     }
 
-    fun delete(item: Item) = act { api.delete(item, list) }
-    fun clearDone() = act { api.clearDone(list) }
+    fun toggle(item: Item) = viewModelScope.launch {
+        val done = !item.isDone
+        cache.outbox.setDone(item, list, done)
+        show { rows ->
+            rows.map { if (it.uuid == item.uuid) it.copy(doneAt = if (done) Instant.now().toString() else null) else it }
+        }
+        drain()
+    }
+
+    fun delete(item: Item) = viewModelScope.launch {
+        cache.outbox.delete(item, list)
+        show { rows -> rows.filter { it.uuid != item.uuid } }
+        drain()
+    }
+
+    /**
+     * Empties the trolley of what is on this screen, and says so on the wire.
+     *
+     * The rows are named rather than described. "Everything that is done" replayed an
+     * hour later would also take what somebody else ticked off meanwhile, which nobody
+     * asked for -- docs/offline.md (4).
+     */
+    fun clearDone() = viewModelScope.launch {
+        val done = _state.value.done
+        if (done.isEmpty()) return@launch
+        cache.outbox.clearDone(done, list)
+        show { rows -> rows.filter { row -> done.none { it.uuid == row.uuid } } }
+        drain()
+    }
+
+    fun save(item: Item, edit: ItemDraft.Edit, attached: List<Tag>) = viewModelScope.launch {
+        cache.outbox.update(item, list, edit.name, edit.amount, edit.unitId)
+        show { rows ->
+            rows.map {
+                if (it.uuid == item.uuid) {
+                    it.copy(name = edit.name, amount = edit.amount, unitId = edit.unitId)
+                } else {
+                    it
+                }
+            }
+        }
+
+        // Tags are still online-only, and say so by failing rather than by pretending.
+        // They are the last operations without an offline path; see docs/offline.md.
+        try {
+            val before = attached.map { it.id }.toSet()
+            _state.value.tags.filter { it.id in edit.tagIds && it.id !in before }
+                .forEach { api.attach(it, item, list) }
+            attached.filter { it.id !in edit.tagIds }
+                .forEach { api.detach(it, item, list) }
+        } catch (_: ApiError.Transport) {
+            _state.update { it.copy(message = "Categories need a connection. The rest was saved.") }
+        } catch (e: ApiError) {
+            report(e)
+        }
+
+        drain()
+    }
+
+    /**
+     * Rewrites what is on screen, and remembers it.
+     *
+     * One place, so an optimistic change cannot end up on the screen but not in the
+     * cache -- which is how a change survives the app being killed before it is sent.
+     */
+    private suspend fun show(change: (List<Item>) -> List<Item>) {
+        val rows = change(_state.value.outstanding + _state.value.done)
+        cache.rememberItems(list, rows)
+        _state.update { current ->
+            current.copy(
+                outstanding = inShopOrder(rows.filter { !it.isDone }, current.tags),
+                done = rows.filter { it.isDone },
+                total = rows.size.toLong(),
+            )
+        }
+        refreshUnsent()
+    }
 
     /**
      * Sends what is queued, then says what became of it.
      *
-     * Only the losses are said out loud. "Three changes sent" is news about plumbing;
-     * "the thing you crossed off had been deleted" is news about the list, and it is
-     * the one case where somebody watched themselves do something that did not happen.
+     * Only losses are said out loud. "Three changes sent" is news about plumbing; "the
+     * thing you crossed off had been deleted" is news about the list, and it is the one
+     * case where somebody watched themselves do something that did not happen.
      */
     private suspend fun drain() {
         if (draining || cache.outbox.waiting() == 0) return
@@ -220,69 +313,74 @@ class ItemsViewModel(
         draining = false
 
         refreshUnsent()
-        if (drained.dropped.isNotEmpty()) {
-            _state.update {
-                it.copy(message = "Someone had already deleted what you were ${drained.dropped.first()}.")
-            }
+        _state.update { it.copy(refused = drained.refused) }
+        drained.lost.firstOrNull()?.let { lost ->
+            _state.update { it.copy(message = lost) }
         }
-        // Read back what the server made of it. Re-entry stops here: the queue this
-        // guards on is empty now.
+        // Read back what the server made of it -- which is also how a row created here
+        // gets its real id. Re-entry stops at the guard above: the queue is empty now.
         if (drained.sent > 0) load().join()
-    }
-
-    /** Moves a row between the two sections, without asking anybody. */
-    private fun applyLocally(item: Item, done: Boolean) {
-        val changed = item.copy(doneAt = if (done) Instant.now().toString() else null)
-        _state.update { current ->
-            val rest = (current.outstanding + current.done).filter { it.id != item.id }
-            current.copy(
-                outstanding = inShopOrder(rest.filter { !it.isDone } + listOfNotNull(changed.takeIf { !done }), current.tags),
-                done = rest.filter { it.isDone } + listOfNotNull(changed.takeIf { done }),
-                unsent = current.unsent + item.id,
-            )
-        }
     }
 
     private suspend fun refreshUnsent() {
         val queued = cache.outbox.forList(list.id)
-        _state.update { it.copy(unsent = queued.map { op -> op.itemId }.toSet(), waiting = queued.size) }
+        _state.update {
+            it.copy(unsent = queued.map { op -> op.itemUuid }.toSet(), waiting = queued.size)
+        }
     }
 
     /**
      * The server's answer with this device's unsent changes laid back over it.
      *
-     * Without this a successful load would visibly undo a tick that is still in the
-     * queue -- the server has not been told yet, so it answers with the old state, and
-     * the row would flick back for as long as the queue is stuck.
+     * Without this a successful load would visibly undo work that is still queued: the
+     * server has not been told, so it answers with the old state, and the rows would
+     * flick back for as long as the queue is stuck.
+     *
+     * Rows this device created and has not sent are not in the server's answer at all,
+     * so they are carried across from what is already on screen rather than rebuilt.
      */
-    private suspend fun withUnsent(items: List<Item>): List<Item> {
+    private suspend fun withUnsent(fromServer: List<Item>): List<Item> {
         val queued = cache.outbox.forList(list.id)
-        if (queued.isEmpty()) return items
+        if (queued.isEmpty()) return fromServer
+
+        val known = fromServer.map { it.uuid }.toSet()
+        val onScreen = _state.value.outstanding + _state.value.done
+        val mine = queued.map { it.itemUuid }.toSet()
+        val notSentYet = onScreen.filter { it.uuid !in known && it.uuid in mine }
+
+        var rows = fromServer + notSentYet
         val now = Instant.now().toString()
-        var result = items
+
         for (operation in queued) {
-            result = result.map {
-                if (it.id == operation.itemId) {
-                    it.copy(doneAt = if (operation.done) now else null)
-                } else {
-                    it
+            rows = when (operation.kind) {
+                QueuedOperation.SET_DONE -> rows.map {
+                    if (it.uuid == operation.itemUuid) {
+                        it.copy(doneAt = if (operation.done) now else null)
+                    } else {
+                        it
+                    }
                 }
+
+                QueuedOperation.DELETE -> rows.filter { it.uuid != operation.itemUuid }
+
+                QueuedOperation.UPDATE -> rows.map {
+                    if (it.uuid == operation.itemUuid) {
+                        it.copy(
+                            name = operation.editedName ?: it.name,
+                            amount = operation.editedAmount ?: it.amount,
+                        )
+                    } else {
+                        it
+                    }
+                }
+
+                QueuedOperation.CLEAR_DONE ->
+                    rows.filter { it.uuid !in operation.sweptUuids }
+
+                else -> rows
             }
         }
-        return result
-    }
-
-    fun save(item: Item, edit: ItemDraft.Edit, attached: List<Tag>) = act {
-        api.update(item, list, edit.name, edit.amount, edit.unitId)
-
-        // Tags have their own routes, so this is the diff. Only what changed is sent:
-        // re-attaching a tag an item already has is a conflict, and detaching one it
-        // never had is a miss.
-        val before = attached.map { it.id }.toSet()
-        _state.value.tags.filter { it.id in edit.tagIds && it.id !in before }
-            .forEach { api.attach(it, item, list) }
-        attached.filter { it.id !in edit.tagIds }
-            .forEach { api.detach(it, item, list) }
+        return rows
     }
 
     fun setTagOrder(tags: List<Tag>) = viewModelScope.launch {

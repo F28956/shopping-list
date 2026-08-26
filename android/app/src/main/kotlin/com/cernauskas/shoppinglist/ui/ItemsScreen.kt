@@ -118,7 +118,7 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
         }
 
         Column(Modifier.fillMaxSize().padding(padding)) {
-            OfflineNote(state.offline, state.waiting)
+            OfflineNote(state.offline, state.waiting, state.refused)
 
             LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -152,7 +152,7 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
                     item = item,
                     tags = state.tags,
                     units = state.units,
-                    unsent = item.id in state.unsent,
+                    unsent = item.uuid in state.unsent,
                     mayEdit = model.list.mayEdit,
                     onToggle = { model.toggle(item) },
                     onEdit = { scope.launch { editing = item to model.tagsOn(item) } },
@@ -181,7 +181,7 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
                         item = item,
                         tags = state.tags,
                         units = state.units,
-                        unsent = item.id in state.unsent,
+                        unsent = item.uuid in state.unsent,
                         mayEdit = model.list.mayEdit,
                         onToggle = { model.toggle(item) },
                         onEdit = { scope.launch { editing = item to model.tagsOn(item) } },

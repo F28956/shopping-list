@@ -109,6 +109,12 @@ class ListsViewModel(
                     fresh = true,
                 )
             }
+            // The server is reachable, so anything queued anywhere goes now.
+            //
+            // Here as well as on the list screen, because the app opens here: a phone
+            // that came out of a shop and went into a pocket would otherwise hold its
+            // changes until somebody happened to open the list they were made on.
+            cache.outbox.drain(api)
         } catch (e: ApiError.Transport) {
             // Not reported. Being out of signal is a state, not an event: a phone in a
             // basement would raise this every few seconds, and a message for each is
