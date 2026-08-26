@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n        SELECT\n            id          as \"id: Id\",\n            list_id     as \"list_id: list::Id\",\n            name        as \"name: Name\",\n            amount      as \"amount: Amount\",\n            unit_id     as \"unit_id?: unit::Id\",\n            done_at     as \"done_at?: DoneAt\",\n            created_at  as \"created_at: CreatedAt\"\n        FROM items\n        WHERE list_id = ?1\n        ORDER BY\n            CASE\n                WHEN ?3 = 'ascending' THEN\n                    CASE ?2\n                        WHEN 'id' THEN id\n                        WHEN 'name' THEN name\n                        WHEN 'amount' THEN amount\n                        WHEN 'done_at' THEN done_at\n                        WHEN 'created_at' THEN created_at\n                    END\n                END ASC NULLS LAST,\n            CASE\n                WHEN ?3 = 'descending' THEN\n                    CASE ?2\n                        WHEN 'id' THEN id\n                        WHEN 'name' THEN name\n                        WHEN 'amount' THEN amount\n                        WHEN 'done_at' THEN done_at\n                        WHEN 'created_at' THEN created_at\n                    END\n            END DESC NULLS LAST,\n            -- keeps paging deterministic when the sort key ties\n            id ASC\n        LIMIT ?4 OFFSET ?5\n        ",
+  "query": "\n                SELECT\n                    id          as \"id: Id\",\n                    uuid        as \"uuid!: Uuid\",\n                    list_id     as \"list_id: list::Id\",\n                    name        as \"name: Name\",\n                    amount      as \"amount: Amount\",\n                    unit_id     as \"unit_id?: unit::Id\",\n                    done_at     as \"done_at?: DoneAt\",\n                    created_at  as \"created_at: CreatedAt\"\n                FROM items\n                WHERE id = ?1 ",
   "describe": {
     "columns": [
       {
@@ -15,8 +15,19 @@
         }
       },
       {
-        "name": "list_id: list::Id",
+        "name": "uuid!: Uuid",
         "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "uuid"
+          }
+        }
+      },
+      {
+        "name": "list_id: list::Id",
+        "ordinal": 2,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "name: Name",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "amount: Amount",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Float",
         "origin": {
           "Table": {
@@ -49,7 +60,7 @@
       },
       {
         "name": "unit_id?: unit::Id",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -60,7 +71,7 @@
       },
       {
         "name": "done_at?: DoneAt",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -71,7 +82,7 @@
       },
       {
         "name": "created_at: CreatedAt",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -82,10 +93,11 @@
       }
     ],
     "parameters": {
-      "Right": 5
+      "Right": 1
     },
     "nullable": [
       false,
+      true,
       false,
       false,
       false,
@@ -94,5 +106,5 @@
       false
     ]
   },
-  "hash": "a438272c047ac7161fec1d4d90a249c0163c3e5bda725d38efc0a4d8ba931569"
+  "hash": "6d093d1a5c289a441e35098101df0d6d2f2bfed86b498a40c29f9a54d6a7608b"
 }

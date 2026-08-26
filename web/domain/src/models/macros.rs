@@ -94,6 +94,41 @@ macro_rules! f64 {
 )*};
 }
 
+/// Scaffolds a client-minted identity: a v4 UUID, stored and compared as lowercase
+/// hex text.
+///
+/// Separate from [`i64!`] because the two answer different questions. `Id` is the
+/// database's own counter and only the server can turn it; a `Uuid` is minted by
+/// whichever device created the thing, before any server has seen it, which is what
+/// lets a device queue "tick that off" behind "add that" with no signal in between.
+///
+/// Deserialising goes through `TryFrom<String>`, so a malformed value is
+/// [`crate::models::Error::InvalidInput`] at the edge rather than a row nothing can
+/// look up. Minting is [`new_uuid`](crate::models::new_uuid).
+macro_rules! uuid {
+($($t:ident),* $(,)?) => {$(
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, ::sqlx::Type, ::serde::Serialize, ::serde::Deserialize)]
+    #[sqlx(transparent)]
+    #[serde(try_from = "String")]
+    pub struct $t(pub String);
+
+    impl $t {
+        /// A fresh one, from the operating system's randomness.
+        pub fn mint() -> Self {
+            Self($crate::models::new_uuid())
+        }
+    }
+
+    impl ::std::convert::TryFrom<String> for $t {
+        type Error = $crate::models::Error;
+
+        fn try_from(text: String) -> ::std::result::Result<Self, Self::Error> {
+            $crate::models::parse_uuid(&text).map(Self)
+        }
+    }
+)*};
+}
+
 macro_rules! timestamp {
 ($($t:ident),* $(,)?) => {$(
     #[derive(Debug, Clone, Copy, PartialEq, Ord, PartialOrd, Eq, Hash, sqlx::Type, serde::Serialize)]

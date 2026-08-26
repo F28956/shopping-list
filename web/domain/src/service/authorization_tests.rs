@@ -1139,6 +1139,7 @@ async fn an_outstanding_row_is_preferred(#[future(awt)] pool: SqlitePool) {
     // A second row, outstanding, made while the first was crossed off.
     let outstanding = crate::models::item::Item::create(
         &s.ctx.db,
+        item::Uuid::mint(),
         list.id,
         item::Name("Milk".into()),
         item::Amount(1.0),

@@ -4,8 +4,9 @@ use super::user;
 use super::{Error, Result};
 use super::{OffsetPage, OrderBy, Paging};
 
-// Scaffold Id, Name, CreatedAt and UpdatedAt
+// Scaffold Id, Uuid, Name, CreatedAt and UpdatedAt
 i64!(Id);
+uuid!(Uuid);
 string!(Name);
 timestamp!(CreatedAt);
 timestamp!(UpdatedAt);
@@ -20,17 +21,27 @@ pub const MAX_NAME: usize = 128;
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, PartialEq)]
 pub struct List {
     pub id: Id,
+    /// What operations call this list, minted wherever it was created.
+    ///
+    /// The counterpart of [`item::Uuid`](super::item::Uuid), and there for the same
+    /// reason: a list started with no signal has to be nameable by everything queued
+    /// behind it before any server has given it an `id`.
+    pub uuid: Uuid,
     pub name: Name,
     pub owner_id: user::Id,
     pub created_at: CreatedAt,
     pub updated_at: UpdatedAt,
 }
 
-/// How a caller asks for a single list. Only `id` identifies one: `lists.name` is not
-/// unique, not even within an owner, so two of a person's lists may share a name.
+/// How a caller asks for a single list.
+///
+/// Two names for the same row, and both are unique: `Id` is what a URL carries and
+/// `Uuid` is what a queued operation carries. `name` is neither -- it is not unique,
+/// not even within an owner, so two of a person's lists may share one.
 #[derive(Debug, Clone)]
 pub enum Lookup {
     Id(Id),
+    Uuid(Uuid),
 }
 
 /// What `for_user` may order by. Deliberately a separate enum from [`Lookup`] — the
@@ -227,21 +238,32 @@ impl List {
     ///
     /// An `owner_id` that matches nobody is [`Error::InvalidInput`] — the reference
     /// is the caller's mistake, not a server fault.
-    pub async fn create(pool: &sqlx::SqlitePool, owner_id: user::Id, name: Name) -> Result<List> {
+    ///
+    /// The `uuid` is a parameter for the same reason as on
+    /// [`Item::create`](super::item::Item::create): a list started offline was named
+    /// on the device, and that name has to survive the trip.
+    pub async fn create(
+        pool: &sqlx::SqlitePool,
+        uuid: Uuid,
+        owner_id: user::Id,
+        name: Name,
+    ) -> Result<List> {
         let name = name.trimmed();
 
         let list = sqlx::query_as!(
             List,
             r#"
-            INSERT INTO lists (name, owner_id)
-            VALUES (?1, ?2)
+            INSERT INTO lists (uuid, name, owner_id)
+            VALUES (?1, ?2, ?3)
             RETURNING
                 id          as "id!: Id",
+                uuid        as "uuid!: Uuid",
                 name        as "name: Name",
                 owner_id    as "owner_id: user::Id",
                 created_at  as "created_at!: CreatedAt",
                 updated_at  as "updated_at!: UpdatedAt"
             "#,
+            uuid,
             name,
             owner_id,
         )
@@ -266,6 +288,7 @@ impl List {
             UPDATE lists SET name = ?1, updated_at = unixepoch() WHERE id = ?2
             RETURNING
                 id          as "id!: Id",
+                uuid        as "uuid!: Uuid",
                 name        as "name: Name",
                 owner_id    as "owner_id: user::Id",
                 created_at  as "created_at: CreatedAt",
@@ -325,6 +348,7 @@ impl List {
             r#"
         SELECT
             id          as "id: Id",
+            uuid        as "uuid!: Uuid",
             name        as "name: Name",
             owner_id    as "owner_id: user::Id",
             created_at  as "created_at: CreatedAt",
@@ -391,12 +415,31 @@ impl List {
                     r#"
                 SELECT
                     id          as "id: Id",
+                    uuid        as "uuid!: Uuid",
                     name        as "name: Name",
                     owner_id    as "owner_id: user::Id",
                     created_at  as "created_at: CreatedAt",
                     updated_at  as "updated_at: UpdatedAt"
                 FROM lists
                 WHERE id = ?1 "#,
+                    v
+                )
+                .fetch_one(pool)
+                .await?
+            }
+            Lookup::Uuid(v) => {
+                sqlx::query_as!(
+                    List,
+                    r#"
+                SELECT
+                    id          as "id: Id",
+                    uuid        as "uuid!: Uuid",
+                    name        as "name: Name",
+                    owner_id    as "owner_id: user::Id",
+                    created_at  as "created_at: CreatedAt",
+                    updated_at  as "updated_at: UpdatedAt"
+                FROM lists
+                WHERE uuid = ?1 "#,
                     v
                 )
                 .fetch_one(pool)
@@ -502,7 +545,7 @@ mod tests {
     ) -> Result<()> {
         let owner = user_id(&pool, BUSIEST).await?;
 
-        let got = List::create(&pool, owner, Name(input.into())).await;
+        let got = List::create(&pool, Uuid::mint(), owner, Name(input.into())).await;
 
         match (got, expected) {
             (Ok(list), Ok(want)) => {
@@ -527,6 +570,65 @@ mod tests {
         Ok(())
     }
 
+    /// The identity the caller minted is the one the row keeps, and it is what
+    /// [`Lookup::Uuid`] finds. Two lists may share a name; they may never share this.
+    #[rstest]
+    #[tokio::test]
+    async fn create_keeps_the_uuid_it_was_given(
+        #[with(seeds!("fixtures/users.sql"))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) -> Result<()> {
+        let owner = user_id(&pool, BUSIEST).await?;
+        let minted = Uuid::mint();
+
+        let list = List::create(&pool, minted.clone(), owner, Name("Dairy".into())).await?;
+
+        assert_eq!(list.uuid, minted);
+        assert_eq!(List::get(&pool, Lookup::Uuid(minted.clone())).await?, list);
+
+        let again = List::create(&pool, minted, owner, Name("Bakery".into())).await;
+        assert!(again.is_err(), "one name, one row");
+        Ok(())
+    }
+
+    /// Renaming a list must not rename it in the sense operations care about.
+    #[rstest]
+    #[tokio::test]
+    async fn renaming_leaves_the_uuid_alone(
+        #[with(seeds!("fixtures/users.sql", "fixtures/lists.sql"))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) -> Result<()> {
+        let before = any_list(&pool).await?;
+
+        let after = List::update(&pool, before.id, Name("Something else".into())).await?;
+
+        assert_eq!(after.uuid, before.uuid);
+        Ok(())
+    }
+
+    /// Rows the fixtures wrote never mention a uuid, and every one of them has a
+    /// distinct one — the mint-if-missing trigger in the migration.
+    #[rstest]
+    #[tokio::test]
+    async fn every_row_has_a_uuid(
+        #[with(seeds!("fixtures/users.sql", "fixtures/lists.sql"))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) -> Result<()> {
+        let blank: i64 = sqlx::query_scalar("SELECT count(*) FROM lists WHERE uuid IS NULL")
+            .fetch_one(&pool)
+            .await?;
+        let distinct: i64 = sqlx::query_scalar("SELECT count(DISTINCT uuid) FROM lists")
+            .fetch_one(&pool)
+            .await?;
+
+        assert_eq!(blank, 0);
+        assert_eq!(distinct, SEEDED);
+        Ok(())
+    }
+
     /// Two lists may share a name, even for one owner — nothing about a list is
     /// unique but its id. This is the opposite of [`super::unit`], and it is why
     /// [`Lookup`] has no `Name` variant.
@@ -539,8 +641,8 @@ mod tests {
     ) -> Result<()> {
         let owner = user_id(&pool, BUSIEST).await?;
 
-        let first = List::create(&pool, owner, Name("Dairy".into())).await?;
-        let second = List::create(&pool, owner, Name("Dairy".into())).await?;
+        let first = List::create(&pool, Uuid::mint(), owner, Name("Dairy".into())).await?;
+        let second = List::create(&pool, Uuid::mint(), owner, Name("Dairy".into())).await?;
 
         assert_ne!(first.id, second.id, "two lists, same name");
         assert_eq!(count(&pool).await?, 2);
@@ -560,7 +662,7 @@ mod tests {
     ) -> Result<()> {
         let owner = user_id(&pool, BUSIEST).await?;
 
-        let got = List::create(&pool, owner, Name("x".repeat(length)))
+        let got = List::create(&pool, Uuid::mint(), owner, Name("x".repeat(length)))
             .await
             .map(|_| ());
 
@@ -577,7 +679,7 @@ mod tests {
         #[future(awt)]
         pool: SqlitePool,
     ) -> Result<()> {
-        let result = List::create(&pool, user::Id(9999), Name("orphan".into())).await;
+        let result = List::create(&pool, Uuid::mint(), user::Id(9999), Name("orphan".into())).await;
 
         assert!(
             matches!(result, Err(Error::InvalidInput)),
@@ -1046,14 +1148,14 @@ mod tests {
         let before = List::visible_to(&pool, owner, all_lists(), order).await?;
         assert_eq!(before.total, BUSIEST_LISTS);
 
-        List::create(&pool, other, Name("not theirs".into())).await?;
+        List::create(&pool, Uuid::mint(), other, Name("not theirs".into())).await?;
         let after = List::visible_to(&pool, owner, all_lists(), order).await?;
         assert_eq!(
             after.total, BUSIEST_LISTS,
             "someone else's list changed nothing"
         );
 
-        List::create(&pool, owner, Name("theirs".into())).await?;
+        List::create(&pool, Uuid::mint(), owner, Name("theirs".into())).await?;
         let mine = List::visible_to(&pool, owner, all_lists(), order).await?;
         assert_eq!(mine.total, BUSIEST_LISTS + 1);
         Ok(())

@@ -195,6 +195,14 @@ by a thirty-day half-life, computed in Rust: the obvious formula wants `exp()`, 
 a bundled SQLite may not carry, and policy deserves tests that need no database.
 Capped at 500 entries and forgettable one at a time.
 
+**Client-minted identity** (`items.uuid`, `lists.uuid`). Every item and list carries
+a UUID alongside its integer primary key. `id` stays the key and the foreign-key
+target; `uuid` is what an operation names a row by, because a device with no signal
+has to be able to queue "tick that off" behind "add that" before any server has
+turned its counter. Minted by whoever creates the row — the model on the online path,
+the device on the offline one — with a mint-if-missing trigger in the schema so no
+row can exist unnamed. See `docs/offline.md`.
+
 **Category grouping.** `tags.sort_order` carries the order of a shop rather than the
 alphabet — perimeter first, frozen late, shop names after everything describing a
 department. Aisle numbers would be more precise and are deliberately not used: they

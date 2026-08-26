@@ -44,7 +44,7 @@ pub(super) async fn readable(ctx: &Ctx, actor: &User, id: list::Id) -> Result<Li
 
 pub async fn create(ctx: &Ctx, actor: &Actor, name: Name) -> Result<List> {
     let owner = actor.person()?;
-    let list = List::create(&ctx.db, owner.id, name).await?;
+    let list = List::create(&ctx.db, list::Uuid::mint(), owner.id, name).await?;
 
     // Told to the person, not to the list: a list that has just been made has no
     // watchers, so announcing it to itself reaches nobody -- which is why one made on

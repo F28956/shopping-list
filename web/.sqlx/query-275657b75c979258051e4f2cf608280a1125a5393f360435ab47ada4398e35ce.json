@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n                SELECT\n                    id          as \"id: Id\",\n                    name        as \"name: Name\",\n                    owner_id    as \"owner_id: user::Id\",\n                    created_at  as \"created_at: CreatedAt\",\n                    updated_at  as \"updated_at: UpdatedAt\"\n                FROM lists\n                WHERE id = ?1 ",
+  "query": "\n                SELECT\n                    id          as \"id: Id\",\n                    uuid        as \"uuid!: Uuid\",\n                    name        as \"name: Name\",\n                    owner_id    as \"owner_id: user::Id\",\n                    created_at  as \"created_at: CreatedAt\",\n                    updated_at  as \"updated_at: UpdatedAt\"\n                FROM lists\n                WHERE uuid = ?1 ",
   "describe": {
     "columns": [
       {
@@ -15,8 +15,19 @@
         }
       },
       {
-        "name": "name: Name",
+        "name": "uuid!: Uuid",
         "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "uuid"
+          }
+        }
+      },
+      {
+        "name": "name: Name",
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "owner_id: user::Id",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "created_at: CreatedAt",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -49,7 +60,7 @@
       },
       {
         "name": "updated_at: UpdatedAt",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -64,11 +75,12 @@
     },
     "nullable": [
       false,
+      true,
       false,
       false,
       false,
       false
     ]
   },
-  "hash": "e7f63759eaf285da304a0ae594eae18b1125f995573fae7739a85acc2a29510e"
+  "hash": "275657b75c979258051e4f2cf608280a1125a5393f360435ab47ada4398e35ce"
 }

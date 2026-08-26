@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id          as \"id: Id\",\n            uuid        as \"uuid!: Uuid\",\n            name        as \"name: Name\",\n            owner_id    as \"owner_id: user::Id\",\n            created_at  as \"created_at: CreatedAt\",\n            updated_at  as \"updated_at: UpdatedAt\"\n        FROM lists\n        WHERE owner_id = ?1\n           OR id IN (SELECT list_id FROM list_members WHERE user_id = ?1)\n        ORDER BY\n            CASE\n                WHEN ?3 = 'ascending' THEN\n                    CASE ?2\n                        WHEN 'id' THEN id\n                        WHEN 'name' THEN name\n                        WHEN 'created_at' THEN created_at\n                        WHEN 'updated_at' THEN updated_at\n                    END\n                END ASC NULLS LAST,\n            CASE\n                WHEN ?3 = 'descending' THEN\n                    CASE ?2\n                        WHEN 'id' THEN id\n                        WHEN 'name' THEN name\n                        WHEN 'created_at' THEN created_at\n                        WHEN 'updated_at' THEN updated_at\n                    END\n            END DESC NULLS LAST,\n            -- keeps paging deterministic when the sort key ties\n            id ASC\n        LIMIT ?4 OFFSET ?5\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "uuid!: Uuid",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "uuid"
+          }
+        }
+      },
+      {
+        "name": "name: Name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "owner_id: user::Id",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "owner_id"
+          }
+        }
+      },
+      {
+        "name": "created_at: CreatedAt",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "updated_at: UpdatedAt",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "bf272da7edc565ac35e347ad622854063008809b19d6caca94ef1d2511433875"
+}

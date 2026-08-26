@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            UPDATE items SET done_at = CASE WHEN ?1 THEN unixepoch() ELSE NULL END\n            WHERE id = ?2\n            RETURNING\n                id          as \"id!: Id\",\n                list_id     as \"list_id: list::Id\",\n                name        as \"name: Name\",\n                amount      as \"amount: Amount\",\n                unit_id     as \"unit_id?: unit::Id\",\n                done_at     as \"done_at?: DoneAt\",\n                created_at  as \"created_at: CreatedAt\"\n            ",
+  "query": "\n            UPDATE items SET done_at = CASE WHEN ?1 THEN unixepoch() ELSE NULL END\n            WHERE id = ?2\n            RETURNING\n                id          as \"id!: Id\",\n                uuid        as \"uuid!: Uuid\",\n                list_id     as \"list_id: list::Id\",\n                name        as \"name: Name\",\n                amount      as \"amount: Amount\",\n                unit_id     as \"unit_id?: unit::Id\",\n                done_at     as \"done_at?: DoneAt\",\n                created_at  as \"created_at: CreatedAt\"\n            ",
   "describe": {
     "columns": [
       {
@@ -15,8 +15,19 @@
         }
       },
       {
-        "name": "list_id: list::Id",
+        "name": "uuid!: Uuid",
         "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "uuid"
+          }
+        }
+      },
+      {
+        "name": "list_id: list::Id",
+        "ordinal": 2,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "name: Name",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "amount: Amount",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Float",
         "origin": {
           "Table": {
@@ -49,7 +60,7 @@
       },
       {
         "name": "unit_id?: unit::Id",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -60,7 +71,7 @@
       },
       {
         "name": "done_at?: DoneAt",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -71,7 +82,7 @@
       },
       {
         "name": "created_at: CreatedAt",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -86,6 +97,7 @@
     },
     "nullable": [
       false,
+      true,
       false,
       false,
       false,
@@ -94,5 +106,5 @@
       false
     ]
   },
-  "hash": "12ede814cafd07145aee416dcf9870136b1782b35f942e265b024d7bc963f530"
+  "hash": "675889a6b5e03efec178728c4c6cdf0d3d6c2466cf24fba2c791f00c5e85ebda"
 }

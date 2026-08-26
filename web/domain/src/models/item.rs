@@ -4,8 +4,9 @@ use super::{Error, Result};
 use super::{OffsetPage, OrderBy, Paging};
 use super::{list, unit, user};
 
-// Scaffold Id, Name, Amount, DoneAt and CreatedAt
+// Scaffold Id, Uuid, Name, Amount, DoneAt and CreatedAt
 i64!(Id);
+uuid!(Uuid);
 string!(Name);
 f64!(Amount);
 timestamp!(DoneAt);
@@ -32,6 +33,12 @@ pub const MAX_NAME: usize = 128;
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, PartialEq)]
 pub struct Item {
     pub id: Id,
+    /// What operations call this item, minted wherever it was created.
+    ///
+    /// `id` is the database's counter and `uuid` is the row's name everywhere else: a
+    /// device that added this with no signal has been calling it by this since before
+    /// the server heard of it, and everything queued behind that add says the same.
+    pub uuid: Uuid,
     pub list_id: list::Id,
     pub name: Name,
     pub amount: Amount,
@@ -40,11 +47,15 @@ pub struct Item {
     pub created_at: CreatedAt,
 }
 
-/// How a caller asks for a single item. Only `id` identifies one: item names repeat
-/// across lists, and nothing about an item is unique.
+/// How a caller asks for a single item.
+///
+/// Two names for the same row, and both are unique: `Id` is what a URL carries, and
+/// `Uuid` is what a queued operation carries, because the device that queued it had
+/// no `id` to use. Nothing else identifies an item -- names repeat across lists.
 #[derive(Debug, Clone)]
 pub enum Lookup {
     Id(Id),
+    Uuid(Uuid),
 }
 
 /// What `for_list` may order by. Deliberately a separate enum from [`Lookup`] — the
@@ -103,6 +114,7 @@ impl Item {
             r#"
             SELECT
                 id          as "id!: Id",
+                uuid        as "uuid!: Uuid",
                 list_id     as "list_id: list::Id",
                 name        as "name: Name",
                 amount      as "amount: Amount",
@@ -137,6 +149,7 @@ impl Item {
             WHERE id = ?1
             RETURNING
                 id          as "id!: Id",
+                uuid        as "uuid!: Uuid",
                 list_id     as "list_id: list::Id",
                 name        as "name: Name",
                 amount      as "amount: Amount",
@@ -153,8 +166,20 @@ impl Item {
         Ok(item)
     }
 
+    /// Adds a row, under the identity the caller gives it.
+    ///
+    /// The `uuid` is a parameter rather than something this mints, because the caller
+    /// may already have one: an item added on a phone with no signal was named there,
+    /// and the add that eventually reaches the server has to keep that name or every
+    /// operation queued behind it is orphaned. A caller with nothing to preserve
+    /// passes [`Uuid::mint`].
+    ///
+    /// It is not read back from the row either. SQLite computes `RETURNING` before
+    /// AFTER triggers fire, so the schema's mint-if-missing trigger would hand back a
+    /// NULL it had already replaced.
     pub async fn create(
         pool: &sqlx::SqlitePool,
+        uuid: Uuid,
         list_id: list::Id,
         name: Name,
         amount: Amount,
@@ -165,10 +190,11 @@ impl Item {
         let item = sqlx::query_as!(
             Item,
             r#"
-            INSERT INTO items (list_id, name, amount, unit_id)
-            VALUES (?1, ?2, ?3, ?4)
+            INSERT INTO items (uuid, list_id, name, amount, unit_id)
+            VALUES (?1, ?2, ?3, ?4, ?5)
             RETURNING
                 id          as "id!: Id",
+                uuid        as "uuid!: Uuid",
                 list_id     as "list_id: list::Id",
                 name        as "name: Name",
                 amount      as "amount: Amount",
@@ -176,6 +202,7 @@ impl Item {
                 done_at     as "done_at?: DoneAt",
                 created_at  as "created_at!: CreatedAt"
             "#,
+            uuid,
             list_id,
             name,
             amount,
@@ -207,6 +234,7 @@ impl Item {
             UPDATE items SET name = ?1, amount = ?2, unit_id = ?3 WHERE id = ?4
             RETURNING
                 id          as "id!: Id",
+                uuid        as "uuid!: Uuid",
                 list_id     as "list_id: list::Id",
                 name        as "name: Name",
                 amount      as "amount: Amount",
@@ -238,6 +266,7 @@ impl Item {
             WHERE id = ?2
             RETURNING
                 id          as "id!: Id",
+                uuid        as "uuid!: Uuid",
                 list_id     as "list_id: list::Id",
                 name        as "name: Name",
                 amount      as "amount: Amount",
@@ -293,6 +322,7 @@ impl Item {
             r#"
         SELECT
             id          as "id: Id",
+            uuid        as "uuid!: Uuid",
             list_id     as "list_id: list::Id",
             name        as "name: Name",
             amount      as "amount: Amount",
@@ -407,6 +437,7 @@ impl Item {
                     r#"
                 SELECT
                     id          as "id: Id",
+                    uuid        as "uuid!: Uuid",
                     list_id     as "list_id: list::Id",
                     name        as "name: Name",
                     amount      as "amount: Amount",
@@ -415,6 +446,26 @@ impl Item {
                     created_at  as "created_at: CreatedAt"
                 FROM items
                 WHERE id = ?1 "#,
+                    v
+                )
+                .fetch_one(pool)
+                .await?
+            }
+            Lookup::Uuid(v) => {
+                sqlx::query_as!(
+                    Item,
+                    r#"
+                SELECT
+                    id          as "id: Id",
+                    uuid        as "uuid!: Uuid",
+                    list_id     as "list_id: list::Id",
+                    name        as "name: Name",
+                    amount      as "amount: Amount",
+                    unit_id     as "unit_id?: unit::Id",
+                    done_at     as "done_at?: DoneAt",
+                    created_at  as "created_at: CreatedAt"
+                FROM items
+                WHERE uuid = ?1 "#,
                     v
                 )
                 .fetch_one(pool)
@@ -552,7 +603,7 @@ mod tests {
         let list = list_id(&pool, BUSIEST).await?;
         let kg = unit_id(&pool, "kg").await?;
 
-        let got = Item::create(&pool, list, Name(input.into()), Amount(amount), Some(kg)).await;
+        let got = Item::create(&pool, Uuid::mint(), list, Name(input.into()), Amount(amount), Some(kg)).await;
 
         match (got, expected) {
             (Ok(item), Ok(want)) => {
@@ -576,6 +627,131 @@ mod tests {
         Ok(())
     }
 
+    /// The identity the caller minted is the identity the row keeps, and it is what
+    /// [`Lookup::Uuid`] finds — the lookup a queued operation uses, because the
+    /// device that queued it never had an `id`.
+    #[rstest]
+    #[tokio::test]
+    async fn create_keeps_the_uuid_it_was_given(
+        #[with(seeds!(
+            "fixtures/users.sql",
+            "fixtures/lists.sql",
+            "fixtures/units.sql",
+        ))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) -> Result<()> {
+        let list = list_id(&pool, BUSIEST).await?;
+        let minted = Uuid::mint();
+
+        let item = Item::create(
+            &pool,
+            minted.clone(),
+            list,
+            Name("Milk".into()),
+            Amount(1.0),
+            None,
+        )
+        .await?;
+
+        assert_eq!(item.uuid, minted, "the row is named what the caller named it");
+        assert_eq!(Item::get(&pool, Lookup::Uuid(minted)).await?, item);
+        Ok(())
+    }
+
+    /// Two rows may never answer to one name: a queued operation naming that uuid
+    /// would have two rows to land on and no way to choose.
+    #[rstest]
+    #[tokio::test]
+    async fn a_uuid_belongs_to_one_row(
+        #[with(seeds!(
+            "fixtures/users.sql",
+            "fixtures/lists.sql",
+            "fixtures/units.sql",
+        ))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) -> Result<()> {
+        let list = list_id(&pool, BUSIEST).await?;
+        let minted = Uuid::mint();
+
+        Item::create(&pool, minted.clone(), list, Name("Milk".into()), Amount(1.0), None).await?;
+        let again = Item::create(
+            &pool,
+            minted,
+            list,
+            Name("Bread".into()),
+            Amount(1.0),
+            None,
+        )
+        .await;
+
+        assert!(again.is_err(), "the second row must be refused");
+        Ok(())
+    }
+
+    /// Editing a row must not rename it in the sense that matters. Somebody's phone
+    /// has operations queued against this uuid, and they have to still find it.
+    #[rstest]
+    #[tokio::test]
+    async fn editing_leaves_the_uuid_alone(
+        #[with(seeds!(
+            "fixtures/users.sql",
+            "fixtures/lists.sql",
+            "fixtures/units.sql",
+            "fixtures/items.sql",
+        ))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) -> Result<()> {
+        let before = any_item(&pool).await?;
+
+        let renamed = Item::update(
+            &pool,
+            before.id,
+            Name("Something else".into()),
+            Amount(9.0),
+            None,
+        )
+        .await?;
+        let ticked = Item::set_done(&pool, before.id, true).await?;
+
+        assert_eq!(renamed.uuid, before.uuid);
+        assert_eq!(ticked.uuid, before.uuid);
+        Ok(())
+    }
+
+    /// Rows that predate the column, and any writer that does not know about it, get
+    /// an identity from the schema rather than none — see the mint-if-missing trigger
+    /// in the migration. The fixtures are exactly such a writer, which is what makes
+    /// this checkable here.
+    #[rstest]
+    #[tokio::test]
+    async fn every_row_has_a_uuid(
+        #[with(seeds!(
+            "fixtures/users.sql",
+            "fixtures/lists.sql",
+            "fixtures/units.sql",
+            "fixtures/items.sql",
+        ))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) -> Result<()> {
+        let blank: i64 = sqlx::query_scalar("SELECT count(*) FROM items WHERE uuid IS NULL")
+            .fetch_one(&pool)
+            .await?;
+        let distinct: i64 = sqlx::query_scalar("SELECT count(DISTINCT uuid) FROM items")
+            .fetch_one(&pool)
+            .await?;
+        let total: i64 = sqlx::query_scalar("SELECT count(*) FROM items")
+            .fetch_one(&pool)
+            .await?;
+
+        assert_eq!(blank, 0, "the trigger fills in what the writer left out");
+        assert_eq!(distinct, total, "and it never fills in the same one twice");
+        Ok(())
+    }
+
     /// `items.unit_id` is nullable, and the fixture's `Cake candles` proves it. A
     /// `None` must survive the round trip as `None` rather than as a zero.
     #[rstest]
@@ -592,7 +768,7 @@ mod tests {
         let list = list_id(&pool, BUSIEST).await?;
 
         let item =
-            Item::create(&pool, list, Name("Birthday cake".into()), Amount(1.0), None).await?;
+            Item::create(&pool, Uuid::mint(), list, Name("Birthday cake".into()), Amount(1.0), None).await?;
 
         assert_eq!(item.unit_id, None);
         assert_eq!(Item::get(&pool, Lookup::Id(item.id)).await?.unit_id, None);
@@ -616,7 +792,7 @@ mod tests {
     ) -> Result<()> {
         let list = list_id(&pool, BUSIEST).await?;
 
-        let got = Item::create(&pool, list, Name("x".repeat(length)), Amount(1.0), None)
+        let got = Item::create(&pool, Uuid::mint(), list, Name("x".repeat(length)), Amount(1.0), None)
             .await
             .map(|_| ());
 
@@ -652,7 +828,7 @@ mod tests {
             Some(unit_id(&pool, "kg").await?)
         };
 
-        let result = Item::create(&pool, list, Name("orphan".into()), Amount(1.0), unit).await;
+        let result = Item::create(&pool, Uuid::mint(), list, Name("orphan".into()), Amount(1.0), unit).await;
 
         assert!(
             matches!(result, Err(Error::InvalidInput)),
@@ -1249,14 +1425,14 @@ mod tests {
         let before = Item::for_list(&pool, list, all_items(), order).await?;
         assert_eq!(before.total, BUSIEST_ITEMS);
 
-        Item::create(&pool, other, Name("not here".into()), Amount(1.0), None).await?;
+        Item::create(&pool, Uuid::mint(), other, Name("not here".into()), Amount(1.0), None).await?;
         let after = Item::for_list(&pool, list, all_items(), order).await?;
         assert_eq!(
             after.total, BUSIEST_ITEMS,
             "another list's item changed nothing"
         );
 
-        Item::create(&pool, list, Name("here".into()), Amount(1.0), None).await?;
+        Item::create(&pool, Uuid::mint(), list, Name("here".into()), Amount(1.0), None).await?;
         let mine = Item::for_list(&pool, list, all_items(), order).await?;
         assert_eq!(mine.total, BUSIEST_ITEMS + 1);
         Ok(())

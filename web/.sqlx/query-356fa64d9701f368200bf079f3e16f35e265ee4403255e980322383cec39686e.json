@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id          as \"id: Id\",\n            uuid        as \"uuid!: Uuid\",\n            list_id     as \"list_id: list::Id\",\n            name        as \"name: Name\",\n            amount      as \"amount: Amount\",\n            unit_id     as \"unit_id?: unit::Id\",\n            done_at     as \"done_at?: DoneAt\",\n            created_at  as \"created_at: CreatedAt\"\n        FROM items\n        WHERE list_id = ?1\n        ORDER BY\n            CASE\n                WHEN ?3 = 'ascending' THEN\n                    CASE ?2\n                        WHEN 'id' THEN id\n                        WHEN 'name' THEN name\n                        WHEN 'amount' THEN amount\n                        WHEN 'done_at' THEN done_at\n                        WHEN 'created_at' THEN created_at\n                    END\n                END ASC NULLS LAST,\n            CASE\n                WHEN ?3 = 'descending' THEN\n                    CASE ?2\n                        WHEN 'id' THEN id\n                        WHEN 'name' THEN name\n                        WHEN 'amount' THEN amount\n                        WHEN 'done_at' THEN done_at\n                        WHEN 'created_at' THEN created_at\n                    END\n            END DESC NULLS LAST,\n            -- keeps paging deterministic when the sort key ties\n            id ASC\n        LIMIT ?4 OFFSET ?5\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "uuid!: Uuid",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "uuid"
+          }
+        }
+      },
+      {
+        "name": "list_id: list::Id",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "list_id"
+          }
+        }
+      },
+      {
+        "name": "name: Name",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "amount: Amount",
+        "ordinal": 4,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "amount"
+          }
+        }
+      },
+      {
+        "name": "unit_id?: unit::Id",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "unit_id"
+          }
+        }
+      },
+      {
+        "name": "done_at?: DoneAt",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "done_at"
+          }
+        }
+      },
+      {
+        "name": "created_at: CreatedAt",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "items",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "356fa64d9701f368200bf079f3e16f35e265ee4403255e980322383cec39686e"
+}

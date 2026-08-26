@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            INSERT INTO lists (name, owner_id)\n            VALUES (?1, ?2)\n            RETURNING\n                id          as \"id!: Id\",\n                name        as \"name: Name\",\n                owner_id    as \"owner_id: user::Id\",\n                created_at  as \"created_at!: CreatedAt\",\n                updated_at  as \"updated_at!: UpdatedAt\"\n            ",
+  "query": "\n            INSERT INTO lists (uuid, name, owner_id)\n            VALUES (?1, ?2, ?3)\n            RETURNING\n                id          as \"id!: Id\",\n                uuid        as \"uuid!: Uuid\",\n                name        as \"name: Name\",\n                owner_id    as \"owner_id: user::Id\",\n                created_at  as \"created_at!: CreatedAt\",\n                updated_at  as \"updated_at!: UpdatedAt\"\n            ",
   "describe": {
     "columns": [
       {
@@ -15,8 +15,19 @@
         }
       },
       {
-        "name": "name: Name",
+        "name": "uuid!: Uuid",
         "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "uuid"
+          }
+        }
+      },
+      {
+        "name": "name: Name",
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "owner_id: user::Id",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "created_at!: CreatedAt",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -49,7 +60,7 @@
       },
       {
         "name": "updated_at!: UpdatedAt",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -60,15 +71,16 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 3
     },
     "nullable": [
       null,
+      true,
       false,
       false,
       false,
       false
     ]
   },
-  "hash": "6a0f87366644192e52c2fadfbbcecb0c3da1c2e58792b1dfa78a5404770d8b53"
+  "hash": "a7cc98c18101822712848222f80e6ca094722fc09956beb1081888a486080847"
 }

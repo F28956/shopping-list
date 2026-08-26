@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "\n            UPDATE lists SET name = ?1, updated_at = unixepoch() WHERE id = ?2\n            RETURNING\n                id          as \"id!: Id\",\n                name        as \"name: Name\",\n                owner_id    as \"owner_id: user::Id\",\n                created_at  as \"created_at: CreatedAt\",\n                updated_at  as \"updated_at: UpdatedAt\"\n            ",
+  "query": "\n                SELECT\n                    id          as \"id: Id\",\n                    uuid        as \"uuid!: Uuid\",\n                    name        as \"name: Name\",\n                    owner_id    as \"owner_id: user::Id\",\n                    created_at  as \"created_at: CreatedAt\",\n                    updated_at  as \"updated_at: UpdatedAt\"\n                FROM lists\n                WHERE id = ?1 ",
   "describe": {
     "columns": [
       {
-        "name": "id!: Id",
+        "name": "id: Id",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": {
@@ -15,8 +15,19 @@
         }
       },
       {
-        "name": "name: Name",
+        "name": "uuid!: Uuid",
         "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "lists",
+            "name": "uuid"
+          }
+        }
+      },
+      {
+        "name": "name: Name",
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "owner_id: user::Id",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "created_at: CreatedAt",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -49,7 +60,7 @@
       },
       {
         "name": "updated_at: UpdatedAt",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -60,15 +71,16 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
       false,
+      true,
       false,
       false,
       false,
       false
     ]
   },
-  "hash": "301d0211f726065e2d30d61e8fc0c0d5943b3deb4cf50480610ef7d3e7835606"
+  "hash": "35f3243cf150037bf5631ebe589e60252c5135cc245788751dfb2e58987fe97a"
 }

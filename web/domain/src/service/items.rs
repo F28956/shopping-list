@@ -83,7 +83,10 @@ pub async fn create(
             Item::put_back(&ctx.db, existing.id).await?
         }
         Some(existing) => existing,
-        None => Item::create(&ctx.db, list_id, name, amount, unit_id).await?,
+        // Named here, because nothing named it earlier. When the add came over sync
+        // the device had already minted one and it travels with the operation; this
+        // is the online path, where the row is born on the server.
+        None => Item::create(&ctx.db, item::Uuid::mint(), list_id, name, amount, unit_id).await?,
     };
 
     Entry::record(&ctx.db, list_id, &item.name, unit_id).await?;
