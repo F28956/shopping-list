@@ -24,7 +24,7 @@ class ItemsViewModel(
     private val api: Api,
     private val cache: Cache,
     val list: ShoppingList,
-    private val onSignedOut: () -> Unit,
+    private val onSignedOut: (String?) -> Unit,
 ) : ViewModel() {
 
     data class State(
@@ -149,6 +149,11 @@ class ItemsViewModel(
             if (reconnecting) load()
             try {
                 api.changes(list).collect { load() }
+            } catch (e: ApiError.NotAdmitted) {
+                onSignedOut(e.message)
+                return@launch
+            } catch (_: ApiError.Forbidden) {
+                return@launch
             } catch (_: Exception) {
                 // Losing the connection is ordinary and not worth saying.
             }
@@ -226,8 +231,11 @@ class ItemsViewModel(
     }
 
     private fun report(e: ApiError) {
-        if (e is ApiError.Unauthorized) onSignedOut() else _state.update {
-            it.copy(message = e.message)
+        // See ListsViewModel.report.
+        when (e) {
+            is ApiError.Unauthorized -> onSignedOut(null)
+            is ApiError.NotAdmitted -> onSignedOut(e.message)
+            else -> _state.update { it.copy(message = e.message) }
         }
     }
 }

@@ -34,16 +34,23 @@ struct ListsView: View {
             Group {
                 if !loaded {
                     ProgressView()
-                } else if lists.isEmpty && offline && !fresh {
-                    // Before the empty state, and the order is the point: with nothing
-                    // cached and no connection this app used to say "No lists", an
-                    // emptiness it had never verified. Once the server has said there
-                    // are none, `fresh` keeps the real empty state reachable -- losing
-                    // signal afterwards does not unsay it.
+                } else if lists.isEmpty && !fresh {
+                    // Before the empty state, and the order is the point: this app
+                    // used to say "No lists" whenever a load failed and there was
+                    // nothing cached -- an emptiness it had never verified. `fresh`
+                    // is the only thing that earns the empty state, and only the
+                    // server can set it. Losing signal afterwards does not unsay it.
                     ContentUnavailableView {
-                        Label("Can't reach the server", systemImage: "icloud.slash")
+                        Label(
+                            offline ? "Can't reach the server" : "Couldn't load your lists",
+                            systemImage: offline ? "icloud.slash" : "exclamationmark.triangle"
+                        )
                     } description: {
-                        Text("Your lists will appear as soon as there is a connection.")
+                        Text(
+                            offline
+                                ? "Your lists will appear as soon as there is a connection."
+                                : "Whether you have any is not known yet."
+                        )
                     } actions: {
                         Button("Try again") { Task { await load() } }
                     }
@@ -211,6 +218,14 @@ struct ListsView: View {
                     identity.signOut()
                     return
                 }
+                // A refusal is not a dropped connection. Reconnecting every three
+                // seconds to be refused again is a loop that ends only when somebody
+                // closes the app, and each turn of it used to raise another dialog.
+                if case .forbidden = problem { return }
+                if case .notAdmitted = problem {
+                    identity.signOut(because: problem.localizedDescription)
+                    return
+                }
             } catch {}
 
             reconnecting = true
@@ -226,6 +241,8 @@ struct ListsView: View {
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()
+            } else if case .notAdmitted = problem {
+                identity.signOut(because: problem.localizedDescription)
             } else {
                 error = problem.localizedDescription
             }
@@ -263,6 +280,11 @@ struct ListsView: View {
             // the sign-in screen back as soon as the state changes.
             if case .unauthorized = problem {
                 identity.signOut()
+            } else if case .notAdmitted = problem {
+                // Not a person with an empty list -- a person this server will not
+                // have. The sign-in screen is where that is said, and it is said once
+                // rather than raised again every time the stream reconnects.
+                identity.signOut(because: problem.localizedDescription)
             } else if case .transport = problem {
                 // Not shown. Being out of signal is a state, not an event: a phone in
                 // a basement would raise this every few seconds, and a dialog for each

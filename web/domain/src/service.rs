@@ -157,6 +157,18 @@ pub enum ServiceError {
     /// all gets; see [`ServiceError::forbidden`].
     #[error("forbidden")]
     Forbidden,
+    /// Not a user of this service at all: the identity provider vouched for them and
+    /// the admission list does not list them.
+    ///
+    /// Separate from [`ServiceError::Forbidden`], which it used to share, because the
+    /// two are answers to different questions and a transport has to say different
+    /// things about them. `Forbidden` is "you may look at this list but not change
+    /// it", which is a sentence about a list; this is "this account cannot use this
+    /// server", which is a sentence about the account and is not fixed by asking
+    /// again. Collapsing them is how a stranger signing in was told, on a screen with
+    /// no list on it, that they could look at the list but not change it.
+    #[error("not admitted")]
+    NotAdmitted,
     #[error(transparent)]
     Internal(models::Error),
 }
@@ -203,7 +215,8 @@ impl PartialEq for ServiceError {
             | (Self::InUse, Self::InUse)
             | (Self::InvalidInput, Self::InvalidInput)
             | (Self::Unauthenticated, Self::Unauthenticated)
-            | (Self::Forbidden, Self::Forbidden) => true,
+            | (Self::Forbidden, Self::Forbidden)
+            | (Self::NotAdmitted, Self::NotAdmitted) => true,
             (Self::Internal(a), Self::Internal(b)) => a == b,
             _ => false,
         }

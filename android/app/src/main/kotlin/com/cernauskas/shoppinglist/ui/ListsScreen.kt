@@ -102,13 +102,14 @@ fun ListsScreen(
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
 
-            // Before the empty state, and that order is the point: with nothing
-            // cached and no connection, this app used to say "No lists yet" -- an
-            // emptiness it had never verified. `fresh` is what keeps the real empty
-            // state reachable: once the server has said there are none, it has been
-            // verified, and losing signal afterwards does not unsay it.
-            state.lists.isEmpty() && state.offline && !state.fresh -> Unreachable(
+            // Before the empty state, and that order is the point: after any failed
+            // load with nothing cached, this app used to say "No lists yet" -- an
+            // emptiness it had never verified. `fresh` is the only thing that earns
+            // the empty state, and only the server can set it; losing signal
+            // afterwards does not unsay what the server already said.
+            state.lists.isEmpty() && !state.fresh -> Unreachable(
                 modifier = Modifier.fillMaxSize().padding(padding),
+                offline = state.offline,
                 what = "Your lists",
                 onRetry = { model.load() },
             )

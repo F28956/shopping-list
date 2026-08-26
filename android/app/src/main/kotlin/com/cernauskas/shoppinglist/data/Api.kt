@@ -29,6 +29,17 @@ sealed class ApiError(message: String) : Exception(message) {
     data object Unauthorized : ApiError("Signed out. Sign in again.")
     data object NotFound : ApiError("That is not there any more.")
     data object Forbidden : ApiError("You can look at this list but not change it.")
+
+    /**
+     * This account may not use this server at all.
+     *
+     * Shares 403 with [Forbidden] and is a different thing entirely: that one is a
+     * sentence about a list, this one is a sentence about the account, and asking
+     * again will not change it. Told apart by the `reason` in the body, because the
+     * status cannot tell them apart -- and when nothing did, somebody signing in with
+     * an unlisted address was told they could read a list they did not have.
+     */
+    data object NotAdmitted : ApiError("This account is not allowed to use this server.")
     data class BadInput(val what: String) : ApiError(what)
     data class Server(val code: Int) : ApiError("The server had a problem ($code).")
     data class Transport(val reason: Throwable) :
@@ -274,7 +285,7 @@ class Api(
                 when (it.code) {
                     in 200..299 -> text
                     401 -> throw ApiError.Unauthorized
-                    403 -> throw ApiError.Forbidden
+                    403 -> throw refusalIn(text)
                     404 -> throw ApiError.NotFound
                     400, 409, 422 -> throw ApiError.BadInput(
                         messageIn(text) ?: "The server would not accept that."
@@ -282,6 +293,20 @@ class Api(
                     else -> throw ApiError.Server(it.code)
                 }
             }
+        }
+
+    /**
+     * Which of the two 403s this is.
+     *
+     * The body carries `"reason": "not_admitted"` for the one that is about the
+     * account rather than about a list. An older server sends no `reason` at all, and
+     * the safe reading of silence is the narrower refusal.
+     */
+    private fun refusalIn(text: String): ApiError =
+        if (Regex("\"reason\"\\s*:\\s*\"not_admitted\"").containsMatchIn(text)) {
+            ApiError.NotAdmitted
+        } else {
+            ApiError.Forbidden
         }
 
     /** The API answers errors as `{"error": "..."}`. */

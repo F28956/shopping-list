@@ -68,11 +68,15 @@ struct MacItemsView: View {
                 OfflineNote()
             }
 
-            // "Nothing on this list yet" is a claim, and with nothing cached and no
-            // connection it is a claim nobody has checked.
-            if items.isEmpty && loaded && offline && !fresh {
-                Text("Can't reach the server. This list will appear as soon as there is a connection.")
-                    .foregroundStyle(.secondary)
+            // "Nothing on this list yet" is a claim, and after a load that failed
+            // with nothing cached it is a claim nobody has checked.
+            if items.isEmpty && loaded && !fresh {
+                Text(
+                    offline
+                        ? "Can't reach the server. This list will appear as soon as there is a connection."
+                        : "Couldn't load this list. What is on it is not known yet."
+                )
+                .foregroundStyle(.secondary)
             } else if outstanding.isEmpty {
                 Text(items.isEmpty ? "Nothing on this list yet." : "All done.")
                     .foregroundStyle(.secondary)
@@ -383,6 +387,10 @@ struct MacItemsView: View {
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()
+            } else if case .notAdmitted = problem {
+                // A person this server will not have is not a person with an empty
+                // list. Said on the sign-in screen, once.
+                identity.signOut(because: problem.localizedDescription)
             } else {
                 error = problem.localizedDescription
             }
@@ -405,6 +413,13 @@ struct MacItemsView: View {
             } catch let problem as APIError {
                 if case .unauthorized = problem {
                     identity.signOut()
+                    return
+                }
+                // Reconnecting every three seconds to be refused again is a loop
+                // nothing ends, and each turn of it raised another dialog.
+                if case .forbidden = problem { return }
+                if case .notAdmitted = problem {
+                    identity.signOut(because: problem.localizedDescription)
                     return
                 }
             } catch {}

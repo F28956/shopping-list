@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
 class ListsViewModel(
     private val api: Api,
     private val cache: Cache,
-    private val onSignedOut: () -> Unit,
+    private val onSignedOut: (String?) -> Unit,
 ) : ViewModel() {
 
     data class State(
@@ -80,6 +80,13 @@ class ListsViewModel(
             if (reconnecting) load()
             try {
                 api.listChanges().collect { load() }
+            } catch (e: ApiError.NotAdmitted) {
+                // Not a dropped connection. Reconnecting every three seconds to be
+                // refused again is a loop nothing ends.
+                onSignedOut(e.message)
+                return@launch
+            } catch (_: ApiError.Forbidden) {
+                return@launch
             } catch (_: Exception) {
                 // Losing the connection is ordinary and not worth saying.
             }
@@ -147,9 +154,13 @@ class ListsViewModel(
 
     private fun report(e: ApiError) {
         // A signed-out session is not a message worth showing: the sign-in screen
-        // comes back as soon as the state changes, which says it better.
-        if (e is ApiError.Unauthorized) onSignedOut() else _state.update {
-            it.copy(message = e.message)
+        // comes back as soon as the state changes, which says it better. A refusal of
+        // the account itself goes to the same screen and does say something, because
+        // asking again will not change it and no list screen can explain it.
+        when (e) {
+            is ApiError.Unauthorized -> onSignedOut(null)
+            is ApiError.NotAdmitted -> onSignedOut(e.message)
+            else -> _state.update { it.copy(message = e.message) }
         }
     }
 }

@@ -229,6 +229,13 @@ that header, so they exercise it on every run.
   stylesheet and the two `hx-on` handlers moved into served files, because a policy
   that has to allow `unsafe-inline` is decoration. A test asserts the markup contains
   nothing the policy would block.
+- **Admission is a different refusal from authorisation**, and the wire says which.
+  `ServiceError::NotAdmitted` is "this account may not use this server", raised before
+  any row is written for a stranger; `ServiceError::Forbidden` is "you may read this
+  list but not change it". Both are 403 because both are, so the API body carries a
+  `reason` slug and the clients read it. They shared a code once, and somebody signing
+  in with an unlisted address was told, on a screen with no list on it, that they could
+  read the list but not change it.
 - **The test-only auth mode cannot ship.** Verified by planting a `compile_error!`
   behind its feature: the release build compiles, the test build does not.
 

@@ -84,12 +84,17 @@ struct ItemsView: View {
                 Section { truncationNotice }
             }
 
-            // "Nothing on this list yet" is a claim, and with nothing cached and no
-            // connection it is a claim nobody has checked.
-            if items.isEmpty && loaded && offline && !fresh {
+            // "Nothing on this list yet" is a claim, and with nothing cached and a
+            // load that failed it is a claim nobody has checked. `fresh` is what
+            // earns it, and only the server can set that.
+            if items.isEmpty && loaded && !fresh {
                 Section {
-                    Text("Can't reach the server. This list will appear as soon as there is a connection.")
-                        .foregroundStyle(.secondary)
+                    Text(
+                        offline
+                            ? "Can't reach the server. This list will appear as soon as there is a connection."
+                            : "Couldn't load this list. What is on it is not known yet."
+                    )
+                    .foregroundStyle(.secondary)
                 }
             } else if outstanding.isEmpty && loaded {
                 Section {
@@ -343,6 +348,8 @@ struct ItemsView: View {
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()
+            } else if case .notAdmitted = problem {
+                identity.signOut(because: problem.localizedDescription)
             } else {
                 error = problem.localizedDescription
             }
@@ -405,9 +412,16 @@ struct ItemsView: View {
                 }
             } catch let problem as APIError {
                 // A stream refused for want of a token is not a network hiccup, and
-                // retrying it forever would hammer the server while signed out.
+                // retrying it forever would hammer the server while signed out. The
+                // same goes for a refusal: reconnecting every three seconds to be
+                // told no again is a loop nothing ends.
                 if case .unauthorized = problem {
                     identity.signOut()
+                    return
+                }
+                if case .forbidden = problem { return }
+                if case .notAdmitted = problem {
+                    identity.signOut(because: problem.localizedDescription)
                     return
                 }
             } catch {}
@@ -432,6 +446,8 @@ struct ItemsView: View {
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()
+            } else if case .notAdmitted = problem {
+                identity.signOut(because: problem.localizedDescription)
             } else {
                 error = problem.localizedDescription
             }
@@ -495,6 +511,8 @@ struct ItemsView: View {
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()
+            } else if case .notAdmitted = problem {
+                identity.signOut(because: problem.localizedDescription)
             } else if case .transport = problem {
                 // See ListsView.load: no signal is a state, not an event. What is on
                 // screen stays there -- it is the last thing the server said.

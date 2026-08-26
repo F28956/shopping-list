@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -55,21 +56,29 @@ fun OfflineNote(offline: Boolean, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun Unreachable(modifier: Modifier, what: String, onRetry: () -> Unit) {
+fun Unreachable(modifier: Modifier, offline: Boolean, what: String, onRetry: () -> Unit) {
     Column(
         modifier = modifier.padding(32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
-            Icons.Outlined.CloudOff,
+            if (offline) Icons.Outlined.CloudOff else Icons.Outlined.ErrorOutline,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text("Can't reach the server", style = MaterialTheme.typography.titleMedium)
         Text(
-            // Deliberately does not say the list is empty. Nobody knows whether it is.
-            "$what will appear as soon as there is a connection.",
+            if (offline) "Can't reach the server" else "Couldn't load $what",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            // Deliberately does not say the list is empty. Nobody knows whether it is
+            // -- which is the difference between a failed load and a verified answer.
+            if (offline) {
+                "$what will appear as soon as there is a connection."
+            } else {
+                "Whether there is anything is not known yet."
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,

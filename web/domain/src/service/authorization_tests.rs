@@ -1286,7 +1286,9 @@ async fn an_unlisted_address_cannot_sign_in(#[future(awt)] pool: SqlitePool) {
         )
         .await
         .err(),
-        Some(ServiceError::Forbidden)
+        // Not `Forbidden`, which is a sentence about a list. This is a sentence about
+        // the account, and the two reach a person as different words.
+        Some(ServiceError::NotAdmitted)
     );
 
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM users")

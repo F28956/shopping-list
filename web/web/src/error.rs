@@ -54,7 +54,7 @@ impl IntoResponse for AppError {
                 ServiceError::Conflict | ServiceError::InUse => StatusCode::CONFLICT,
                 ServiceError::InvalidInput => StatusCode::BAD_REQUEST,
                 ServiceError::Unauthenticated => StatusCode::UNAUTHORIZED,
-                ServiceError::Forbidden => StatusCode::FORBIDDEN,
+                ServiceError::Forbidden | ServiceError::NotAdmitted => StatusCode::FORBIDDEN,
                 ServiceError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             },
         };
@@ -64,6 +64,18 @@ impl IntoResponse for AppError {
         } else {
             tracing::debug!(error = ?self, "web request rejected");
         }
-        (status, "something went wrong").into_response()
+
+        // Said plainly, because this one is not a fault and asking again will not
+        // fix it. "Something went wrong" sends somebody to look for a problem that
+        // is not there -- the server worked exactly as configured.
+        let body = match &self {
+            AppError::Service(ServiceError::NotAdmitted) => {
+                "This account is not allowed to use this server. \
+                 Ask whoever runs it to add your address."
+            }
+            _ => "something went wrong",
+        };
+
+        (status, body).into_response()
     }
 }

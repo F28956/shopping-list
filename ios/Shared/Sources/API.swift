@@ -8,6 +8,14 @@ enum APIError: LocalizedError {
     case notFound
     /// The service refused: a viewer trying to change something.
     case forbidden
+    /// This account may not use this server at all.
+    ///
+    /// Shares 403 with `forbidden` and is a different thing entirely: that one is a
+    /// sentence about a list, this one is a sentence about the account, and asking
+    /// again will not change it. Told apart by the `reason` in the body, because the
+    /// status cannot tell them apart -- and when nothing did, somebody signing in
+    /// with an unlisted address was told they could read a list they did not have.
+    case notAdmitted
     case badInput(String)
     case server(Int)
     case transport(Error)
@@ -20,6 +28,8 @@ enum APIError: LocalizedError {
             return "That is not there any more."
         case .forbidden:
             return "You can look at this list but not change it."
+        case .notAdmitted:
+            return "This account is not allowed to use this server."
         case .badInput(let what):
             return what
         case .server(let code):
@@ -395,7 +405,7 @@ actor API {
         case 401:
             throw APIError.unauthorized
         case 403:
-            throw APIError.forbidden
+            throw Self.refusal(from: data)
         case 404:
             throw APIError.notFound
         case 400, 409, 422:
@@ -403,6 +413,19 @@ actor API {
         case let code:
             throw APIError.server(code)
         }
+    }
+
+    /// Which of the two 403s this is.
+    ///
+    /// The body carries `"reason": "not_admitted"` for the one that is about the
+    /// account rather than about a list. An older server sends no `reason` at all,
+    /// and the safe reading of silence is the narrower refusal.
+    private static func refusal(from data: Data) -> APIError {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["reason"] as? String == "not_admitted"
+        else { return .forbidden }
+        return .notAdmitted
     }
 
     /// The API answers errors as `{"error": "..."}`.

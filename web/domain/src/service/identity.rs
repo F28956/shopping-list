@@ -29,7 +29,7 @@ pub async fn from_claims(
     // been created leaves an account behind for every stranger who tried the door.
     if !ctx.admission.admits(email.as_ref()) {
         tracing::warn!(sub = %sub.0, "sign-in refused: not an admitted address");
-        return Err(ServiceError::Forbidden);
+        return Err(ServiceError::NotAdmitted);
     }
 
     let user = User::find_or_create(&ctx.db, sub, name, email).await?;

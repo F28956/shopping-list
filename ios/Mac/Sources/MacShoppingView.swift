@@ -32,13 +32,18 @@ struct MacShoppingView: View {
             Group {
                 if !loaded {
                     ProgressView()
-                } else if lists.isEmpty && offline && !fresh {
-                    // Before the empty state: with nothing cached and no connection,
-                    // "No lists" is an emptiness nobody has verified.
+                } else if lists.isEmpty && !fresh {
+                    // Before the empty state: after any failed load with nothing
+                    // cached, "No lists" is an emptiness nobody has verified. Only a
+                    // server that answered can earn the empty state.
                     ContentUnavailableView(
-                        "Can't reach the server",
-                        systemImage: "icloud.slash",
-                        description: Text("Your lists will appear as soon as there is a connection.")
+                        offline ? "Can't reach the server" : "Couldn't load your lists",
+                        systemImage: offline ? "icloud.slash" : "exclamationmark.triangle",
+                        description: Text(
+                            offline
+                                ? "Your lists will appear as soon as there is a connection."
+                                : "Whether you have any is not known yet."
+                        )
                     )
                 } else if lists.isEmpty {
                     ContentUnavailableView(
@@ -215,6 +220,13 @@ struct MacShoppingView: View {
                     identity.signOut()
                     return
                 }
+                // Reconnecting every three seconds to be refused again is a loop
+                // nothing ends, and each turn of it raised another dialog.
+                if case .forbidden = problem { return }
+                if case .notAdmitted = problem {
+                    identity.signOut(because: problem.localizedDescription)
+                    return
+                }
             } catch {}
 
             reconnecting = true
@@ -230,6 +242,10 @@ struct MacShoppingView: View {
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()
+            } else if case .notAdmitted = problem {
+                // A person this server will not have is not a person with an empty
+                // list. Said on the sign-in screen, once.
+                identity.signOut(because: problem.localizedDescription)
             } else {
                 error = problem.localizedDescription
             }

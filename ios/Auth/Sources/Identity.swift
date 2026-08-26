@@ -89,9 +89,16 @@ final class Identity {
         }
     }
 
-    func signOut() {
+    /// Signs out, optionally saying why.
+    ///
+    /// The reason lands in `lastError`, which the sign-in screen shows. That is where
+    /// a refusal belongs: somebody this server will not admit is not somebody with an
+    /// empty list, and leaving them on a Lists screen to be told about lists answers a
+    /// question they did not ask. A plain sign-out clears any stale reason.
+    func signOut(because reason: String? = nil) {
         GIDSignIn.sharedInstance.signOut()
         state = .signedOut
+        lastError = reason
     }
 
     /// A current ID token, refreshing it if it has expired.

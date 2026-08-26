@@ -57,12 +57,12 @@ class MainActivity : ComponentActivity() {
                     is Identity.State.SignedIn -> Shopping(
                         api = api,
                         cache = cache,
-                        onSignedOut = {
+                        onSignedOut = { problem ->
                             identity.signOut()
                             // What was cached belongs to whoever just signed out. The
                             // next person to use this phone is a different person.
                             scope.launch { cache.forgetEverything() }
-                            state = Identity.State.SignedOut()
+                            state = Identity.State.SignedOut(problem)
                         },
                     )
                 }
@@ -123,7 +123,7 @@ private fun SignIn(configured: Boolean, problem: String?, onSignIn: () -> Unit) 
 }
 
 @Composable
-private fun Shopping(api: Api, cache: Cache, onSignedOut: () -> Unit) {
+private fun Shopping(api: Api, cache: Cache, onSignedOut: (String?) -> Unit) {
     val nav = rememberNavController()
     var open by remember { mutableStateOf<ShoppingList?>(null) }
 
@@ -135,7 +135,8 @@ private fun Shopping(api: Api, cache: Cache, onSignedOut: () -> Unit) {
             ListsScreen(
                 model = model,
                 onOpen = { list -> open = list; nav.navigate("items") },
-                onSignOut = onSignedOut,
+                // Deliberately signed out, so nothing to explain on the way back.
+                onSignOut = { onSignedOut(null) },
             )
         }
 
