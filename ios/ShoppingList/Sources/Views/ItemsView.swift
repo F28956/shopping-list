@@ -474,7 +474,16 @@ struct ItemsView: View {
     /// own: coming back into signal reconnects the change stream, the stream triggers a
     /// load, and the load sends what has been waiting. Nobody has to reopen the screen.
     private func drain() async {
-        guard !draining, cache.outbox.waiting > 0 else { return }
+        guard !draining else { return }
+
+        // Read the queue back even when there is nothing to send, and *before* the
+        // early return. The lists screen drains the same queue on its own — it has to,
+        // because the app opens there — so this screen's count can go stale the moment
+        // that happens. Returning early without refreshing left "3 changes waiting to
+        // be sent" on a screen whose queue had been empty for minutes.
+        refreshUnsent()
+        guard cache.outbox.waiting > 0 else { return }
+
         draining = true
         let drained = await cache.outbox.drain(through: api)
         draining = false
@@ -505,7 +514,7 @@ struct ItemsView: View {
     private func keepTrying() async {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(10))
-            if cache.outbox.waiting > 0 { await drain() }
+            await drain()
         }
     }
 

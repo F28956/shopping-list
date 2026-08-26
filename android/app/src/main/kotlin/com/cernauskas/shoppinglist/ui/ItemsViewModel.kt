@@ -93,7 +93,7 @@ class ItemsViewModel(
     private fun keepTrying() = viewModelScope.launch {
         while (true) {
             delay(10_000)
-            if (cache.outbox.waiting() > 0) drain()
+            drain()
         }
     }
 
@@ -326,7 +326,16 @@ class ItemsViewModel(
      * case where somebody watched themselves do something that did not happen.
      */
     private suspend fun drain() {
-        if (draining || cache.outbox.waiting() == 0) return
+        if (draining) return
+
+        // Read the queue back even when there is nothing to send, and *before* the
+        // early return. The lists screen drains the same queue on its own -- it has to,
+        // because the app opens there -- so this screen's count can go stale the moment
+        // that happens. Returning early without refreshing left "3 changes waiting to
+        // be sent" on a screen whose queue had been empty for minutes.
+        refreshUnsent()
+        if (cache.outbox.waiting() == 0) return
+
         draining = true
         val drained = cache.outbox.drain(api)
         draining = false

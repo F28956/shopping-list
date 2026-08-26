@@ -376,7 +376,16 @@ struct MacItemsView: View {
 
     /// Sends what is queued, then says what became of it — see the phone's copy.
     private func drain() async {
-        guard !draining, cache.outbox.waiting > 0 else { return }
+        guard !draining else { return }
+
+        // Read the queue back even when there is nothing to send, and *before* the
+        // early return. The lists screen drains the same queue on its own — it has to,
+        // because the app opens there — so this screen's count can go stale the moment
+        // that happens. Returning early without refreshing left "3 changes waiting to
+        // be sent" on a screen whose queue had been empty for minutes.
+        refreshUnsent()
+        guard cache.outbox.waiting > 0 else { return }
+
         draining = true
         let drained = await cache.outbox.drain(through: api)
         draining = false

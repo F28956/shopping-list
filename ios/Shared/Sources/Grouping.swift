@@ -26,6 +26,23 @@ func primaryTag(of item: Item, in tags: [Tag]) -> Tag? {
         .tag
 }
 
+/// Every tag on an item, in the order this list is walked.
+///
+/// The order is the tags array's own, which the service resolved per person and per
+/// list — the same order the groups are in, so the marks on a row read the way the
+/// list reads. Tags the item carries that this list does not know about are dropped
+/// rather than shown out of place.
+func tagsOn(_ item: Item, in tags: [Tag]) -> [Tag] {
+    let placed = Dictionary(
+        uniqueKeysWithValues: tags.enumerated().map { ($0.element.id, $0.offset) }
+    )
+
+    return item.tagIDs
+        .compactMap { id in placed[id].map { (at: $0, tag: tags[$0]) } }
+        .sorted { $0.at < $1.at }
+        .map(\.tag)
+}
+
 extension Tag {
     /// The tag as a heading: its emoji, when it has one, then its name.
     var heading: String {

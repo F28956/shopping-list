@@ -223,7 +223,12 @@ struct WatchItemsView: View {
     /// Sends what is queued. See the phone's `ItemsView.drain` — the rules are the
     /// same, and only the losses are said out loud.
     private func drain() async {
-        guard !draining, cache.outbox.waiting > 0 else { return }
+        guard !draining else { return }
+        // See the phone's copy: the lists screen drains the same queue, so this count
+        // goes stale unless it is read back even when there is nothing to send.
+        refreshUnsent()
+        guard cache.outbox.waiting > 0 else { return }
+
         draining = true
         let drained = await cache.outbox.drain(through: api)
         draining = false
@@ -237,7 +242,7 @@ struct WatchItemsView: View {
     private func keepTrying() async {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(10))
-            if cache.outbox.waiting > 0 { await drain() }
+            await drain()
         }
     }
 
