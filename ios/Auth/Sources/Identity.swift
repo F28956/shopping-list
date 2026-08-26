@@ -142,6 +142,16 @@ final class Identity {
             if UITesting.isRunning { return "ui-test-token" }
         #endif
 
+        // Asking again, because a device that came up offline has no signed-in user to
+        // refresh: the restore at launch failed, and without this it would stay
+        // tokenless until the app was restarted. Trying here is what turns that state
+        // back into a working one when signal returns -- and it is why a persistent
+        // auth problem eventually surfaces as a refusal rather than hiding behind
+        // "Offline" for ever.
+        if GIDSignIn.sharedInstance.currentUser == nil, isRemembered {
+            _ = try? await GIDSignIn.sharedInstance.restorePreviousSignIn()
+        }
+
         guard let user = GIDSignIn.sharedInstance.currentUser else { return nil }
 
         do {

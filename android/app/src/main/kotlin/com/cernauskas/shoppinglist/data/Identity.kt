@@ -63,6 +63,23 @@ class Identity(private val context: Context) {
 
     fun current(): String? = token
 
+    /**
+     * A token to send, asking Google for one if this device does not have it yet.
+     *
+     * Without this a device that came up offline would stay tokenless until the app was
+     * restarted: the quiet restore is attempted once at launch, and a failure there is
+     * how somebody ends up signed in with nothing to prove it. Asking again on the
+     * first request after signal returns is what turns that state back into a working
+     * one -- and it is why a persistent auth problem eventually surfaces as a refusal
+     * rather than hiding behind "Offline" for ever.
+     */
+    suspend fun tokenNow(): String? {
+        token?.let { return it }
+        if (!isRemembered) return null
+        attempt(onlyAuthorized = true, quiet = true)
+        return token
+    }
+
     /** Forgets the token, so the next request asks for a fresh one. Called when the
      * server refuses one: the age of a token is a guess, and a 401 is the server
      * saying the guess was wrong. */
