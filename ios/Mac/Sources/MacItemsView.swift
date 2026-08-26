@@ -284,13 +284,17 @@ struct MacItemsView: View {
                     Text(item.name)
                         .strikethrough(item.isDone)
                         .foregroundStyle(item.isDone ? .secondary : .primary)
+                        .fixedSize()
+                        // The name never gives way. A window narrow enough to squeeze
+                        // a row should lose the labels on the categories, not the word
+                        // that says what to buy.
+                        .layoutPriority(1)
 
                     // Where it lives, on the row itself. The list is ordered by the
                     // same tags, so these read as a label on a sorted list rather
-                    // than as a second organising scheme.
-                    ForEach(item.tagIDs.compactMap { tagsByID[$0] }) { tag in
-                        chip(tag)
-                    }
+                    // than as a second organising scheme — and they give way in two
+                    // steps as the window narrows; see `MacTagStrip`.
+                    MacTagStrip(tags: item.tagIDs.compactMap { tagsByID[$0] })
 
                     // Quietly, on the row. A change that has not been sent is a detail
                     // about that line, not news about the app — and a laptop on a train
@@ -343,21 +347,6 @@ struct MacItemsView: View {
         )
     }
 
-    /// A tag beside an item: quiet, and not a control.
-    ///
-    /// Nothing here is tappable. Changing what an item is filed under is the editor's
-    /// job, and a chip that sometimes removes a tag when you meant to cross the item
-    /// off is the reason the phone keeps them in the sheet too.
-    private func chip(_ tag: Tag) -> some View {
-        Text(tag.emoji.flatMap { $0.isEmpty ? nil : "\($0) \(tag.name)" } ?? tag.name)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(.quaternary, in: Capsule())
-            .accessibilityHidden(true)
-            .accessibilityIdentifier("chip.\(tag.name)")
-    }
 
     /// What the row says when it is read aloud rather than looked at.
     ///
