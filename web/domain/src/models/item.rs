@@ -424,6 +424,41 @@ impl Item {
         Ok(result.rows_affected())
     }
 
+    /// Deletes the done rows a caller names, and only those.
+    ///
+    /// The `done_at IS NOT NULL` is kept deliberately: an id in the list that is no
+    /// longer ticked off is one somebody has put back on the list since, and putting
+    /// something back is a newer decision than the sweep that was queued before it.
+    ///
+    /// Built with a bound parameter per id rather than an interpolated list -- sqlx
+    /// cannot check a query it cannot see, and a hand-built `IN (...)` is where an
+    /// injection gets in. An empty `ids` deletes nothing and does not go to the
+    /// database at all, because `IN ()` is a syntax error in SQLite.
+    pub async fn delete_done_among(
+        pool: &sqlx::SqlitePool,
+        list_id: list::Id,
+        ids: &[Id],
+    ) -> Result<u64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let holes = std::iter::repeat_n("?", ids.len()).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "DELETE FROM items WHERE list_id = ? AND done_at IS NOT NULL AND id IN ({holes})"
+        );
+
+        // `AssertSqlSafe` because sqlx refuses a runtime-built string without one, and
+        // it is right to: the only thing interpolated here is a run of `?`, whose
+        // length comes from `ids.len()`. Every value is bound.
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(list_id);
+        for id in ids {
+            query = query.bind(id);
+        }
+
+        Ok(query.execute(pool).await?.rows_affected())
+    }
+
     /// Fetches one item. A miss is [`Error::NotFound`], not `Ok(None)`.
     ///
     /// This does not scope to a list, so a caller holding an id from someone else's

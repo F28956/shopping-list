@@ -361,9 +361,13 @@ everybody else, is in [configuration.md](configuration.md). Nothing of it is bui
 
 Nothing here serves HTTPS. On a laptop talking to its own simulators that costs
 nothing; a phone on the same Wi-Fi already needs a cleartext exception, and anything
-beyond this network needs certificates — a reverse proxy in front, or rustls in the
-server. The token in every request is a bearer credential, so this is the gap that
-matters most once the address stops being `localhost`.
+beyond this network needs certificates. The token in every request is a bearer
+credential, so this is the gap that matters most once the address stops being
+`localhost` — and configuration.md's C6, which refuses `http://` in release builds,
+turns it from a gap into a precondition for shipping at all. The design for
+terminating TLS in this process, obtaining certificates from Let's Encrypt and
+rotating them without a restart — including what a custom listening port does and does
+not change about validation — is in [tls.md](tls.md). Nothing of it is built.
 
 ## Recorded, not taken
 

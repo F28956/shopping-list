@@ -52,6 +52,9 @@ pub struct ItemInput {
 pub struct NewItem {
     pub line: Option<String>,
     pub name: Option<String>,
+    /// What the device already calls this, when it named the row before the server
+    /// heard of it. Absent on the online path, where the server names it.
+    pub uuid: Option<item::Uuid>,
     #[serde(default = "one")]
     pub amount: f64,
     pub unit_id: Option<i64>,
@@ -137,13 +140,15 @@ async fn create(
         // Parsed in the service, never here: the browser posts a line through the
         // same function, and two parsers in two transports is how a phone and a
         // browser come to disagree about what `2 kg apples` means.
-        (Some(line), None) => items::quick_add(&state.ctx, &actor, list_id, &line).await?,
+        (Some(line), None) => {
+            items::quick_add(&state.ctx, &actor, list_id, input.uuid, &line).await?
+        }
         (None, Some(name)) => {
             items::create(
                 &state.ctx,
                 &actor,
                 list_id,
-                Name(name),
+                None, Name(name),
                 Amount(input.amount),
                 input.unit_id.map(unit::Id),
             )
@@ -224,6 +229,31 @@ pub struct Cleared {
     pub cleared: u64,
 }
 
+/// Which rows a sweep meant, for a client that is replaying one.
+///
+/// `?ids=3,7,11`. Absent means the live reading -- everything that is done right now --
+/// which is what the button on screen wants. Present means "these, and only these",
+/// which is what a queue that has been sitting in a pocket wants; see the service.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct ClearQuery {
+    pub ids: Option<String>,
+}
+
+impl ClearQuery {
+    /// Unparseable entries are dropped rather than refused. The caller is naming rows
+    /// to delete, and the safe reading of "3,banana,11" is the two rows it definitely
+    /// named -- never the whole list, which is what refusing and falling back to the
+    /// live meaning would do.
+    fn named(&self) -> Option<Vec<item::Id>> {
+        self.ids.as_ref().map(|raw| {
+            raw.split(',')
+                .filter_map(|entry| entry.trim().parse().ok())
+                .map(item::Id)
+                .collect()
+        })
+    }
+}
+
 /// Clears everything already ticked off, in one request.
 ///
 /// A route rather than the client deleting each row: emptying the trolley is one
@@ -233,8 +263,16 @@ async fn clear_done(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(list_id): Path<i64>,
+    Query(q): Query<ClearQuery>,
 ) -> Result<Json<Cleared>, AppError> {
-    let cleared = items::clear_done(&state.ctx, &user.actor(), list::Id(list_id)).await?;
+    let named = q.named();
+    let cleared = items::clear_done(
+        &state.ctx,
+        &user.actor(),
+        list::Id(list_id),
+        named.as_deref(),
+    )
+    .await?;
     Ok(Json(Cleared { cleared }))
 }
 

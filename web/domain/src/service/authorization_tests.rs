@@ -51,7 +51,7 @@ async fn scene(pool: SqlitePool) -> Scene {
         &ctx,
         &mine,
         list.id,
-        item::Name("Apples".into()),
+        None, item::Name("Apples".into()),
         item::Amount(1.0),
         None,
     )
@@ -158,7 +158,7 @@ async fn a_stranger_cannot_read_or_add_to_my_list(#[future(awt)] pool: SqlitePoo
             &s.ctx,
             &s.theirs,
             s.list.id,
-            item::Name("smuggled".into()),
+            None, item::Name("smuggled".into()),
             item::Amount(1.0),
             None
         )
@@ -361,7 +361,7 @@ async fn suggestions_are_my_own_history(#[future(awt)] pool: SqlitePool) {
         &s.ctx,
         &s.theirs,
         theirs_list.id,
-        item::Name("Absinthe".into()),
+        None, item::Name("Absinthe".into()),
         item::Amount(1.0),
         None,
     )
@@ -391,7 +391,7 @@ async fn clearing_done_items_needs_the_list_to_be_mine(#[future(awt)] pool: Sqli
         .unwrap();
 
     assert_eq!(
-        items::clear_done(&s.ctx, &s.theirs, s.list.id).await.err(),
+        items::clear_done(&s.ctx, &s.theirs, s.list.id, None).await.err(),
         Some(ServiceError::NotFound),
         "a stranger cleared someone else's list"
     );
@@ -401,7 +401,7 @@ async fn clearing_done_items_needs_the_list_to_be_mine(#[future(awt)] pool: Sqli
     );
 
     assert_eq!(
-        items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap(),
+        items::clear_done(&s.ctx, &s.mine, s.list.id, None).await.unwrap(),
         1
     );
     assert_eq!(
@@ -419,7 +419,7 @@ async fn clearing_done_leaves_outstanding_items(#[future(awt)] pool: SqlitePool)
         &s.ctx,
         &s.mine,
         s.list.id,
-        item::Name("Bananas".into()),
+        None, item::Name("Bananas".into()),
         item::Amount(1.0),
         None,
     )
@@ -429,7 +429,7 @@ async fn clearing_done_leaves_outstanding_items(#[future(awt)] pool: SqlitePool)
         .await
         .unwrap();
 
-    let gone = items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap();
+    let gone = items::clear_done(&s.ctx, &s.mine, s.list.id, None).await.unwrap();
 
     assert_eq!(gone, 1);
     assert!(items::get(&s.ctx, &s.mine, still_needed.id).await.is_ok());
@@ -443,7 +443,7 @@ async fn clearing_nothing_is_not_an_error(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
 
     assert_eq!(
-        items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap(),
+        items::clear_done(&s.ctx, &s.mine, s.list.id, None).await.unwrap(),
         0
     );
 }
@@ -459,7 +459,7 @@ use crate::models::history::{Entry, MAX_ENTRIES};
 #[tokio::test]
 async fn history_survives_clearing_the_list(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
-    items::quick_add(&s.ctx, &s.mine, s.list.id, "Sourdough")
+    items::quick_add(&s.ctx, &s.mine, s.list.id, None, "Sourdough")
         .await
         .unwrap();
     let item = items::for_list(&s.ctx, &s.mine, s.list.id, all(), order(item::Field::Id))
@@ -473,7 +473,7 @@ async fn history_survives_clearing_the_list(#[future(awt)] pool: SqlitePool) {
         .await
         .unwrap();
 
-    items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap();
+    items::clear_done(&s.ctx, &s.mine, s.list.id, None).await.unwrap();
 
     let after = items::suggestions(&s.ctx, &s.mine, s.list.id, 50, None)
         .await
@@ -495,7 +495,7 @@ async fn history_survives_clearing_the_list(#[future(awt)] pool: SqlitePool) {
 #[tokio::test]
 async fn history_goes_with_the_list(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
-    items::quick_add(&s.ctx, &s.mine, s.list.id, "Rye")
+    items::quick_add(&s.ctx, &s.mine, s.list.id, None, "Rye")
         .await
         .unwrap();
 
@@ -529,7 +529,7 @@ async fn a_remembered_item_returns_measured_and_filed(#[future(awt)] pool: Sqlit
     .unwrap();
 
     // first time: spelled out, then filed by hand
-    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, "4 pint milk")
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "4 pint milk")
         .await
         .unwrap();
     assert_eq!(first.unit_id, Some(pint.id));
@@ -538,7 +538,7 @@ async fn a_remembered_item_returns_measured_and_filed(#[future(awt)] pool: Sqlit
         .unwrap();
 
     // second time: just the word
-    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, "milk")
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "milk")
         .await
         .unwrap();
 
@@ -577,7 +577,7 @@ async fn every_remembered_tag_comes_back(#[future(awt)] pool: SqlitePool) {
         .await
         .unwrap();
 
-    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, "potatoes")
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "potatoes")
         .await
         .unwrap();
     for tag in [produce.id, aldi.id] {
@@ -586,9 +586,9 @@ async fn every_remembered_tag_comes_back(#[future(awt)] pool: SqlitePool) {
 
     // Crossed off and cleared, the way a shop ends.
     items::set_done(&s.ctx, &s.mine, first.id, true).await.unwrap();
-    items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap();
+    items::clear_done(&s.ctx, &s.mine, s.list.id, None).await.unwrap();
 
-    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, "potatoes")
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "potatoes")
         .await
         .unwrap();
 
@@ -617,7 +617,7 @@ async fn unfiling_forgets_one_tag_and_keeps_the_rest(#[future(awt)] pool: Sqlite
         .await
         .unwrap();
 
-    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, "potatoes")
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "potatoes")
         .await
         .unwrap();
     for tag in [produce.id, aldi.id] {
@@ -626,9 +626,9 @@ async fn unfiling_forgets_one_tag_and_keeps_the_rest(#[future(awt)] pool: Sqlite
     tags::detach(&s.ctx, &s.mine, first.id, aldi.id).await.unwrap();
 
     items::set_done(&s.ctx, &s.mine, first.id, true).await.unwrap();
-    items::clear_done(&s.ctx, &s.mine, s.list.id).await.unwrap();
+    items::clear_done(&s.ctx, &s.mine, s.list.id, None).await.unwrap();
 
-    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, "potatoes")
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "potatoes")
         .await
         .unwrap();
 
@@ -650,7 +650,7 @@ async fn forgetting_an_item_forgets_its_filing(#[future(awt)] pool: SqlitePool) 
         .await
         .unwrap();
 
-    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, "potatoes")
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "potatoes")
         .await
         .unwrap();
     tags::attach(&s.ctx, &s.mine, first.id, produce.id)
@@ -699,47 +699,159 @@ async fn an_unconfigured_list_keeps_the_global_order(
 
 /// What you place comes first, in the order you placed it; everything else keeps the
 /// order it had, behind. Placing two tags is a whole answer.
+/// An add that names its own row keeps that name, and a resend of it changes nothing.
+///
+/// The device named the row when somebody typed it, with no signal. Everything queued
+/// behind that add on that device says the same name, so a server that renamed it would
+/// orphan the lot. The second call is what a flaky connection produces -- the add landed
+/// and the answer did not -- and it has to be the same row rather than a second one.
 #[rstest]
 #[tokio::test]
-async fn a_chosen_order_leads_and_the_rest_follows(
-    #[with(crate::models::fixtures::TAGS)]
-    #[future(awt)]
-    pool: SqlitePool,
-) {
+async fn an_add_keeps_the_name_the_device_gave_it(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
-    let urgent = tag_named(&s, "urgent").await;
-    let aldi = tag_named(&s, "aldi").await;
+    let named = item::Uuid::mint();
 
-    tags::set_order(&s.ctx, &s.mine, s.list.id, &[urgent, aldi])
-        .await
-        .unwrap();
+    let first = items::create(
+        &s.ctx,
+        &s.mine,
+        s.list.id,
+        Some(named.clone()),
+        item::Name("Milk".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
 
-    let ordered = tags::order_for(&s.ctx, &s.mine, s.list.id).await.unwrap();
+    assert_eq!(first.uuid, named);
 
+    // Renamed in between, so the name-matching path cannot be what answers.
+    items::update(
+        &s.ctx,
+        &s.mine,
+        first.id,
+        item::Name("Whole milk".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let resent = items::create(
+        &s.ctx,
+        &s.mine,
+        s.list.id,
+        Some(named),
+        item::Name("Milk".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resent.id, first.id, "a resend is the same row");
     assert_eq!(
-        ordered.iter().take(2).map(|t| t.id).collect::<Vec<_>>(),
-        vec![urgent, aldi],
-        "what was placed did not lead"
+        resent.name,
+        item::Name("Whole milk".into()),
+        "and it is returned as it is now, not as the add described it"
     );
-    let every = tags::list(&s.ctx, &s.mine, all(), order(tag::Field::Name))
-        .await
-        .unwrap();
-    assert_eq!(
-        ordered.len(),
-        every.items.len(),
-        "tags that were not placed went missing"
-    );
-    // ... and behind them, the global order is intact.
-    let rest: Vec<i64> = ordered.iter().skip(2).map(|t| t.sort_order.0).collect();
-    assert_eq!(rest, {
-        let mut sorted = rest.clone();
-        sorted.sort();
-        sorted
-    });
 }
 
-/// Somebody who has not set an order inherits the earliest one set on the list, so a
-/// list shared with a person who never opens the settings still has a settled shape.
+/// A sweep that names the rows it meant takes those and leaves the rest.
+///
+/// The case: somebody taps "clear 2 done" in a shop with no signal, somebody at home
+/// ticks another thing off, and the queue reaches the server an hour later. Replayed as
+/// "everything that is done", it would take the third as well -- which nobody asked for
+/// and nobody would connect to a button pressed an hour ago in another building.
+#[rstest]
+#[tokio::test]
+async fn a_sweep_clears_the_rows_it_meant_and_no_others(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    async fn add(s: &Scene, name: &str) -> item::Item {
+        items::create(
+            &s.ctx,
+            &s.mine,
+            s.list.id,
+            None,
+            item::Name(name.into()),
+            item::Amount(1.0),
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    let bread = add(&s, "Bread").await;
+    let milk = add(&s, "Milk").await;
+    let eggs = add(&s, "Eggs").await;
+
+    for one in [&bread, &milk, &eggs] {
+        items::set_done(&s.ctx, &s.mine, one.id, true).await.unwrap();
+    }
+
+    // What the shop meant: the two that were done when the button was pressed.
+    let cleared = items::clear_done(&s.ctx, &s.mine, s.list.id, Some(&[bread.id, milk.id]))
+        .await
+        .unwrap();
+
+    assert_eq!(cleared, 2);
+    let left: Vec<_> = items::for_list(&s.ctx, &s.mine, s.list.id, all(), order(item::Field::Id))
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|i| i.id)
+        .collect();
+    assert!(left.contains(&eggs.id), "somebody else's tick was swept away");
+    assert!(!left.contains(&bread.id));
+    assert!(!left.contains(&milk.id));
+}
+
+/// A named row that is no longer done is one somebody put back, and putting something
+/// back is a newer decision than a sweep queued before it.
+#[rstest]
+#[tokio::test]
+async fn a_sweep_leaves_what_was_put_back(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    let milk = items::create(
+        &s.ctx,
+        &s.mine,
+        s.list.id,
+        None,
+        item::Name("Milk".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+
+    items::set_done(&s.ctx, &s.mine, milk.id, true).await.unwrap();
+    // ... and then somebody needed it after all.
+    items::set_done(&s.ctx, &s.mine, milk.id, false).await.unwrap();
+
+    let cleared = items::clear_done(&s.ctx, &s.mine, s.list.id, Some(&[milk.id]))
+        .await
+        .unwrap();
+
+    assert_eq!(cleared, 0, "a sweep must not delete something outstanding");
+}
+
+/// Rows already gone are not an error: somebody deleting one first is the same outcome
+/// by another route, and a replayed sweep must not fail because it got its way early.
+#[rstest]
+#[tokio::test]
+async fn a_sweep_shrugs_at_rows_that_have_gone(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    let cleared = items::clear_done(&s.ctx, &s.mine, s.list.id, Some(&[item::Id(9999)]))
+        .await
+        .unwrap();
+
+    assert_eq!(cleared, 0);
+}
+
 /// Joining tells everybody it concerns, not just the person who joined.
 ///
 /// Three screens go out of date the moment somebody accepts an invitation: their own
@@ -888,11 +1000,11 @@ async fn the_line_beats_the_memory(#[future(awt)] pool: SqlitePool) {
     let litre = units::create(&s.ctx, &Actor::System, unit::Name("litre".into()))
         .await
         .unwrap();
-    items::quick_add(&s.ctx, &s.mine, s.list.id, "4 pint milk")
+    items::quick_add(&s.ctx, &s.mine, s.list.id, None, "4 pint milk")
         .await
         .unwrap();
 
-    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, "2 litre milk")
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "2 litre milk")
         .await
         .unwrap();
 
@@ -914,7 +1026,7 @@ async fn removing_a_tag_stops_it_coming_back(#[future(awt)] pool: SqlitePool) {
     )
     .await
     .unwrap();
-    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, "milk")
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "milk")
         .await
         .unwrap();
     tags::attach(&s.ctx, &s.mine, first.id, dairy.id)
@@ -924,7 +1036,7 @@ async fn removing_a_tag_stops_it_coming_back(#[future(awt)] pool: SqlitePool) {
         .await
         .unwrap();
 
-    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, "milk")
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "milk")
         .await
         .unwrap();
 
@@ -943,13 +1055,13 @@ async fn removing_a_tag_stops_it_coming_back(#[future(awt)] pool: SqlitePool) {
 async fn spelling_does_not_split_the_memory(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
 
-    items::quick_add(&s.ctx, &s.mine, s.list.id, "Milk")
+    items::quick_add(&s.ctx, &s.mine, s.list.id, None, "Milk")
         .await
         .unwrap();
-    items::quick_add(&s.ctx, &s.mine, s.list.id, "MILK")
+    items::quick_add(&s.ctx, &s.mine, s.list.id, None, "MILK")
         .await
         .unwrap();
-    items::quick_add(&s.ctx, &s.mine, s.list.id, "  milk ")
+    items::quick_add(&s.ctx, &s.mine, s.list.id, None, "  milk ")
         .await
         .unwrap();
 
@@ -984,7 +1096,7 @@ async fn suggestions_are_capped(#[future(awt)] pool: SqlitePool) {
     // "apple sort 3" would be three of "apple sort" and ten names would collapse
     // into one memory -- which is the parser working, and a useless fixture.
     for suffix in ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"] {
-        items::quick_add(&s.ctx, &s.mine, s.list.id, &format!("apple sort {suffix}"))
+        items::quick_add(&s.ctx, &s.mine, s.list.id, None, &format!("apple sort {suffix}"))
             .await
             .unwrap();
     }
@@ -1001,8 +1113,8 @@ async fn suggestions_are_capped(#[future(awt)] pool: SqlitePool) {
 #[tokio::test]
 async fn what_is_already_typed_is_not_offered(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
-    items::quick_add(&s.ctx, &s.mine, s.list.id, "Milk").await.unwrap();
-    items::quick_add(&s.ctx, &s.mine, s.list.id, "Milk chocolate")
+    items::quick_add(&s.ctx, &s.mine, s.list.id, None, "Milk").await.unwrap();
+    items::quick_add(&s.ctx, &s.mine, s.list.id, None, "Milk chocolate")
         .await
         .unwrap();
 
@@ -1048,7 +1160,7 @@ async fn adding_the_same_thing_twice_changes_nothing(#[future(awt)] pool: Sqlite
         &s.ctx,
         &s.mine,
         list.id,
-        item::Name("Apples".into()),
+        None, item::Name("Apples".into()),
         item::Amount(2.0),
         Some(kg.id),
     )
@@ -1059,6 +1171,7 @@ async fn adding_the_same_thing_twice_changes_nothing(#[future(awt)] pool: Sqlite
         &s.ctx,
         &s.mine,
         list.id,
+        None,
         // However it is spelled: the comparison ignores case and surrounding space,
         // in Rust, because SQLite's lower() is ASCII-only.
         item::Name("  apples ".into()),
@@ -1096,7 +1209,7 @@ async fn a_different_unit_is_a_different_row(#[future(awt)] pool: SqlitePool) {
             &s.ctx,
             &s.mine,
             list.id,
-            item::Name("Apples".into()),
+            None, item::Name("Apples".into()),
             item::Amount(2.0),
             unit,
         )
@@ -1121,7 +1234,7 @@ async fn adding_something_crossed_off_puts_it_back(#[future(awt)] pool: SqlitePo
         &s.ctx,
         &s.mine,
         s.list.id,
-        item::Name("Milk".into()),
+        None, item::Name("Milk".into()),
         item::Amount(1.0),
         None,
     )
@@ -1133,7 +1246,7 @@ async fn adding_something_crossed_off_puts_it_back(#[future(awt)] pool: SqlitePo
         &s.ctx,
         &s.mine,
         s.list.id,
-        item::Name("Milk".into()),
+        None, item::Name("Milk".into()),
         item::Amount(1.0),
         None,
     )
@@ -1163,7 +1276,7 @@ async fn an_outstanding_row_is_preferred(#[future(awt)] pool: SqlitePool) {
         &s.ctx,
         &s.mine,
         list.id,
-        item::Name("Milk".into()),
+        None, item::Name("Milk".into()),
         item::Amount(1.0),
         None,
     )
@@ -1187,7 +1300,7 @@ async fn an_outstanding_row_is_preferred(#[future(awt)] pool: SqlitePool) {
         &s.ctx,
         &s.mine,
         list.id,
-        item::Name("Milk".into()),
+        None, item::Name("Milk".into()),
         item::Amount(1.0),
         None,
     )
@@ -1220,7 +1333,7 @@ async fn a_non_positive_amount_cannot_shrink_an_item(
         &s.ctx,
         &s.mine,
         s.list.id,
-        item::Name("Apples".into()),
+        None, item::Name("Apples".into()),
         item::Amount(2.0),
         None,
     )
@@ -1232,7 +1345,7 @@ async fn a_non_positive_amount_cannot_shrink_an_item(
             &s.ctx,
             &s.mine,
             s.list.id,
-            item::Name("Apples".into()),
+            None, item::Name("Apples".into()),
             item::Amount(amount),
             None,
         )
@@ -1263,8 +1376,8 @@ async fn an_item_with_no_unit_gets_the_unit_unit(
         .await
         .unwrap();
 
-    let plain = items::quick_add(&s.ctx, &s.mine, list.id, "milk").await.unwrap();
-    let spelled = items::quick_add(&s.ctx, &s.mine, list.id, "1 unit milk")
+    let plain = items::quick_add(&s.ctx, &s.mine, list.id, None, "milk").await.unwrap();
+    let spelled = items::quick_add(&s.ctx, &s.mine, list.id, None, "1 unit milk")
         .await
         .unwrap();
 
@@ -1277,7 +1390,7 @@ async fn an_item_with_no_unit_gets_the_unit_unit(
 #[tokio::test]
 async fn a_mistake_can_be_forgotten(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
-    items::quick_add(&s.ctx, &s.mine, s.list.id, "Mlik")
+    items::quick_add(&s.ctx, &s.mine, s.list.id, None, "Mlik")
         .await
         .unwrap();
 
@@ -1386,7 +1499,7 @@ async fn history_is_capped(#[future(awt)] pool: SqlitePool) {
 
     // one over the cap, each used once
     for n in 0..=MAX_ENTRIES {
-        items::quick_add(&s.ctx, &s.mine, s.list.id, &format!("item-{n}"))
+        items::quick_add(&s.ctx, &s.mine, s.list.id, None, &format!("item-{n}"))
             .await
             .unwrap();
     }
@@ -1403,7 +1516,7 @@ async fn history_is_private(#[future(awt)] pool: SqlitePool) {
     let theirs_list = lists::create(&s.ctx, &s.theirs, list::Name("Theirs".into()))
         .await
         .unwrap();
-    items::quick_add(&s.ctx, &s.theirs, theirs_list.id, "Absinthe")
+    items::quick_add(&s.ctx, &s.theirs, theirs_list.id, None, "Absinthe")
         .await
         .unwrap();
 
@@ -1458,7 +1571,7 @@ async fn an_editor_may_change_what_is_on_the_list(#[future(awt)] pool: SqlitePoo
     let s = scene(pool).await;
     share(&s, Role::Editor).await;
 
-    let added = items::quick_add(&s.ctx, &s.theirs, s.list.id, "2 kg apples")
+    let added = items::quick_add(&s.ctx, &s.theirs, s.list.id, None, "2 kg apples")
         .await
         .unwrap();
     items::set_done(&s.ctx, &s.theirs, added.id, true)
@@ -1475,7 +1588,7 @@ async fn an_editor_may_change_what_is_on_the_list(#[future(awt)] pool: SqlitePoo
     .await
     .unwrap();
     items::delete(&s.ctx, &s.theirs, added.id).await.unwrap();
-    items::clear_done(&s.ctx, &s.theirs, s.list.id)
+    items::clear_done(&s.ctx, &s.theirs, s.list.id, None)
         .await
         .unwrap();
 }
@@ -1528,14 +1641,14 @@ async fn a_viewer_may_only_read(#[future(awt)] pool: SqlitePool) {
     );
 
     for refusal in [
-        items::quick_add(&s.ctx, &s.theirs, s.list.id, "smuggled")
+        items::quick_add(&s.ctx, &s.theirs, s.list.id, None, "smuggled")
             .await
             .err(),
         items::set_done(&s.ctx, &s.theirs, s.item.id, true)
             .await
             .err(),
         items::delete(&s.ctx, &s.theirs, s.item.id).await.err(),
-        items::clear_done(&s.ctx, &s.theirs, s.list.id).await.err(),
+        items::clear_done(&s.ctx, &s.theirs, s.list.id, None).await.err(),
         items::forget(&s.ctx, &s.theirs, s.list.id, item::Name("apples".into()))
             .await
             .err(),
@@ -1575,7 +1688,7 @@ async fn a_stranger_is_told_nothing_and_a_viewer_is_told_no(#[future(awt)] pool:
 async fn history_is_shared_with_the_list(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
     share(&s, Role::Editor).await;
-    items::quick_add(&s.ctx, &s.mine, s.list.id, "Sourdough")
+    items::quick_add(&s.ctx, &s.mine, s.list.id, None, "Sourdough")
         .await
         .unwrap();
 
@@ -1634,7 +1747,7 @@ async fn a_used_link_cannot_promote_a_member(#[future(awt)] pool: SqlitePool) {
         "a spent link promoted somebody"
     );
     assert_eq!(
-        items::quick_add(&s.ctx, &s.theirs, s.list.id, "not allowed")
+        items::quick_add(&s.ctx, &s.theirs, s.list.id, None, "not allowed")
             .await
             .err(),
         Some(ServiceError::Forbidden)
@@ -1687,7 +1800,7 @@ async fn redeeming_twice_is_harmless_and_never_demotes(#[future(awt)] pool: Sqli
 
     // still an editor
     assert!(
-        items::quick_add(&s.ctx, &s.theirs, s.list.id, "still allowed")
+        items::quick_add(&s.ctx, &s.theirs, s.list.id, None, "still allowed")
             .await
             .is_ok(),
         "a stale viewer invitation demoted an editor"

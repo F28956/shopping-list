@@ -36,16 +36,39 @@ pub(super) async fn editable(ctx: &Ctx, actor: &User, id: item::Id) -> Result<It
 /// Every route in, structured or parsed, comes through here, so anything a person
 /// adds is learned — an item added from the API is as much a habit as one typed into
 /// the box.
+/// `uuid` is what the device called this before the server had heard of it.
+///
+/// `None` is the online path, where the row is born here and is named here. `Some` is
+/// an add that was made with no signal: the device named it at the moment somebody
+/// typed it, and everything queued behind it on that device says the same name. Giving
+/// the row a different one would orphan all of it.
+///
+/// A `uuid` the server has already seen is a resend, and returns the row unchanged.
+/// That is a stronger promise than the name-matching below, which answers "is this
+/// already on the list" -- this answers "have I already applied this exact add", and
+/// it holds even after somebody renamed the row in between.
 pub async fn create(
     ctx: &Ctx,
     actor: &Actor,
     list_id: list::Id,
+    uuid: Option<item::Uuid>,
     name: Name,
     amount: Amount,
     unit_id: Option<unit::Id>,
 ) -> Result<Item> {
     let owner = actor.person()?;
     lists::editable(ctx, owner, list_id).await?;
+
+    if let Some(named) = uuid.clone()
+        && let Ok(already) = Item::get(&ctx.db, item::Lookup::Uuid(named)).await
+    {
+        // Somebody else's row with a guessed uuid is not this caller's to be handed.
+        // The list is the check that matters: they may already edit this one.
+        if already.list_id == list_id {
+            return Ok(already);
+        }
+        return Err(ServiceError::InvalidInput);
+    }
 
     // Checked here rather than left to `CHECK (amount > 0)`, so a nonsense amount is
     // the caller's mistake rather than a constraint violation surfacing as a database
@@ -86,7 +109,10 @@ pub async fn create(
         // Named here, because nothing named it earlier. When the add came over sync
         // the device had already minted one and it travels with the operation; this
         // is the online path, where the row is born on the server.
-        None => Item::create(&ctx.db, item::Uuid::mint(), list_id, name, amount, unit_id).await?,
+        None => {
+            let named = uuid.unwrap_or_else(item::Uuid::mint);
+            Item::create(&ctx.db, named, list_id, name, amount, unit_id).await?
+        }
     };
 
     Entry::record(&ctx.db, list_id, &item.name, unit_id).await?;
@@ -160,7 +186,13 @@ pub async fn set_done(ctx: &Ctx, actor: &Actor, id: item::Id, done: bool) -> Res
 ///
 /// Steps 2 and 4 are the difference between a history that only autocompletes and one
 /// that pays back: `milk` arrives in pints, under dairy, having typed four letters.
-pub async fn quick_add(ctx: &Ctx, actor: &Actor, list_id: list::Id, line: &str) -> Result<Item> {
+pub async fn quick_add(
+    ctx: &Ctx,
+    actor: &Actor,
+    list_id: list::Id,
+    uuid: Option<item::Uuid>,
+    line: &str,
+) -> Result<Item> {
     let owner = actor.person()?;
     lists::editable(ctx, owner, list_id).await?;
 
@@ -183,6 +215,7 @@ pub async fn quick_add(ctx: &Ctx, actor: &Actor, list_id: list::Id, line: &str) 
         ctx,
         actor,
         list_id,
+        uuid,
         name.clone(),
         Amount(parsed.amount),
         unit_id,
@@ -281,10 +314,29 @@ pub async fn suggestions(
 }
 
 /// Clears everything ticked off one of the actor's lists, returning how many went.
-pub async fn clear_done(ctx: &Ctx, actor: &Actor, list_id: list::Id) -> Result<u64> {
+/// Empties the trolley.
+///
+/// `only` is the dangerous half of this operation made safe. "Clear everything that is
+/// done" is a sentence whose meaning changes with the minute it is read: queued on a
+/// phone in a shop and replayed an hour later, it would also sweep away the four
+/// things somebody at home ticked off meanwhile, which nobody asked for.
+///
+/// So a client that is replaying says **which rows it meant** at the time, and gets
+/// those and nothing else. Rows already gone are not an error -- somebody deleting one
+/// of them first is the same outcome by another route. `None` keeps the live meaning,
+/// for the button being pressed right now with the list on screen.
+pub async fn clear_done(
+    ctx: &Ctx,
+    actor: &Actor,
+    list_id: list::Id,
+    only: Option<&[item::Id]>,
+) -> Result<u64> {
     let owner = actor.person()?;
     lists::editable(ctx, owner, list_id).await?;
-    let cleared = Item::delete_done(&ctx.db, list_id).await?;
+    let cleared = match only {
+        Some(ids) => Item::delete_done_among(&ctx.db, list_id, ids).await?,
+        None => Item::delete_done(&ctx.db, list_id).await?,
+    };
     // Announced even when nothing was ticked off: a watcher that re-reads an
     // unchanged list is harmless, and deciding not to tell it is a second rule that
     // can be wrong.

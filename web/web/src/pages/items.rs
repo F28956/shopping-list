@@ -651,7 +651,7 @@ pub async fn create(
 
     // Parsing, the remembered unit and the remembered category all live in the
     // service, so the browser and the API cannot disagree about what a line means.
-    items::quick_add(&s.ctx, &actor, list::Id(id), &form.line).await?;
+    items::quick_add(&s.ctx, &actor, list::Id(id), None, &form.line).await?;
 
     swap(&s, &actor, &headers, list::Id(id), None).await
 }
@@ -664,7 +664,7 @@ pub async fn clear_done(
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
-    items::clear_done(&s.ctx, &actor, list::Id(id)).await?;
+    items::clear_done(&s.ctx, &actor, list::Id(id), None).await?;
     swap(&s, &actor, &headers, list::Id(id), None).await
 }
 
