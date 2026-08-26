@@ -424,7 +424,22 @@ class ItemsViewModel(
         }
     }
 
-    suspend fun tagsOn(item: Item): List<Tag> = api.tagsOn(item, list)
+    /**
+     * What this item is filed under, for the editor.
+     *
+     * Asked of the server, because the list route sends tag ids and the editor wants
+     * the tags themselves. With no connection the ids are enough: this screen already
+     * holds every tag on the list, so the answer is a lookup rather than a request.
+     *
+     * It used to be the bare call, and opening the editor with no signal threw a
+     * transport error out of a coroutine nobody was catching -- which is to say, it
+     * crashed the app.
+     */
+    suspend fun tagsOn(item: Item): List<Tag> = try {
+        api.tagsOn(item, list)
+    } catch (_: ApiError) {
+        _state.value.tags.filter { it.id in item.tagIds }
+    }
 
     /**
      * Asks again for what has just been typed.
