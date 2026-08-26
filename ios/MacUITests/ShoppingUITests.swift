@@ -275,6 +275,55 @@ final class ShoppingUITests: XCTestCase {
         XCTAssertFalse(app.menuItems["Rename…"].exists, "a viewer was offered Rename")
     }
 
+    // MARK: - Suggesting what the list buys
+
+    /// The Mac drew this list and never filled it: the state and the rows existed,
+    /// and nothing ever asked the server. Rendered in two apps, populated in one.
+    func testTypingOffersWhatTheListHasBoughtBefore() {
+        let app = launch()
+        let field = app.textFields["add.field"]
+        expect(field)
+
+        field.click()
+        field.typeText("mil")
+
+        expect(app.buttons["suggestion.Milk"], "nothing was suggested")
+        XCTAssertTrue(app.buttons["suggestion.Milk chocolate"].exists)
+    }
+
+    func testNothingTypedOffersNothing() {
+        let app = launch()
+        expect(app.textFields["add.field"])
+
+        XCTAssertFalse(
+            app.buttons["suggestion.Milk"].waitForExistence(timeout: 1),
+            "the whole history turned up before a letter was typed"
+        )
+    }
+
+    /// Taking one fills the field rather than adding outright: what is typed may
+    /// carry a quantity, and only the server knows what a line means.
+    func testTakingASuggestionFillsTheField() {
+        let app = launch()
+        let field = app.textFields["add.field"]
+        expect(field)
+
+        field.click()
+        field.typeText("mil")
+        expect(app.buttons["suggestion.Milk chocolate"])
+        app.buttons["suggestion.Milk chocolate"].click()
+
+        XCTAssertEqual(field.value as? String, "Milk chocolate")
+        XCTAssertFalse(
+            app.buttons["item.Milk chocolate"].exists,
+            "taking a suggestion added it outright"
+        )
+        XCTAssertFalse(
+            app.buttons["suggestion.Milk chocolate"].exists,
+            "the suggestion it just accepted is still being offered"
+        )
+    }
+
     // MARK: - What a viewer is not offered
 
     /// A viewer is given a list to read, not one covered in controls that would

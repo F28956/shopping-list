@@ -34,7 +34,9 @@
             case ("GET", "/api/tags"):
                 finish(status: 200, body: world.tagsJSON())
             case ("GET", let p) where p.hasSuffix("/history"):
-                finish(status: 200, body: "[]")
+                let typed = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first { $0.name == "q" }?.value ?? ""
+                finish(status: 200, body: world.historyJSON(matching: typed))
             case ("GET", let p) where p.hasSuffix("/items"):
                 finish(status: 200, body: world.itemsJSON(list: onList(p)))
             case ("GET", let p) where p.hasSuffix("/tags"):

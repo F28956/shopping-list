@@ -17,8 +17,7 @@ struct MacItemsView: View {
     @State private var truncated = false
     @State private var total: Int64 = 0
     @State private var line = ""
-    @State private var offered: [String] = []
-    @State private var asking: Task<Void, Never>?
+    @State private var suggestions = Suggestions()
     @State private var editing: Editing?
     @State private var confirmingClear = false
     @State private var error: String?
@@ -82,6 +81,11 @@ struct MacItemsView: View {
             }
         }
         .safeAreaInset(edge: .bottom) { addBar }
+        .onChange(of: line) { _, typed in
+            suggestions.update(typed: typed) { wanted in
+                try await api.suggestions(matching: wanted, on: list)
+            }
+        }
         .navigationTitle(list.name)
         .task { await loadReference() }
         .task { await load() }
@@ -119,12 +123,14 @@ struct MacItemsView: View {
     private var addBar: some View {
         if list.mayEdit {
             VStack(spacing: 0) {
-                if typing && !offered.isEmpty {
+                if typing && !suggestions.offered.isEmpty {
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(offered, id: \.self) { suggestion in
+                        ForEach(suggestions.offered, id: \.self) { suggestion in
                             Button {
                                 line = suggestion
                                 typing = true
+                                // What was accepted is no longer a suggestion.
+                                suggestions.clear()
                             } label: {
                                 HStack {
                                     Image(systemName: "clock.arrow.circlepath")
@@ -137,6 +143,7 @@ struct MacItemsView: View {
                                 .padding(.horizontal, 12)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("suggestion.\(suggestion)")
                         }
                     }
                     .padding(.vertical, 4)
@@ -282,6 +289,7 @@ struct MacItemsView: View {
         guard !typed.isEmpty else { return }
         line = ""
         typing = true
+        suggestions.clear()
         await attempt { try await api.add(typed, to: list) }
     }
 

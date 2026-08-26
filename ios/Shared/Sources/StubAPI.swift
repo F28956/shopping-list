@@ -82,6 +82,26 @@
             """
         }
 
+        /// What this list has bought before.
+        ///
+        /// The real matching is loose and ranked, and lives in the service; this is
+        /// the smallest thing that behaves like it for a test — same shape, same cap,
+        /// same rule that what you have already typed in full is not a suggestion.
+        func historyJSON(matching query: String) -> String {
+            let remembered = [
+                "Milk", "Milk chocolate", "Milled oats", "Bread", "Bread rolls",
+                "Butter", "Bananas", "Batteries",
+            ]
+            let wanted = query.trimmingCharacters(in: .whitespaces).lowercased()
+            guard !wanted.isEmpty else { return "[]" }
+
+            let hits = remembered
+                .filter { $0.lowercased().hasPrefix(wanted) && $0.lowercased() != wanted }
+                .prefix(6)
+                .map { #""\#($0)""# }
+            return "[\(hits.joined(separator: ","))]"
+        }
+
         // MARK: - Managing lists
 
         /// Returns the new list, because the app selects what it just made.

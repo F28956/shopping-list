@@ -15,12 +15,7 @@ struct ItemsView: View {
     @State private var truncated = false
     @State private var total: Int64 = 0
     @State private var units: [Unit] = []
-    /// What the server offered for what is currently typed. Shown in the order it
-    /// came in: the ranking and the matching are both its business.
-    @State private var offered: [String] = []
-    /// Cancelled on every keystroke, so a slow answer for `mil` cannot arrive after
-    /// a fast one for `milk` and put the wrong list back.
-    @State private var asking: Task<Void, Never>?
+    @State private var suggestions = Suggestions()
     @State private var line = ""
     @State private var tags: [Tag] = []
     @State private var editing: Editing?
@@ -68,7 +63,7 @@ struct ItemsView: View {
 
             // Only while the field has focus: a permanent list of things you might
             // want is clutter on a screen whose job is what you actually need.
-            if typing && !offered.isEmpty {
+            if typing && !suggestions.offered.isEmpty {
                 Section { suggestionSection }
             }
 
@@ -109,27 +104,8 @@ struct ItemsView: View {
             }
         }
         .onChange(of: line) { _, typed in
-            asking?.cancel()
-            let wanted = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Nothing typed, nothing offered -- and nothing asked for either.
-            guard !wanted.isEmpty else {
-                offered = []
-                return
-            }
-
-            asking = Task {
-                // Long enough that a fast typist makes one request, not eight.
-                try? await Task.sleep(for: .milliseconds(150))
-                guard !Task.isCancelled else { return }
-
-                let found = (try? await api.suggestions(matching: wanted, on: list)) ?? []
-                guard !Task.isCancelled else { return }
-
-                // Shown as given. The cap and the exact-match rule live in the
-                // service now, so this page and the browser cannot offer different
-                // numbers of different things for the same letters.
-                offered = found
+            suggestions.update(typed: typed) { wanted in
+                try await api.suggestions(matching: wanted, on: list)
             }
         }
         .navigationTitle(list.name)
@@ -188,7 +164,7 @@ struct ItemsView: View {
 
     /// The things this list has bought before that match what is being typed.
     private var suggestionSection: some View {
-        ForEach(offered, id: \.self) { suggestion in
+        ForEach(suggestions.offered, id: \.self) { suggestion in
             Button {
                 // Fills the field rather than adding outright. What is typed may
                 // carry a quantity -- "2 kg app" -- and the only thing that knows
@@ -277,6 +253,7 @@ struct ItemsView: View {
         // straight away — the same reason the web form sits outside the swap.
         line = ""
         typing = true
+        suggestions.clear()
 
         await attempt { try await api.add(typed, to: list) }
     }
