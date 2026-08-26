@@ -324,6 +324,50 @@ final class ShoppingUITests: XCTestCase {
         )
     }
 
+    // MARK: - Adding what is already there
+
+    /// Two rows saying Milk are never two intentions. Adding it again adds to it.
+    func testAddingSomethingAlreadyOnTheListAddsToIt() {
+        let app = launch()
+        let field = app.textFields["add.field"]
+        expect(field)
+        XCTAssertTrue(app.buttons["item.Milk"].label.contains("1 pint"))
+
+        field.click()
+        field.typeText("2 pint milk")
+        app.buttons["add.button"].click()
+
+        let merged = NSPredicate(format: "label CONTAINS %@", "3 pint")
+        expectation(for: merged, evaluatedWith: app.buttons["item.Milk"])
+        waitForExpectations(timeout: 5)
+    }
+
+    /// Adding something crossed off puts it back, which is how you say you need it
+    /// after all — the commonest reason to type a name that is already there.
+    /// Batteries, because it carries no unit. Typing a bare word against something
+    /// stored with a unit is a different quantity and so a different row -- on the
+    /// real server the remembered unit closes that gap, which is history the stub
+    /// does not model.
+    func testAddingSomethingCrossedOffPutsItBack() {
+        let app = launch()
+        let box = app.checkBoxes["cross.Batteries"]
+        expect(box)
+        box.click()
+
+        let crossed = NSPredicate(format: "value == 1")
+        expectation(for: crossed, evaluatedWith: app.checkBoxes["cross.Batteries"])
+        waitForExpectations(timeout: 5)
+
+        let field = app.textFields["add.field"]
+        field.click()
+        field.typeText("batteries")
+        app.buttons["add.button"].click()
+
+        let back = NSPredicate(format: "value == 0")
+        expectation(for: back, evaluatedWith: app.checkBoxes["cross.Batteries"])
+        waitForExpectations(timeout: 5)
+    }
+
     // MARK: - What a viewer is not offered
 
     /// A viewer is given a list to read, not one covered in controls that would

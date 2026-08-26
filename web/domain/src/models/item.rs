@@ -78,6 +78,81 @@ impl Item {
     ///
     /// A `list_id` or `unit_id` that matches nothing is [`Error::InvalidInput`], as
     /// is an `amount` that is not greater than zero.
+    /// The item on this list that a new one would be another of, if there is one.
+    ///
+    /// Same name, ignoring case and surrounding space, and the same unit. The unit
+    /// has to match because the amounts are about to be added together: three of
+    /// something and two kilograms of it are not five of anything.
+    ///
+    /// Matched in Rust rather than in SQL. SQLite's `lower()` and `COLLATE NOCASE`
+    /// are ASCII-only, so `Ångström` and `ångström` would come back as two different
+    /// things — the same trap that moved unit normalisation out of the database.
+    ///
+    /// An outstanding row wins over a crossed-off one: adding milk when milk is on
+    /// the list means the one you still need, not the one already in the trolley.
+    pub async fn alike(
+        pool: &sqlx::SqlitePool,
+        list_id: list::Id,
+        name: &Name,
+        unit_id: Option<unit::Id>,
+    ) -> Result<Option<Item>> {
+        let wanted = name.0.trim().to_lowercase();
+
+        let candidates = sqlx::query_as!(
+            Item,
+            r#"
+            SELECT
+                id          as "id!: Id",
+                list_id     as "list_id: list::Id",
+                name        as "name: Name",
+                amount      as "amount: Amount",
+                unit_id     as "unit_id?: unit::Id",
+                done_at     as "done_at?: DoneAt",
+                created_at  as "created_at!: CreatedAt"
+            FROM items
+            WHERE list_id = ?1
+            ORDER BY done_at IS NOT NULL, created_at
+            "#,
+            list_id,
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(candidates
+            .into_iter()
+            .find(|i| i.unit_id == unit_id && i.name.0.trim().to_lowercase() == wanted))
+    }
+
+    /// Adds to an item's amount, and puts it back on the list if it was crossed off.
+    ///
+    /// Un-crossing is the point as much as the arithmetic: adding something you have
+    /// already ticked off is how you say you need it after all.
+    pub async fn add_to(pool: &sqlx::SqlitePool, id: Id, extra: Amount) -> Result<Item> {
+        let item = sqlx::query_as!(
+            Item,
+            r#"
+            UPDATE items
+            SET amount = amount + ?2, done_at = NULL
+            WHERE id = ?1
+            RETURNING
+                id          as "id!: Id",
+                list_id     as "list_id: list::Id",
+                name        as "name: Name",
+                amount      as "amount: Amount",
+                unit_id     as "unit_id?: unit::Id",
+                done_at     as "done_at?: DoneAt",
+                created_at  as "created_at!: CreatedAt"
+            "#,
+            id,
+            extra,
+        )
+        .fetch_optional(pool)
+        .await?
+        .ok_or(Error::NotFound)?;
+
+        Ok(item)
+    }
+
     pub async fn create(
         pool: &sqlx::SqlitePool,
         list_id: list::Id,

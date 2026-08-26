@@ -543,11 +543,16 @@ async fn a_remembered_item_returns_measured_and_filed(#[future(awt)] pool: Sqlit
         .unwrap();
 
     assert_eq!(again.unit_id, Some(pint.id), "the unit was not remembered");
+
+    // Remembering the unit is what makes the second one the same thing as the first,
+    // so it lands on the row already there: four pints and another is five.
+    assert_eq!(again.id, first.id, "a second row was made for the same thing");
     assert_eq!(
         again.amount,
-        item::Amount(1.0),
-        "the amount is not remembered, only the unit"
+        item::Amount(5.0),
+        "the amounts were not added together"
     );
+
     let on_it = tags::for_item(&s.ctx, &s.mine, again.id).await.unwrap();
     assert_eq!(
         on_it.iter().map(|t| t.id).collect::<Vec<_>>(),
@@ -701,6 +706,222 @@ async fn what_is_already_typed_is_not_offered(#[future(awt)] pool: SqlitePool) {
         .await
         .unwrap();
     assert!(!offered.iter().any(|n| n.0 == "Milk"));
+}
+
+/// Adding what the list already wants adds to it, rather than beside it.
+///
+/// Two rows saying `Milk` are never two intentions; they are one intention entered
+/// twice, and a list that grows a copy every time somebody reaches for it has to be
+/// tidied before it can be read.
+#[rstest]
+#[tokio::test]
+async fn adding_the_same_thing_twice_adds_to_it(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let kg = units::create(&s.ctx, &Actor::System, unit::Name("kg".into()))
+        .await
+        .unwrap();
+    // Its own list: the scene's already has apples on it, which is the thing under
+    // test here.
+    let list = lists::create(&s.ctx, &s.mine, list::Name("Empty".into()))
+        .await
+        .unwrap();
+
+    let first = items::create(
+        &s.ctx,
+        &s.mine,
+        list.id,
+        item::Name("Apples".into()),
+        item::Amount(2.0),
+        Some(kg.id),
+    )
+    .await
+    .unwrap();
+
+    let again = items::create(
+        &s.ctx,
+        &s.mine,
+        list.id,
+        // However it is spelled: the comparison ignores case and surrounding space,
+        // in Rust, because SQLite's lower() is ASCII-only.
+        item::Name("  apples ".into()),
+        item::Amount(1.0),
+        Some(kg.id),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(again.id, first.id, "a second row was made");
+    assert_eq!(again.amount, item::Amount(3.0));
+    assert_eq!(again.name, item::Name("Apples".into()), "the spelling stood");
+
+    let page = items::for_list(&s.ctx, &s.mine, list.id, all(), order(item::Field::Id))
+        .await
+        .unwrap();
+    assert_eq!(page.total, 1);
+}
+
+/// Different units are not the same thing. Three of something and two kilograms of
+/// it do not add up to five of anything.
+#[rstest]
+#[tokio::test]
+async fn a_different_unit_is_a_different_row(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let kg = units::create(&s.ctx, &Actor::System, unit::Name("kg".into()))
+        .await
+        .unwrap();
+    let list = lists::create(&s.ctx, &s.mine, list::Name("Empty".into()))
+        .await
+        .unwrap();
+
+    for unit in [Some(kg.id), None] {
+        items::create(
+            &s.ctx,
+            &s.mine,
+            list.id,
+            item::Name("Apples".into()),
+            item::Amount(2.0),
+            unit,
+        )
+        .await
+        .unwrap();
+    }
+
+    let page = items::for_list(&s.ctx, &s.mine, list.id, all(), order(item::Field::Id))
+        .await
+        .unwrap();
+    assert_eq!(page.total, 2, "they were folded together: {page:?}");
+}
+
+/// Adding something already crossed off puts it back. That is how you say you need
+/// it after all, and it is the commonest reason to type a name that is already there.
+#[rstest]
+#[tokio::test]
+async fn adding_something_crossed_off_puts_it_back(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    let first = items::create(
+        &s.ctx,
+        &s.mine,
+        s.list.id,
+        item::Name("Milk".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+    items::set_done(&s.ctx, &s.mine, first.id, true).await.unwrap();
+
+    let again = items::create(
+        &s.ctx,
+        &s.mine,
+        s.list.id,
+        item::Name("Milk".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(again.id, first.id);
+    assert!(again.done_at.is_none(), "it stayed crossed off");
+    assert_eq!(again.amount, item::Amount(2.0));
+}
+
+/// An outstanding row wins over a crossed-off one: adding milk when milk is on the
+/// list means the one you still need, not the one already in the trolley.
+#[rstest]
+#[tokio::test]
+async fn an_outstanding_row_is_preferred(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+    let list = lists::create(&s.ctx, &s.mine, list::Name("Empty".into()))
+        .await
+        .unwrap();
+
+    let done = items::create(
+        &s.ctx,
+        &s.mine,
+        list.id,
+        item::Name("Milk".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+    items::set_done(&s.ctx, &s.mine, done.id, true).await.unwrap();
+
+    // A second row, outstanding, made while the first was crossed off.
+    let outstanding = crate::models::item::Item::create(
+        &s.ctx.db,
+        list.id,
+        item::Name("Milk".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let again = items::create(
+        &s.ctx,
+        &s.mine,
+        list.id,
+        item::Name("Milk".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(again.id, outstanding.id, "it went to the crossed-off one");
+
+    // Re-read: `done` is the row as it was returned before it was ticked off, and a
+    // stale copy would assert nothing about what is stored.
+    let still_done = items::get(&s.ctx, &s.mine, done.id).await.unwrap();
+    assert!(still_done.done_at.is_some(), "the crossed-off row was disturbed");
+    assert_eq!(still_done.amount, item::Amount(1.0));
+}
+
+/// The merge is an addition, and `CHECK (amount > 0)` only guards the insert: `2 + -1`
+/// is 1, which the column is perfectly happy with. Without a check of its own, adding
+/// a negative amount of something took some of it away.
+#[rstest]
+#[case::zero(0.0)]
+#[case::negative(-1.0)]
+#[case::not_a_number(f64::NAN)]
+#[tokio::test]
+async fn a_non_positive_amount_cannot_shrink_an_item(
+    #[future(awt)] pool: SqlitePool,
+    #[case] amount: f64,
+) {
+    let s = scene(pool).await;
+    let first = items::create(
+        &s.ctx,
+        &s.mine,
+        s.list.id,
+        item::Name("Apples".into()),
+        item::Amount(2.0),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        items::create(
+            &s.ctx,
+            &s.mine,
+            s.list.id,
+            item::Name("Apples".into()),
+            item::Amount(amount),
+            None,
+        )
+        .await
+        .err(),
+        Some(ServiceError::InvalidInput)
+    );
+
+    // Against what the row actually held, not a number written here: the scene this
+    // runs in already has apples on it, so `first` merged too.
+    let unchanged = items::get(&s.ctx, &s.mine, first.id).await.unwrap();
+    assert_eq!(unchanged.amount, first.amount, "the item was changed");
 }
 
 /// A typo can be taken back.

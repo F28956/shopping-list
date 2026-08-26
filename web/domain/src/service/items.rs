@@ -9,7 +9,7 @@ use crate::models::list::Role;
 use crate::models::user::User;
 use crate::models::{OffsetPage, OrderBy, Paging, list, tag, unit};
 
-use super::{Actor, Ctx, Result, lists};
+use super::{Actor, Ctx, Result, ServiceError, lists};
 use crate::fuzzy;
 use crate::history_rank::{self, Candidate};
 use crate::quick_add;
@@ -47,7 +47,25 @@ pub async fn create(
     let owner = actor.person()?;
     lists::editable(ctx, owner, list_id).await?;
 
-    let item = Item::create(&ctx.db, list_id, name, amount, unit_id).await?;
+    // Checked here, not left to `CHECK (amount > 0)`. That constraint only guards the
+    // insert, and the merge below is an addition: `2 + -1` is 1, which the column is
+    // perfectly happy with. Without this, adding a negative amount of something
+    // already on the list quietly took some of it away.
+    if !amount.0.is_finite() || amount.0 <= 0.0 {
+        return Err(ServiceError::InvalidInput);
+    }
+
+    // Adding something the list already wants adds to it rather than beside it. Two
+    // rows saying `Milk` are never two intentions; they are one intention entered
+    // twice, and a list that grows a second copy every time somebody reaches for it
+    // is a list that has to be tidied before it can be read.
+    //
+    // Here rather than in a transport, so the browser, the phone, the watch and the
+    // Mac cannot disagree about what adding something twice means.
+    let item = match Item::alike(&ctx.db, list_id, &name, unit_id).await? {
+        Some(existing) => Item::add_to(&ctx.db, existing.id, amount).await?,
+        None => Item::create(&ctx.db, list_id, name, amount, unit_id).await?,
+    };
 
     Entry::record(&ctx.db, list_id, &item.name, unit_id).await?;
     Entry::prune(&ctx.db, list_id).await?;
@@ -73,6 +91,12 @@ pub async fn get(ctx: &Ctx, actor: &Actor, id: item::Id) -> Result<Item> {
     accessible(ctx, actor.person()?, id, Role::Viewer).await
 }
 
+/// Corrects an item.
+///
+/// Renaming one onto another's name leaves two rows, deliberately: `create` merges
+/// because adding twice is one intention entered twice, and an edit is somebody
+/// saying what this particular row is. Silently folding it into another would delete
+/// a row they did not ask to lose.
 pub async fn update(
     ctx: &Ctx,
     actor: &Actor,
