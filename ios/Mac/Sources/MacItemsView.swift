@@ -405,9 +405,15 @@ struct MacItemsView: View {
         let queued = cache.outbox.forList(list)
         guard !queued.isEmpty else { return fromServer }
 
+        // Only rows this device *created* and has not sent are carried across. Any
+        // queued operation used to qualify, which meant a tick queued against a row
+        // somebody else had deleted put that row back on screen as a ghost — present
+        // here, gone everywhere else, and impossible to get rid of.
         let known = Set(fromServer.map(\.uuid))
-        let mine = Set(queued.map(\.itemUUID))
-        var rows = fromServer + items.filter { !known.contains($0.uuid) && mine.contains($0.uuid) }
+        let made = Set(
+            queued.filter { $0.kind == QueuedOperation.Kind.add }.map(\.itemUUID)
+        )
+        var rows = fromServer + items.filter { !known.contains($0.uuid) && made.contains($0.uuid) }
 
         for operation in queued {
             switch operation.kind {

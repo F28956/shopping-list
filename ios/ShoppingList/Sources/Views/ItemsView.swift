@@ -183,6 +183,7 @@ struct ItemsView: View {
             await load()
         }
         .task { await watch() }
+        .task { await keepTrying() }
         // Coming back from the background is the one gap the stream cannot cover:
         // iOS tears the connection down and the reconnect has not happened yet.
         .onChange(of: phase) { _, now in
@@ -480,10 +481,32 @@ struct ItemsView: View {
 
         refreshUnsent()
         refused = drained.refused
+        // A drain that sent nothing while something was queued is the other way to
+        // learn there is no connection, and often the first: it does not wait for a
+        // reload to fail.
+        if drained.sent > 0 {
+            offline = false
+        } else if drained.waiting > 0 && !drained.refused {
+            offline = true
+        }
         if let lost = drained.lost.first { error = lost }
         // Read back what the server made of it — which is also how a row created here
         // gets its real id. Re-entry stops at the guard above: the queue is empty now.
         if drained.sent > 0 { await load() }
+    }
+
+    /// Tries the queue again, every so often, for as long as anything is in it.
+    ///
+    /// A load drains on success, and a load happens when the change stream reconnects —
+    /// which is the right moment when there is a stream to reconnect. It is the wrong
+    /// thing to depend on entirely: a queue is work somebody is waiting for, and hanging
+    /// it on somebody else editing the list means a tick made in a shop can sit there
+    /// until that happens.
+    private func keepTrying() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(10))
+            if cache.outbox.waiting > 0 { await drain() }
+        }
     }
 
     private func refreshUnsent() {
@@ -519,9 +542,15 @@ struct ItemsView: View {
         let queued = cache.outbox.forList(list)
         guard !queued.isEmpty else { return fromServer }
 
+        // Only rows this device *created* and has not sent are carried across. Any
+        // queued operation used to qualify, which meant a tick queued against a row
+        // somebody else had deleted put that row back on screen as a ghost — present
+        // here, gone everywhere else, and impossible to get rid of.
         let known = Set(fromServer.map(\.uuid))
-        let mine = Set(queued.map(\.itemUUID))
-        var rows = fromServer + items.filter { !known.contains($0.uuid) && mine.contains($0.uuid) }
+        let made = Set(
+            queued.filter { $0.kind == QueuedOperation.Kind.add }.map(\.itemUUID)
+        )
+        var rows = fromServer + items.filter { !known.contains($0.uuid) && made.contains($0.uuid) }
 
         for operation in queued {
             switch operation.kind {

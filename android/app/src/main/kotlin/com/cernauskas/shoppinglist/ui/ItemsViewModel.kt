@@ -73,9 +73,27 @@ class ItemsViewModel(
         loadReference()
         load()
         watch()
-        // `load` drains on success, so what was queued in the shop yesterday goes as
-        // soon as the first request gets through.
+        keepTrying()
         viewModelScope.launch { refreshUnsent() }
+    }
+
+    /**
+     * Tries the queue again, every so often, for as long as anything is in it.
+     *
+     * A load drains on success, and a load happens when the change stream reconnects --
+     * which is the right moment when there is a stream to reconnect. It is the wrong
+     * thing to depend on entirely: a queue is work somebody is waiting for, and hanging
+     * it on somebody else editing the list means a tick made in a shop can sit there
+     * until it happens.
+     *
+     * Ten seconds, and only while there is something to send: an empty queue costs one
+     * comparison and no request at all.
+     */
+    private fun keepTrying() = viewModelScope.launch {
+        while (true) {
+            delay(10_000)
+            if (cache.outbox.waiting() > 0) drain()
+        }
     }
 
     /**
@@ -313,7 +331,15 @@ class ItemsViewModel(
         draining = false
 
         refreshUnsent()
-        _state.update { it.copy(refused = drained.refused) }
+        // A drain that sent nothing while something was queued is the other way to
+        // learn there is no connection, and often the first: it does not wait for a
+        // reload to fail.
+        _state.update {
+            it.copy(
+                refused = drained.refused,
+                offline = if (drained.sent > 0) false else it.offline || drained.waiting > 0 && !drained.refused,
+            )
+        }
         drained.lost.firstOrNull()?.let { lost ->
             _state.update { it.copy(message = lost) }
         }
@@ -343,10 +369,14 @@ class ItemsViewModel(
         val queued = cache.outbox.forList(list.id)
         if (queued.isEmpty()) return fromServer
 
+        // Only rows this device *created* and has not sent are carried across. Any
+        // queued operation used to qualify, which meant a tick queued against a row
+        // somebody else had deleted put that row back on screen as a ghost -- present
+        // here, gone everywhere else, and impossible to get rid of.
         val known = fromServer.map { it.uuid }.toSet()
         val onScreen = _state.value.outstanding + _state.value.done
-        val mine = queued.map { it.itemUuid }.toSet()
-        val notSentYet = onScreen.filter { it.uuid !in known && it.uuid in mine }
+        val made = queued.filter { it.kind == QueuedOperation.ADD }.map { it.itemUuid }.toSet()
+        val notSentYet = onScreen.filter { it.uuid !in known && it.uuid in made }
 
         var rows = fromServer + notSentYet
         val now = Instant.now().toString()

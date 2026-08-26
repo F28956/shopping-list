@@ -70,8 +70,18 @@ class Api(
     private val json = Json { ignoreUnknownKeys = true }
 
     private val client = OkHttpClient.Builder()
-        // The event stream is meant to stay open and say nothing for long stretches.
-        .readTimeout(0, TimeUnit.MILLISECONDS)
+        // Long, because the event stream is meant to stay open and say nothing for
+        // long stretches -- but not infinite, which is what it was.
+        //
+        // The server sends a keep-alive every fifteen seconds. With no timeout at all,
+        // a connection that dies without a FIN -- a phone going into a tunnel, or an
+        // emulator switched to airplane mode -- left `collect` waiting for ever. The
+        // screen never learned it was offline, and worse, never learned it was back:
+        // the reconnect that triggers a reload, and the reload that empties the
+        // outbox, both hang off that stream ending.
+        //
+        // Three missed keep-alives is dead enough to act on.
+        .readTimeout(45, TimeUnit.SECONDS)
         .build()
 
     /** The service's own ceiling, and what the browser asks for. Asking for less is
