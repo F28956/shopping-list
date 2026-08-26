@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -117,7 +118,7 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
         }
 
         Column(Modifier.fillMaxSize().padding(padding)) {
-            OfflineNote(state.offline)
+            OfflineNote(state.offline, state.waiting)
 
             LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -151,6 +152,7 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
                     item = item,
                     tags = state.tags,
                     units = state.units,
+                    unsent = item.id in state.unsent,
                     mayEdit = model.list.mayEdit,
                     onToggle = { model.toggle(item) },
                     onEdit = { scope.launch { editing = item to model.tagsOn(item) } },
@@ -179,6 +181,7 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
                         item = item,
                         tags = state.tags,
                         units = state.units,
+                        unsent = item.id in state.unsent,
                         mayEdit = model.list.mayEdit,
                         onToggle = { model.toggle(item) },
                         onEdit = { scope.launch { editing = item to model.tagsOn(item) } },
@@ -245,6 +248,8 @@ private fun ItemRow(
     item: Item,
     tags: List<Tag>,
     units: Map<Long, String>,
+    /** This row carries a change the server has not been told about yet. */
+    unsent: Boolean,
     mayEdit: Boolean,
     onToggle: () -> kotlin.Unit,
     onEdit: () -> kotlin.Unit,
@@ -282,6 +287,18 @@ private fun ItemRow(
         },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // Quietly, and on the row itself. A change that has not been sent is a
+                // detail about that line, not news about the app -- and somebody in a
+                // shop with no signal would have every line marked, which is a banner
+                // by another name.
+                if (unsent) {
+                    Icon(
+                        Icons.Outlined.Schedule,
+                        contentDescription = "Waiting to be sent",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp).padding(end = 4.dp),
+                    )
+                }
                 item.measure(units)?.let { measure ->
                     Text(measure, style = MaterialTheme.typography.labelLarge)
                 }

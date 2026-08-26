@@ -12,6 +12,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -140,12 +142,54 @@ interface CacheDao {
 }
 
 @Database(
-    entities = [CachedList::class, CachedItem::class, CachedReference::class],
-    version = 1,
+    entities = [
+        CachedList::class,
+        CachedItem::class,
+        CachedReference::class,
+        QueuedOperation::class,
+    ],
+    version = 2,
     exportSchema = true,
 )
 abstract class CacheDatabase : RoomDatabase() {
     abstract fun dao(): CacheDao
+    abstract fun outbox(): OutboxDao
+}
+
+/**
+ * Adds the outbox.
+ *
+ * Written by hand rather than left to a destructive fallback, and that is the whole
+ * point of it: a queued change exists nowhere else in the world, so upgrading the app
+ * may not be a way to lose one. The cached rows beside it *are* disposable, but they
+ * share a file with something that is not, so the file is migrated properly.
+ *
+ * Kept in step with `app/schemas/…/2.json`, which is committed for exactly this reason.
+ */
+val ADD_THE_OUTBOX = object : Migration(1, 2) {
+    override fun migrate(connection: SupportSQLiteDatabase) {
+        connection.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `operations` (
+                `sequence` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `id` TEXT NOT NULL,
+                `kind` TEXT NOT NULL,
+                `list_id` INTEGER NOT NULL,
+                `list_uuid` TEXT NOT NULL,
+                `item_id` INTEGER NOT NULL,
+                `item_uuid` TEXT NOT NULL,
+                `payload` TEXT NOT NULL,
+                `at` INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        connection.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_operations_id` ON `operations` (`id`)"
+        )
+        connection.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_operations_list_id` ON `operations` (`list_id`)"
+        )
+    }
 }
 
 /**
@@ -163,14 +207,18 @@ class Cache(context: Context) {
         CacheDatabase::class.java,
         "cache.db",
     )
-        // The cache is a copy of what the server holds, so a schema change may throw
-        // it away rather than migrate it. The only cost is one load with no signal
-        // after an upgrade; the outbox in step 3 is not disposable this way and will
-        // need real migrations when it lands.
-        .fallbackToDestructiveMigration()
+        // Migrated, not thrown away. The cached rows in here could be discarded on a
+        // schema change -- they are a copy of what the server holds -- but the outbox
+        // beside them holds changes that exist nowhere else, and the two share a file.
+        // So the file is migrated properly and nobody loses a shop's worth of ticks to
+        // an app update.
+        .addMigrations(ADD_THE_OUTBOX)
         .build()
 
     private val dao = db.dao()
+
+    /** The queue that lives in the same file — see [Outbox]. */
+    val outbox = Outbox(db.outbox())
 
     suspend fun lists(): List<ShoppingList> = read {
         dao.lists().map {
@@ -265,8 +313,17 @@ class Cache(context: Context) {
         )
     }
 
-    /** Called when somebody signs out. */
-    suspend fun forgetEverything() = write { dao.forgetEverything() }
+    /**
+     * Called when somebody signs out.
+     *
+     * The queue goes too. Its contents are changes to somebody else's lists, made by
+     * somebody who is no longer here, and sending them under the next person's token
+     * would be a stranger writing to a stranger's shopping.
+     */
+    suspend fun forgetEverything() {
+        write { dao.forgetEverything() }
+        outbox.forgetEverything()
+    }
 
     private suspend fun <T> read(work: suspend () -> List<T>): List<T> =
         withContext(Dispatchers.IO) {

@@ -6,6 +6,7 @@ import com.cernauskas.shoppinglist.data.Api
 import com.cernauskas.shoppinglist.data.ApiError
 import com.cernauskas.shoppinglist.data.Cache
 import com.cernauskas.shoppinglist.data.Item
+import com.cernauskas.shoppinglist.data.done
 import com.cernauskas.shoppinglist.data.ItemDraft
 import com.cernauskas.shoppinglist.data.ShoppingList
 import com.cernauskas.shoppinglist.data.Tag
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.time.Instant
 
 /** What is on one list. */
 class ItemsViewModel(
@@ -43,6 +45,11 @@ class ItemsViewModel(
         val offline: Boolean = false,
         /** Whether the server has ever answered this screen. */
         val fresh: Boolean = false,
+        /** How many changes made here are still waiting to be sent. */
+        val waiting: Int = 0,
+        /** The rows carrying one of them. Marked quietly on the row itself rather than
+         * with a banner: it is a detail about that line, not news about the app. */
+        val unsent: Set<Long> = emptySet(),
         val message: String? = null,
     )
 
@@ -51,11 +58,17 @@ class ItemsViewModel(
 
     private var asking: Job? = null
 
+    /** Guards against a drain and a reload calling each other round in a circle. */
+    private var draining = false
+
     init {
         showWhatWeHave()
         loadReference()
         load()
         watch()
+        // `load` drains on success, so what was queued in the shop yesterday goes as
+        // soon as the first request gets through.
+        viewModelScope.launch { refreshUnsent() }
     }
 
     /**
@@ -114,10 +127,11 @@ class ItemsViewModel(
         try {
             val listing = api.items(list)
             cache.rememberItems(list, listing.items)
+            val shown = withUnsent(listing.items)
             _state.update { current ->
                 current.copy(
-                    outstanding = inShopOrder(listing.items.filter { !it.isDone }, current.tags),
-                    done = listing.items.filter { it.isDone },
+                    outstanding = inShopOrder(shown.filter { !it.isDone }, current.tags),
+                    done = shown.filter { it.isDone },
                     total = listing.total,
                     truncated = listing.truncated,
                     loading = false,
@@ -125,6 +139,11 @@ class ItemsViewModel(
                     fresh = true,
                 )
             }
+            // The server is reachable, so anything waiting can go now. This is what
+            // makes the queue drain on its own: coming back into signal reconnects the
+            // change stream, the stream triggers a load, and the load sends what has
+            // been waiting. Nobody has to reopen the screen.
+            drain()
         } catch (e: ApiError.Transport) {
             // See ListsViewModel.load: no signal is a state, not an event. What is on
             // screen stays there -- it is the last thing the server said, and saying
@@ -163,9 +182,95 @@ class ItemsViewModel(
     }
 
     fun add(line: String) = act { api.add(line, list) }
-    fun toggle(item: Item) = act { api.setDone(item, list, !item.isDone) }
+
+    /**
+     * Crosses something off, or puts it back, whether or not there is a connection.
+     *
+     * The screen changes first and the server is told second. That order is the whole
+     * of offline editing: a tick in a shop with no signal is a decision the person has
+     * already made, and an app that waits for a server before showing it has made them
+     * wait for something they cannot influence.
+     *
+     * The queue is what makes the promise good. If the send fails the operation stays
+     * in it, and the next drain -- on the next load, or the next time this screen opens
+     * -- sends it. See [com.cernauskas.shoppinglist.data.Outbox].
+     */
+    fun toggle(item: Item) = viewModelScope.launch {
+        val done = !item.isDone
+        cache.outbox.setDone(item, list, done)
+        applyLocally(item, done)
+        cache.rememberItems(list, _state.value.outstanding + _state.value.done)
+        drain()
+    }
+
     fun delete(item: Item) = act { api.delete(item, list) }
     fun clearDone() = act { api.clearDone(list) }
+
+    /**
+     * Sends what is queued, then says what became of it.
+     *
+     * Only the losses are said out loud. "Three changes sent" is news about plumbing;
+     * "the thing you crossed off had been deleted" is news about the list, and it is
+     * the one case where somebody watched themselves do something that did not happen.
+     */
+    private suspend fun drain() {
+        if (draining || cache.outbox.waiting() == 0) return
+        draining = true
+        val drained = cache.outbox.drain(api)
+        draining = false
+
+        refreshUnsent()
+        if (drained.dropped.isNotEmpty()) {
+            _state.update {
+                it.copy(message = "Someone had already deleted what you were ${drained.dropped.first()}.")
+            }
+        }
+        // Read back what the server made of it. Re-entry stops here: the queue this
+        // guards on is empty now.
+        if (drained.sent > 0) load().join()
+    }
+
+    /** Moves a row between the two sections, without asking anybody. */
+    private fun applyLocally(item: Item, done: Boolean) {
+        val changed = item.copy(doneAt = if (done) Instant.now().toString() else null)
+        _state.update { current ->
+            val rest = (current.outstanding + current.done).filter { it.id != item.id }
+            current.copy(
+                outstanding = inShopOrder(rest.filter { !it.isDone } + listOfNotNull(changed.takeIf { !done }), current.tags),
+                done = rest.filter { it.isDone } + listOfNotNull(changed.takeIf { done }),
+                unsent = current.unsent + item.id,
+            )
+        }
+    }
+
+    private suspend fun refreshUnsent() {
+        val queued = cache.outbox.forList(list.id)
+        _state.update { it.copy(unsent = queued.map { op -> op.itemId }.toSet(), waiting = queued.size) }
+    }
+
+    /**
+     * The server's answer with this device's unsent changes laid back over it.
+     *
+     * Without this a successful load would visibly undo a tick that is still in the
+     * queue -- the server has not been told yet, so it answers with the old state, and
+     * the row would flick back for as long as the queue is stuck.
+     */
+    private suspend fun withUnsent(items: List<Item>): List<Item> {
+        val queued = cache.outbox.forList(list.id)
+        if (queued.isEmpty()) return items
+        val now = Instant.now().toString()
+        var result = items
+        for (operation in queued) {
+            result = result.map {
+                if (it.id == operation.itemId) {
+                    it.copy(doneAt = if (operation.done) now else null)
+                } else {
+                    it
+                }
+            }
+        }
+        return result
+    }
 
     fun save(item: Item, edit: ItemDraft.Edit, attached: List<Tag>) = act {
         api.update(item, list, edit.name, edit.amount, edit.unitId)

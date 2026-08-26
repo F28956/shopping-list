@@ -117,8 +117,18 @@ class Api(
         send("POST", "/api/lists/${list.id}/items", """{"line":${line.asJson()}}""")
     }
 
-    suspend fun setDone(item: Item, list: ShoppingList, done: Boolean) {
-        val path = "/api/lists/${list.id}/items/${item.id}/done"
+    suspend fun setDone(item: Item, list: ShoppingList, done: Boolean) =
+        setDone(item.id, list.id, done)
+
+    /**
+     * The same call, by id.
+     *
+     * What the outbox replays holds ids rather than rows: the row it was made against
+     * may have changed three times since, and the operation is about the item, not
+     * about the copy of it that happened to be on screen.
+     */
+    suspend fun setDone(itemId: Long, listId: Long, done: Boolean) {
+        val path = "/api/lists/$listId/items/$itemId/done"
         send(if (done) "POST" else "DELETE", path, null)
     }
 

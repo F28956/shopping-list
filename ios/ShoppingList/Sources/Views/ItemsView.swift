@@ -29,6 +29,13 @@ struct ItemsView: View {
     /// See `ListsView.offline`.
     @State private var offline = false
     @State private var fresh = false
+    /// How many changes made here are still waiting to be sent.
+    @State private var waiting = 0
+    /// The rows carrying one of them. Marked on the row itself rather than with a
+    /// banner: it is a detail about that line, not news about the app.
+    @State private var unsent: Set<Int64> = []
+    /// Guards against a drain and a reload calling each other round in a circle.
+    @State private var draining = false
     @FocusState private var typing: Bool
 
     /// An item and what it is already filed under, fetched before the sheet opens so
@@ -76,8 +83,8 @@ struct ItemsView: View {
                 Section { suggestionSection }
             }
 
-            if offline {
-                Section { OfflineNote() }
+            if offline || waiting > 0 {
+                Section { OfflineNote(offline: offline, waiting: waiting) }
             }
 
             if truncated {
@@ -167,6 +174,9 @@ struct ItemsView: View {
         .task { await loadReference() }
         .task {
             showWhatWeHave()
+            refreshUnsent()
+            // `load` drains on success, so what was queued in the shop yesterday goes
+            // as soon as the first request gets through.
             await load()
         }
         .task { await watch() }
@@ -281,6 +291,18 @@ struct ItemsView: View {
                 }
 
                 Spacer(minLength: 4)
+
+                // Quietly, and on the row itself. A change that has not been sent is a
+                // detail about that line, not news about the app -- and somebody in a
+                // shop with no signal would have every line marked, which is a banner
+                // by another name.
+                if unsent.contains(item.id) {
+                    Image(systemName: "clock")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Waiting to be sent")
+                }
+
                 if let measure = item.measure(units: unitNames) {
                     Text(measure)
                         .font(.footnote)
@@ -381,9 +403,77 @@ struct ItemsView: View {
         }
     }
 
+    /// Crosses something off, or puts it back, whether or not there is a connection.
+    ///
+    /// The screen changes first and the server is told second. That order is the whole
+    /// of offline editing: a tick in a shop with no signal is a decision the person has
+    /// already made, and an app that waits for a server before showing it has made them
+    /// wait for something they cannot influence.
+    ///
+    /// The queue is what makes the promise good. If the send fails the operation stays
+    /// in it, and the next drain — on the next load, or the next time this screen opens
+    /// — sends it.
     private func toggle(_ item: Item) async {
         guard list.mayEdit else { return }
-        await attempt { try await api.setDone(item, on: list, done: !item.isDone) }
+
+        let done = !item.isDone
+        cache.outbox.setDone(item, on: list, done: done)
+        items = items.map {
+            $0.id == item.id ? $0.withDone(done) : $0
+        }
+        cache.remember(items: items, on: list)
+        unsent.insert(item.id)
+        waiting = cache.outbox.waiting
+
+        await drain()
+    }
+
+    /// Sends what is queued, then says what became of it.
+    ///
+    /// Only the losses are said out loud. "Three changes sent" is news about plumbing;
+    /// "the thing you crossed off had been deleted" is news about the list, and it is
+    /// the one case where somebody watched themselves do something that did not happen.
+    ///
+    /// Called after every successful load, which is what makes the queue drain on its
+    /// own: coming back into signal reconnects the change stream, the stream triggers a
+    /// load, and the load sends what has been waiting. Nobody has to reopen the screen.
+    private func drain() async {
+        guard !draining, cache.outbox.waiting > 0 else { return }
+        draining = true
+        let drained = await cache.outbox.drain(through: api)
+        draining = false
+
+        refreshUnsent()
+        if let lost = drained.dropped.first {
+            error = "Someone had already deleted what you were \(lost)."
+        }
+        // Read back what the server made of it. Re-entry stops here: the queue this
+        // guards on is empty now.
+        if drained.sent > 0 { await load() }
+    }
+
+    private func refreshUnsent() {
+        let queued = cache.outbox.forList(list)
+        unsent = Set(queued.map(\.itemID))
+        waiting = queued.count
+    }
+
+    /// The server's answer with this device's unsent changes laid back over it.
+    ///
+    /// Without this a successful load would visibly undo a tick that is still queued —
+    /// the server has not been told, so it answers with the old state, and the row
+    /// would flick back for as long as the queue is stuck.
+    private func withUnsent(_ items: [Item]) -> [Item] {
+        let queued = cache.outbox.forList(list)
+        guard !queued.isEmpty else { return items }
+
+        var result = items
+        for operation in queued {
+            result = result.map {
+                $0.id == operation.itemID ? $0.withDone(operation.done) : $0
+            }
+        }
+        return result
     }
 
     private func remove(_ item: Item) async {
@@ -502,12 +592,15 @@ struct ItemsView: View {
         do {
             let listing = try await api.items(on: list)
             cache.remember(items: listing.items, on: list)
-            self.items = listing.items
+            self.items = withUnsent(listing.items)
             self.total = listing.total
             self.truncated = listing.truncated
             error = nil
             offline = false
             fresh = true
+            loaded = true
+            // The server is reachable, so anything waiting can go now.
+            await drain()
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()

@@ -233,7 +233,16 @@ actor API {
     }
 
     func setDone(_ item: Item, on list: List, done: Bool) async throws {
-        let path = "/api/lists/\(list.id)/items/\(item.id)/done"
+        try await setDone(itemID: item.id, listID: list.id, done: done)
+    }
+
+    /// The same call, by id.
+    ///
+    /// What the outbox replays holds ids rather than rows: the row it was made against
+    /// may have changed three times since, and the operation is about the item, not
+    /// about the copy of it that happened to be on screen.
+    func setDone(itemID: Int64, listID: Int64, done: Bool) async throws {
+        let path = "/api/lists/\(listID)/items/\(itemID)/done"
         _ = try await send(done ? "POST" : "DELETE", path, nil)
     }
 

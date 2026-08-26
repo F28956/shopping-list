@@ -187,12 +187,15 @@ Offline handling is mostly a communication problem:
 
 ## In what order
 
-1. **Read offline.** Persist the last-loaded lists and items; fix the false
-   "no lists"; show the offline state. Most of the value, none of the conflict
-   theory.
-2. **Client ids.** Add the UUID column and migrate; nothing user-visible.
-3. **The outbox, one operation at a time.** Start with `setDone`, which is the
-   commonest and the most forgiving.
+1. ~~**Read offline.**~~ **Done.** The last-loaded lists, items, units and tags
+   are persisted on both native clients; the false "no lists" is gone, and so is
+   every other emptiness the app had not verified — only a server that answered
+   earns an empty state.
+2. ~~**Client ids.**~~ **Done.** `items.uuid` and `lists.uuid`, minted wherever
+   the row was created, backfilled, and carried by every client.
+3. ~~**The outbox, one operation at a time.**~~ **Done for `setDone`.** A tick
+   with no signal changes the screen, goes in the queue, and is sent on the next
+   successful load from anywhere in the app.
 4. **The rest of the operations**, in the table's order.
 5. **`POST /api/sync`** and batch replay, once the operations exist.
 6. **The "what changed" note**, once there is something worth telling.
@@ -200,6 +203,37 @@ Offline handling is mostly a communication problem:
 Each step is useful on its own, and the app is never half-migrated: an operation
 either has an offline path or it does not, and the ones that do not stay
 online-only until they get one.
+
+## What the outbox does today
+
+Queued operations replay through the existing REST routes, one at a time, oldest
+first, stopping at the first one that cannot be sent. Which means:
+
+* **A tick made offline survives the app being killed.** It lives in the same
+  database as the cache, and that database is migrated by hand rather than
+  discarded on a schema change — the cache is a copy of what the server holds,
+  but a queued change exists nowhere else in the world.
+* **The screen changes first.** A tick in a shop is a decision already made, and
+  an app that waits for a server before showing it has made somebody wait for
+  something they cannot influence. The queue is the promise that the server will
+  hear about it.
+* **A successful load anywhere drains it.** Coming back into signal reconnects
+  the change stream, the stream triggers a load, and the load sends what has been
+  waiting. Draining only from the list's own screen meant a phone that came out
+  of a shop and went into a pocket held its ticks until somebody happened to
+  reopen that list.
+* **A load does not undo what is still queued.** The server has not been told
+  yet, so it answers with the old state; the unsent operations are laid back over
+  its answer, or the row would flick back for as long as the queue is stuck.
+* **Rows with unsent changes are marked quietly**, on the row, and the count is
+  in the offline note — "Offline. 2 changes waiting to be sent."
+
+**One thing it does not do yet.** The REST routes stamp `done_at` themselves, so
+a tick replayed an hour later lands with the time it was *sent*, not the time it
+was made. The device records the real time on the operation from the first day,
+and carrying it to the server is what `POST /api/sync` is for — step 5. Until
+then the clamped-device-clock rule in (7) is written down but not yet in force,
+which matters only where two devices genuinely conflict.
 
 ## Settled
 

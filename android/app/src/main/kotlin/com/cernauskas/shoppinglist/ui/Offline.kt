@@ -31,8 +31,8 @@ import androidx.compose.ui.unit.dp
  * delete -- "No lists yet", said by an app that never managed to ask.
  */
 @Composable
-fun OfflineNote(offline: Boolean, modifier: Modifier = Modifier) {
-    AnimatedVisibility(visible = offline) {
+fun OfflineNote(offline: Boolean, waiting: Int = 0, modifier: Modifier = Modifier) {
+    AnimatedVisibility(visible = offline || waiting > 0) {
         Row(
             modifier = modifier
                 .fillMaxWidth()
@@ -47,7 +47,17 @@ fun OfflineNote(offline: Boolean, modifier: Modifier = Modifier) {
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "Offline. Showing what was last loaded.",
+                // The three states of docs/offline.md, minus the one that interrupts:
+                // up to date, and offline with N changes waiting. A count rather than
+                // "syncing…", because the person can act on a number -- it is the
+                // difference between staying put for a moment and walking out of the
+                // shop.
+                when {
+                    waiting > 0 && offline ->
+                        "Offline. $waiting ${changes(waiting)} waiting to be sent."
+                    waiting > 0 -> "$waiting ${changes(waiting)} waiting to be sent."
+                    else -> "Offline. Showing what was last loaded."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -86,3 +96,5 @@ fun Unreachable(modifier: Modifier, offline: Boolean, what: String, onRetry: () 
         Button(onClick = onRetry) { Text("Try again") }
     }
 }
+
+private fun changes(n: Int) = if (n == 1) "change" else "changes"

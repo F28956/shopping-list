@@ -94,6 +94,24 @@ struct Item: Identifiable, Decodable, Hashable {
 
     var isDone: Bool { doneAt != nil }
 
+    /// The same item, ticked off or put back, without asking anybody.
+    ///
+    /// For the optimistic half of an offline edit: the row moves on screen now, and
+    /// the queue carries the promise that the server will hear about it. The stamp is
+    /// this device's clock, and it is replaced by the server's the moment a real answer
+    /// arrives.
+    func withDone(_ done: Bool) -> Item {
+        Item(
+            id: id,
+            uuid: uuid,
+            name: name,
+            amount: amount,
+            unitID: unitID,
+            doneAt: done ? Date() : nil,
+            tagIDs: tagIDs
+        )
+    }
+
     init(
         id: Int64,
         uuid: String,

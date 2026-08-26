@@ -203,6 +203,13 @@ turned its counter. Minted by whoever creates the row — the model on the onlin
 the device on the offline one — with a mint-if-missing trigger in the schema so no
 row can exist unnamed. See `docs/offline.md`.
 
+**Working offline** (`Cache`/`Outbox` on both native clients). The last-loaded lists
+and items are kept on the device, so the app never claims an emptiness it has not
+verified, and changes made with no signal go into a durable queue that drains on the
+next successful load. The cache is disposable; the queue is not, and shares its file,
+so that file is migrated by hand. See `docs/offline.md` — `setDone` is the operation
+that has an offline path today.
+
 **Category grouping.** `tags.sort_order` carries the order of a shop rather than the
 alphabet — perimeter first, frozen late, shop names after everything describing a
 department. Aisle numbers would be more precise and are deliberately not used: they
@@ -339,6 +346,16 @@ stays open, writes fail and are discarded, and a cold start with no connection
 claims you have no lists at all. The design for fixing that — a local database,
 an outbox of operations, and per-operation merge rules on the server — is in
 [offline.md](offline.md). Nothing of it is built.
+
+### Which server, and who it lets in
+
+Every client is pointed at its server by a build constant — `Info.plist` on iOS,
+`BuildConfig` on Android — so a build that reaches a store is pointed at whoever
+compiled it. Admission is an environment variable read once at boot, so changing who
+may sign in is a redeploy. Both are the same shape of problem: a decision that belongs
+to the person running the server is currently made by the person building it. The
+design for asking for the address at first launch, and for an owner who admits
+everybody else, is in [configuration.md](configuration.md). Nothing of it is built.
 
 ### TLS
 

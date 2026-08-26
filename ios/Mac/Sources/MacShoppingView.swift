@@ -24,6 +24,8 @@ struct MacShoppingView: View {
     /// See `ListsView.offline` on the phone: the same two flags, for the same reason.
     @State private var offline = false
     @State private var fresh = false
+    /// Guards against a drain and a reload calling each other round in a circle.
+    @State private var draining = false
 
     private var selected: List? { lists.first { $0.id == chosen } }
 
@@ -266,6 +268,19 @@ struct MacShoppingView: View {
         loaded = true
     }
 
+    /// Empties the outbox, wherever its contents belong.
+    ///
+    /// A change queued on any list goes: the operation carries the list it was made
+    /// against, so nothing here needs to know which screen it came from. Failures are
+    /// the outbox's business -- see ``Outbox/drain(through:)`` -- and what is left
+    /// stays queued for the next successful load.
+    private func sendQueued() async {
+        guard !draining, cache.outbox.waiting > 0 else { return }
+        draining = true
+        _ = await cache.outbox.drain(through: api)
+        draining = false
+    }
+
     private func load() async {
         do {
             let listing = try await api.lists()
@@ -282,6 +297,12 @@ struct MacShoppingView: View {
             error = nil
             offline = false
             fresh = true
+            // The server is reachable, so anything queued anywhere goes now.
+            //
+            // Here as well as on the list screen, because the app opens here: a phone
+            // that came out of a shop and was put in a pocket would otherwise hold its
+            // ticks until somebody happened to open the list they were made on.
+            await sendQueued()
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()

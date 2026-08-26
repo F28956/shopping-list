@@ -24,6 +24,8 @@ struct ListsView: View {
     /// Whether the server has ever answered. What is shown while this is false came
     /// out of the cache and may be old.
     @State private var fresh = false
+    /// Guards against a drain and a reload calling each other round in a circle.
+    @State private var draining = false
     @State private var naming: ListNameSheet.Purpose?
     @State private var deleting: List?
     @State private var sharing: List?
@@ -265,6 +267,19 @@ struct ListsView: View {
         loaded = true
     }
 
+    /// Empties the outbox, wherever its contents belong.
+    ///
+    /// A change queued on any list goes: the operation carries the list it was made
+    /// against, so nothing here needs to know which screen it came from. Failures are
+    /// the outbox's business -- see ``Outbox/drain(through:)`` -- and what is left
+    /// stays queued for the next successful load.
+    private func sendQueued() async {
+        guard !draining, cache.outbox.waiting > 0 else { return }
+        draining = true
+        _ = await cache.outbox.drain(through: api)
+        draining = false
+    }
+
     private func load() async {
         do {
             let listing = try await api.lists()
@@ -275,6 +290,12 @@ struct ListsView: View {
             error = nil
             offline = false
             fresh = true
+            // The server is reachable, so anything queued anywhere goes now.
+            //
+            // Here as well as on the list screen, because the app opens here: a phone
+            // that came out of a shop and was put in a pocket would otherwise hold its
+            // ticks until somebody happened to open the list they were made on.
+            await sendQueued()
         } catch let problem as APIError {
             // A signed-out session is not an error worth a dialog: the root view puts
             // the sign-in screen back as soon as the state changes.

@@ -21,6 +21,9 @@ final class Cache: @unchecked Sendable {
 
     private let queue: DatabaseQueue?
 
+    /// The queue of changes that have not been sent, in the same file — see ``Outbox``.
+    let outbox: Outbox
+
     /// Opens the cache in Application Support, or gives up quietly.
     ///
     /// A `nil` queue is a working app with no memory rather than a crash on launch:
@@ -28,6 +31,16 @@ final class Cache: @unchecked Sendable {
     /// will not cooperate costs a blank screen with no signal and nothing else.
     init(named name: String = "cache.sqlite") {
         queue = Self.open(named: name)
+        outbox = Outbox(queue: queue)
+        migrate()
+    }
+
+    /// A cache at an exact path, for tests that need one to outlive the object — the
+    /// queue surviving the app being killed is the whole point of it, and that is only
+    /// checkable by opening the same file twice.
+    init(path: String) {
+        queue = try? DatabaseQueue(path: path)
+        outbox = Outbox(queue: queue)
         migrate()
     }
 
@@ -70,17 +83,15 @@ final class Cache: @unchecked Sendable {
 
     /// The schema, versioned the way the server's is.
     ///
-    /// `eraseDatabaseOnSchemaChange` is deliberate and is safe only while this holds
-    /// nothing but a copy: throwing the cache away costs one load with no signal after
-    /// an upgrade. The outbox, when it lands, is not disposable this way — it will hold
-    /// work that exists nowhere else — and will need migrations written by hand.
+    /// Migrated, never erased. The cached rows in here could be discarded on a schema
+    /// change — they are a copy of what the server holds — but the outbox beside them
+    /// holds changes that exist nowhere else, and the two share a file. So `v1` and
+    /// everything after it are written by hand, and nobody loses a shop's worth of
+    /// ticks to an app update.
     private func migrate() {
         guard let queue else { return }
 
         var migrator = DatabaseMigrator()
-        #if DEBUG
-        migrator.eraseDatabaseOnSchemaChange = true
-        #endif
 
         migrator.registerMigration("v1") { db in
             try db.create(table: "lists") { t in
@@ -120,6 +131,23 @@ final class Cache: @unchecked Sendable {
                 t.column("emoji", .text)
                 t.column("position", .integer).notNull()
                 t.primaryKey(["kind", "list_id", "id"])
+            }
+        }
+
+        migrator.registerMigration("v2-outbox") { db in
+            try db.create(table: "operations") { t in
+                // Autoincrementing, so a sequence number is never reused. Reuse would
+                // put a new operation in a gap left by an old one, which is the one
+                // thing a device's own ordering may not do.
+                t.autoIncrementedPrimaryKey("sequence")
+                t.column("id", .text).notNull().unique()
+                t.column("kind", .text).notNull()
+                t.column("list_id", .integer).notNull().indexed()
+                t.column("list_uuid", .text).notNull()
+                t.column("item_id", .integer).notNull()
+                t.column("item_uuid", .text).notNull()
+                t.column("payload", .text).notNull()
+                t.column("at", .datetime).notNull()
             }
         }
 
@@ -242,6 +270,7 @@ final class Cache: @unchecked Sendable {
             try db.execute(sql: "DELETE FROM items")
             try db.execute(sql: "DELETE FROM reference")
         }
+        outbox.forgetEverything()
     }
 
     // MARK: - Plumbing

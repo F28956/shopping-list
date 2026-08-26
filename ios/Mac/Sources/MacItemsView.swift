@@ -28,6 +28,12 @@ struct MacItemsView: View {
     @State private var offline = false
     @State private var fresh = false
     @State private var loaded = false
+    /// How many changes made here are still waiting to be sent.
+    @State private var waiting = 0
+    /// The rows carrying one of them — see the phone's `ItemsView`.
+    @State private var unsent: Set<Int64> = []
+    /// Guards against a drain and a reload calling each other round in a circle.
+    @State private var draining = false
     @FocusState private var typing: Bool
 
     struct Editing: Identifiable {
@@ -64,8 +70,8 @@ struct MacItemsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if offline {
-                OfflineNote()
+            if offline || waiting > 0 {
+                OfflineNote(offline: offline, waiting: waiting)
             }
 
             // "Nothing on this list yet" is a claim, and after a load that failed
@@ -135,6 +141,7 @@ struct MacItemsView: View {
         .task { await loadReference() }
         .task {
             showWhatWeHave()
+            refreshUnsent()
             await load()
         }
         .task { await watch() }
@@ -341,9 +348,53 @@ struct MacItemsView: View {
         await attempt { try await api.add(typed, to: list) }
     }
 
+    /// Crosses something off, or puts it back, whether or not there is a connection —
+    /// see the phone's `ItemsView.toggle` for why the screen changes first.
     private func toggle(_ item: Item) async {
         guard list.mayEdit else { return }
-        await attempt { try await api.setDone(item, on: list, done: !item.isDone) }
+
+        let done = !item.isDone
+        cache.outbox.setDone(item, on: list, done: done)
+        items = items.map { $0.id == item.id ? $0.withDone(done) : $0 }
+        cache.remember(items: items, on: list)
+        unsent.insert(item.id)
+        waiting = cache.outbox.waiting
+
+        await drain()
+    }
+
+    /// Sends what is queued, then says what became of it — see the phone's copy.
+    private func drain() async {
+        guard !draining, cache.outbox.waiting > 0 else { return }
+        draining = true
+        let drained = await cache.outbox.drain(through: api)
+        draining = false
+
+        refreshUnsent()
+        if let lost = drained.dropped.first {
+            error = "Someone had already deleted what you were \(lost)."
+        }
+        if drained.sent > 0 { await load() }
+    }
+
+    private func refreshUnsent() {
+        let queued = cache.outbox.forList(list)
+        unsent = Set(queued.map(\.itemID))
+        waiting = queued.count
+    }
+
+    /// The server's answer with this device's unsent changes laid back over it.
+    private func withUnsent(_ items: [Item]) -> [Item] {
+        let queued = cache.outbox.forList(list)
+        guard !queued.isEmpty else { return items }
+
+        var result = items
+        for operation in queued {
+            result = result.map {
+                $0.id == operation.itemID ? $0.withDone(operation.done) : $0
+            }
+        }
+        return result
     }
 
     private func remove(_ item: Item) async {
@@ -462,12 +513,15 @@ struct MacItemsView: View {
         do {
             let listing = try await api.items(on: list)
             cache.remember(items: listing.items, on: list)
-            self.items = listing.items
+            self.items = withUnsent(listing.items)
             self.total = listing.total
             self.truncated = listing.truncated
             error = nil
             offline = false
             fresh = true
+            loaded = true
+            // The server is reachable, so anything waiting can go now.
+            await drain()
         } catch let problem as APIError {
             if case .unauthorized = problem {
                 identity.signOut()
