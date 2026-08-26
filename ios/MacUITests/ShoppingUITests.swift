@@ -171,6 +171,110 @@ final class ShoppingUITests: XCTestCase {
         expect(app.buttons["item.Carrots"], "the item was not added, or not capitalised")
     }
 
+    // MARK: - Managing lists
+
+    func testMakingAList() {
+        let app = launch()
+        expect(app.buttons["list.new"])
+
+        app.buttons["list.new"].click()
+        expect(app.textFields["listname.field"])
+        XCTAssertFalse(
+            app.buttons["listname.confirm"].isEnabled,
+            "a list with no name was offered as creatable"
+        )
+
+        app.textFields["listname.field"].typeText("Hardware")
+        app.buttons["listname.confirm"].click()
+
+        expect(app.staticTexts["list.Hardware"], "the list was not made")
+    }
+
+    /// Made, and then looked at: choosing a list is what making one means.
+    func testANewListIsSelected() {
+        let app = launch()
+        expect(app.buttons["list.new"])
+
+        app.buttons["list.new"].click()
+        expect(app.textFields["listname.field"])
+        app.textFields["listname.field"].typeText("Hardware")
+        app.buttons["listname.confirm"].click()
+
+        expect(app.textFields["add.field"], "the new list was not opened")
+        XCTAssertFalse(
+            app.buttons["item.Milk"].exists,
+            "still showing the list that was open before"
+        )
+    }
+
+    func testRenamingAList() {
+        let app = launch()
+        let row = app.staticTexts["list.Home"]
+        expect(row)
+
+        row.rightClick()
+        expect(app.menuItems["Rename…"])
+        app.menuItems["Rename…"].click()
+
+        let field = app.textFields["listname.field"]
+        expect(field)
+        XCTAssertEqual(field.value as? String, "Home", "the field did not start from the name")
+
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText("Weekly shop")
+        app.buttons["listname.confirm"].click()
+
+        expect(app.staticTexts["list.Weekly shop"], "the rename did not take")
+        XCTAssertFalse(app.staticTexts["list.Home"].exists)
+    }
+
+    /// Asked before it goes, because everything on it goes too.
+    func testDeletingAListAsks() {
+        let app = launch()
+        expect(app.staticTexts["list.Home"])
+
+        app.staticTexts["list.Home"].rightClick()
+        expect(app.menuItems["Delete…"])
+        app.menuItems["Delete…"].click()
+
+        // Scoped to the dialog: "Cancel" and "Delete" are common enough words that
+        // a bare query finds several.
+        expect(app.buttons["delete.cancel"], "deleting a list did not ask first")
+        app.buttons["delete.cancel"].click()
+
+        expect(app.staticTexts["list.Home"], "cancel deleted it anyway")
+    }
+
+    func testDeletingAList() {
+        let app = launch()
+        expect(app.staticTexts["list.Home"])
+
+        app.staticTexts["list.Home"].rightClick()
+        expect(app.menuItems["Delete…"])
+        app.menuItems["Delete…"].click()
+        expect(app.buttons["delete.confirm"])
+        app.buttons["delete.confirm"].click()
+
+        let gone = NSPredicate(format: "exists == false")
+        expectation(for: gone, evaluatedWith: app.staticTexts["list.Home"])
+        waitForExpectations(timeout: 5)
+    }
+
+    /// An editor was given a list, not the say over whether it exists.
+    func testAViewerIsNotOfferedRenameOrDelete() {
+        let app = launch("viewer")
+        expect(app.staticTexts["list.Home"])
+
+        app.staticTexts["list.Home"].rightClick()
+
+        XCTAssertFalse(
+            app.menuItems["Delete…"].waitForExistence(timeout: 1),
+            "a viewer was offered Delete"
+        )
+        XCTAssertFalse(app.menuItems["Rename…"].exists, "a viewer was offered Rename")
+    }
+
     // MARK: - What a viewer is not offered
 
     /// A viewer is given a list to read, not one covered in controls that would

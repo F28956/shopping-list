@@ -13,6 +13,8 @@ struct ListsView: View {
     @State private var total: Int64 = 0
     @State private var error: String?
     @State private var loaded = false
+    @State private var naming: ListNameSheet.Purpose?
+    @State private var deleting: List?
 
     var body: some View {
         NavigationStack {
@@ -20,16 +22,37 @@ struct ListsView: View {
                 if !loaded {
                     ProgressView()
                 } else if lists.isEmpty {
-                    ContentUnavailableView(
-                        "No lists",
-                        systemImage: "cart",
-                        description: Text("Make one in the browser and it will appear here.")
-                    )
+                    ContentUnavailableView {
+                        Label("No lists", systemImage: "cart")
+                    } description: {
+                        Text("Make one to get started.")
+                    } actions: {
+                        Button("New list") { naming = .create }
+                            .accessibilityIdentifier("list.new.empty")
+                    }
                 } else {
                     SwiftUI.List {
                         ForEach(lists) { list in
                             NavigationLink(value: list) {
                                 Text(list.name)
+                            }
+                            // Renaming and deleting are the owner's. An editor was
+                            // given a list, not the say over whether it exists.
+                            .swipeActions(edge: .trailing) {
+                                if list.role >= .owner {
+                                    Button(role: .destructive) {
+                                        deleting = list
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+
+                                    Button {
+                                        naming = .rename(list)
+                                    } label: {
+                                        Label("Rename", systemImage: "pencil")
+                                    }
+                                    .tint(.accentColor)
+                                }
                             }
                         }
 
@@ -48,9 +71,42 @@ struct ListsView: View {
                 ItemsView(api: api, list: list)
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button("Sign out") { identity.signOut() }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        naming = .create
+                    } label: {
+                        Label("New list", systemImage: "plus")
+                    }
+                    .accessibilityIdentifier("list.new")
+                }
+            }
+            .sheet(item: $naming) { purpose in
+                ListNameSheet(purpose: purpose) { name in
+                    switch purpose {
+                    case .create:
+                        await attempt { try await api.createList(named: name) }
+                    case .rename(let list):
+                        await attempt { try await api.rename(list, to: name) }
+                    }
+                }
+                .presentationDetents([.height(200)])
+            }
+            .confirmationDialog(
+                "Delete \(deleting?.name ?? "this list")?",
+                isPresented: .constant(deleting != nil),
+                titleVisibility: .visible,
+                presenting: deleting
+            ) { list in
+                Button("Delete", role: .destructive) {
+                    deleting = nil
+                    Task { await attempt { try await api.delete(list) } }
+                }
+                Button("Cancel", role: .cancel) { deleting = nil }
+            } message: { _ in
+                Text("Everything on it goes too. This cannot be undone.")
             }
             .refreshable { await load() }
             .task { await load() }
@@ -59,6 +115,22 @@ struct ListsView: View {
             } message: {
                 Text(error ?? "")
             }
+        }
+    }
+
+    /// Runs something that changes the lists, then reloads.
+    private func attempt(_ work: () async throws -> Void) async {
+        do {
+            try await work()
+            await load()
+        } catch let problem as APIError {
+            if case .unauthorized = problem {
+                identity.signOut()
+            } else {
+                error = problem.localizedDescription
+            }
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 

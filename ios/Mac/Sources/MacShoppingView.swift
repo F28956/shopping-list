@@ -15,6 +15,8 @@ struct MacShoppingView: View {
     @State private var chosen: List.ID?
     @State private var error: String?
     @State private var loaded = false
+    @State private var naming: ListNameSheet.Purpose?
+    @State private var deleting: List?
 
     private var selected: List? { lists.first { $0.id == chosen } }
 
@@ -44,6 +46,19 @@ struct MacShoppingView: View {
                                 }
                             }
                             .tag(list.id)
+                            .accessibilityIdentifier("list.\(list.name)")
+                            .contextMenu {
+                                // Renaming and deleting are the owner's, not an
+                                // editor's: an editor was given a list, not the say
+                                // over whether it exists.
+                                if list.role >= .owner {
+                                    Button("Rename…") { naming = .rename(list) }
+                                    Divider()
+                                    Button("Delete…", role: .destructive) {
+                                        deleting = list
+                                    }
+                                }
+                            }
                         }
 
                         if truncated {
@@ -72,9 +87,53 @@ struct MacShoppingView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    naming = .create
+                } label: {
+                    Label("New list", systemImage: "plus")
+                }
+                .help("New list")
+                .accessibilityIdentifier("list.new")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button("Sign out") { identity.signOut() }
             }
+        }
+        .sheet(item: $naming) { purpose in
+            ListNameSheet(purpose: purpose) { name in
+                switch purpose {
+                case .create:
+                    await attempt {
+                        // Selected on arrival: making a list is how you say which one
+                        // you want to be looking at.
+                        let made = try await api.createList(named: name)
+                        await load()
+                        chosen = made.id
+                    }
+                case .rename(let list):
+                    await attempt { try await api.rename(list, to: name) }
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete \(deleting?.name ?? "this list")?",
+            isPresented: .constant(deleting != nil),
+            presenting: deleting
+        ) { list in
+            Button("Delete", role: .destructive) {
+                deleting = nil
+                Task {
+                    await attempt { try await api.delete(list) }
+                    // The detail pane is about a list that has gone.
+                    if chosen == list.id { chosen = lists.first?.id }
+                }
+            }
+            .accessibilityIdentifier("delete.confirm")
+            Button("Cancel", role: .cancel) { deleting = nil }
+                .accessibilityIdentifier("delete.cancel")
+        } message: { _ in
+            Text("Everything on it goes too. This cannot be undone.")
         }
         .task { await load() }
         .alert("Could not load", isPresented: .constant(error != nil)) {
@@ -84,14 +143,34 @@ struct MacShoppingView: View {
         }
     }
 
+    /// Runs something that changes the lists, then reloads.
+    private func attempt(_ work: () async throws -> Void) async {
+        do {
+            try await work()
+            await load()
+        } catch let problem as APIError {
+            if case .unauthorized = problem {
+                identity.signOut()
+            } else {
+                error = problem.localizedDescription
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     private func load() async {
         do {
             let listing = try await api.lists()
             lists = listing.items
             total = listing.total
             truncated = listing.truncated
-            // Opening on nothing wastes the width the split view exists for.
-            if chosen == nil { chosen = lists.first?.id }
+            // Opening on nothing wastes the width the split view exists for -- and
+            // a selection pointing at a list that has gone shows an empty detail
+            // pane with no way back to a full one.
+            if chosen == nil || !lists.contains(where: { $0.id == chosen }) {
+                chosen = lists.first?.id
+            }
             error = nil
         } catch let problem as APIError {
             if case .unauthorized = problem {

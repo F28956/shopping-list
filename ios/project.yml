@@ -31,6 +31,7 @@ targets:
       - path: ShoppingList/Sources
       - path: Shared/Sources
       - path: Auth/Sources
+      - path: UI/Sources
     dependencies:
       - package: GoogleSignIn
         product: GoogleSignIn
@@ -108,6 +109,9 @@ targets:
       - path: Mac/Sources
       - path: Shared/Sources
       - path: Auth/Sources
+      # Views the phone and the Mac both use. Not the watch: it has no keyboard
+      # shortcuts, no bordered text fields, and nothing here it could show.
+      - path: UI/Sources
     dependencies:
       - package: GoogleSignIn
         product: GoogleSignIn

@@ -27,6 +27,8 @@
             switch (method, path) {
             case ("GET", "/api/lists"):
                 finish(status: 200, body: world.listsJSON())
+            case ("POST", "/api/lists"):
+                finish(status: 201, body: world.createList(named: body()["name"] as? String ?? ""))
             case ("GET", "/api/units"):
                 finish(status: 200, body: world.unitsJSON())
             case ("GET", "/api/tags"):
@@ -34,7 +36,7 @@
             case ("GET", let p) where p.hasSuffix("/history"):
                 finish(status: 200, body: "[]")
             case ("GET", let p) where p.hasSuffix("/items"):
-                finish(status: 200, body: world.itemsJSON())
+                finish(status: 200, body: world.itemsJSON(list: onList(p)))
             case ("GET", let p) where p.hasSuffix("/tags"):
                 finish(status: 200, body: world.tagsOnItemJSON(itemID(from: p) ?? 0))
 
@@ -49,8 +51,15 @@
                 finish(status: 200, body: "{}")
 
             case ("POST", let p) where p.hasSuffix("/items"):
-                world.add(line: body()["line"] as? String ?? "")
+                world.add(line: body()["line"] as? String ?? "", to: onList(p))
                 finish(status: 201, body: "{}")
+            case ("PUT", let p) where listID(from: p) != nil && !p.contains("/items"):
+                world.renameList(listID(from: p)!, to: body()["name"] as? String ?? "")
+                finish(status: 200, body: "{}")
+            case ("DELETE", let p) where listID(from: p) != nil && !p.contains("/items"):
+                world.deleteList(listID(from: p)!)
+                finish(status: 204, body: "")
+
             case ("PUT", let p):
                 let sent = body()
                 world.update(
@@ -78,6 +87,22 @@
         }
 
         override func stopLoading() {}
+
+        /// The list a nested path belongs to: the `1` in `/api/lists/1/items/...`.
+        private func onList(_ path: String) -> Int64 {
+            let parts = path.split(separator: "/")
+            guard let at = parts.firstIndex(of: "lists"), parts.indices.contains(at + 1)
+            else { return 1 }
+            return Int64(parts[at + 1]) ?? 1
+        }
+
+        /// The list id out of `/api/lists/1`, and only when that is the whole path —
+        /// `/api/lists/1/items/7` is an item's business, not a list's.
+        private func listID(from path: String) -> Int64? {
+            let parts = path.split(separator: "/")
+            guard parts.count == 3, parts[1] == "lists" else { return nil }
+            return Int64(parts[2])
+        }
 
         /// The item id out of `/api/lists/1/items/7/...`.
         private func itemID(from path: String) -> Int64? {

@@ -16,6 +16,10 @@
 
         struct Row {
             var id: Int64
+            /// Which list it is on. Without this the world answered the same rows for
+            /// every list, and a brand new list arrived with somebody else's shopping
+            /// already on it.
+            var listID: Int64 = 1
             var name: String
             var amount: Double
             var unitID: Int64?
@@ -23,10 +27,15 @@
             var tagIDs: [Int64]
         }
 
+        struct StubList {
+            var id: Int64
+            var name: String
+            var role: String
+        }
+
         private let lock = NSLock()
         private var rows: [Row] = []
-        private(set) var listRole = "owner"
-        private(set) var listTotal: Int64 = 1
+        private var lists: [StubList] = []
         private(set) var itemsTruncated = false
         private(set) var itemsTotal: Int64 = 0
 
@@ -44,7 +53,7 @@
             lock.lock()
             defer { lock.unlock() }
 
-            listRole = scenario == "viewer" ? "viewer" : "owner"
+            lists = [StubList(id: 1, name: "Home", role: scenario == "viewer" ? "viewer" : "owner")]
             itemsTruncated = scenario == "truncated"
             rows = [
                 Row(id: 1, name: "Milk", amount: 1, unitID: 3, doneAt: nil, tagIDs: [40]),
@@ -64,17 +73,47 @@
         func listsJSON() -> String {
             lock.lock()
             defer { lock.unlock() }
+            let items = lists.map {
+                #"{"id": \#($0.id), "name": "\#($0.name)", "owner_id": 1, "role": "\#($0.role)"}"#
+            }
             return """
-            {"items": [{"id": 1, "name": "Home", "owner_id": 1, "role": "\(listRole)"}],
-             "total": \(listTotal), "total_pages": 1, "has_more": false}
+            {"items": [\(items.joined(separator: ","))], "total": \(lists.count),
+             "total_pages": 1, "has_more": false}
             """
         }
 
-        func itemsJSON() -> String {
+        // MARK: - Managing lists
+
+        /// Returns the new list, because the app selects what it just made.
+        func createList(named name: String) -> String {
             lock.lock()
             defer { lock.unlock() }
+            let next = (lists.map(\.id).max() ?? 0) + 1
+            lists.append(StubList(id: next, name: name, role: "owner"))
+            return #"{"id": \#(next), "name": "\#(name)", "owner_id": 1, "role": "owner"}"#
+        }
+
+        func renameList(_ id: Int64, to name: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard let at = lists.firstIndex(where: { $0.id == id }) else { return }
+            lists[at].name = name
+        }
+
+        func deleteList(_ id: Int64) {
+            lock.lock()
+            defer { lock.unlock() }
+            lists.removeAll { $0.id == id }
+            // Items belong to the list, and the real server cascades.
+            rows.removeAll { $0.listID == id }
+        }
+
+        func itemsJSON(list: Int64) -> String {
+            lock.lock()
+            defer { lock.unlock() }
+            let mine = rows.filter { $0.listID == list }
             // Outstanding first, then done — the order the real route is asked for.
-            let ordered = rows.filter { $0.doneAt == nil } + rows.filter { $0.doneAt != nil }
+            let ordered = mine.filter { $0.doneAt == nil } + mine.filter { $0.doneAt != nil }
             let items = ordered.map { row in
                 """
                 {"id": \(row.id), "name": "\(row.name)", "amount": \(row.amount),
@@ -83,8 +122,9 @@
                  "tag_ids": \(row.tagIDs)}
                 """
             }
+            let total = itemsTruncated ? itemsTotal : Int64(mine.count)
             return """
-            {"items": [\(items.joined(separator: ","))], "total": \(itemsTotal),
+            {"items": [\(items.joined(separator: ","))], "total": \(total),
              "total_pages": 1, "has_more": \(itemsTruncated)}
             """
         }
@@ -161,7 +201,7 @@
             rows[at].tagIDs.removeAll { $0 == tagID }
         }
 
-        func add(line: String) {
+        func add(line: String, to list: Int64) {
             lock.lock()
             defer { lock.unlock() }
             // The real parsing happens on the server. This is the smallest thing that
@@ -173,14 +213,15 @@
             {
                 rows.append(
                     Row(
-                        id: next, name: parts.dropFirst(2).joined(separator: " ").capitalisedFirst,
+                        id: next, listID: list,
+                        name: parts.dropFirst(2).joined(separator: " ").capitalisedFirst,
                         amount: amount, unitID: unit.0, doneAt: nil, tagIDs: []
                     )
                 )
             } else {
                 rows.append(
                     Row(
-                        id: next, name: line.capitalisedFirst, amount: 1,
+                        id: next, listID: list, name: line.capitalisedFirst, amount: 1,
                         unitID: nil, doneAt: nil, tagIDs: []
                     )
                 )

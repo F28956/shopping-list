@@ -119,6 +119,29 @@ actor API {
 
     // MARK: - Writing
 
+    // MARK: - Lists
+
+    /// Makes a list. The server answers with it, role included.
+    @discardableResult
+    func createList(named name: String) async throws -> List {
+        let data = try await send("POST", "/api/lists", ["name": name])
+        do {
+            return try Self.decoder.decode(List.self, from: data)
+        } catch {
+            throw APIError.transport(error)
+        }
+    }
+
+    func rename(_ list: List, to name: String) async throws {
+        _ = try await send("PUT", "/api/lists/\(list.id)", ["name": name])
+    }
+
+    /// Deletes a list and everything on it. Owner only; the service refuses anyone
+    /// else, and the screens do not offer it to them.
+    func delete(_ list: List) async throws {
+        _ = try await send("DELETE", "/api/lists/\(list.id)", nil)
+    }
+
     /// Adds an item from one typed line.
     ///
     /// Sent under `line`, not `name`: `name` is taken literally, and `line` is read
