@@ -668,6 +668,179 @@ async fn forgetting_an_item_forgets_its_filing(#[future(awt)] pool: SqlitePool) 
     assert_eq!(left, 0, "the filing outlived the memory it hung on");
 }
 
+/// The tag with this name, which the fixtures seed.
+async fn tag_named(s: &Scene, name: &str) -> tag::Id {
+    tags::get(&s.ctx, &s.mine, tag::Lookup::Name(tag::Name(name.into())))
+        .await
+        .unwrap_or_else(|_| panic!("the fixture has no tag called {name}"))
+        .id
+}
+
+/// A list nobody has configured walks the shop the way it always did.
+#[rstest]
+#[tokio::test]
+async fn an_unconfigured_list_keeps_the_global_order(
+    #[with(crate::models::fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let s = scene(pool).await;
+
+    let ordered = tags::order_for(&s.ctx, &s.mine, s.list.id).await.unwrap();
+    let positions: Vec<i64> = ordered.iter().map(|t| t.sort_order.0).collect();
+
+    assert!(!ordered.is_empty());
+    assert_eq!(positions, {
+        let mut sorted = positions.clone();
+        sorted.sort();
+        sorted
+    });
+}
+
+/// What you place comes first, in the order you placed it; everything else keeps the
+/// order it had, behind. Placing two tags is a whole answer.
+#[rstest]
+#[tokio::test]
+async fn a_chosen_order_leads_and_the_rest_follows(
+    #[with(crate::models::fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let s = scene(pool).await;
+    let urgent = tag_named(&s, "urgent").await;
+    let aldi = tag_named(&s, "aldi").await;
+
+    tags::set_order(&s.ctx, &s.mine, s.list.id, &[urgent, aldi])
+        .await
+        .unwrap();
+
+    let ordered = tags::order_for(&s.ctx, &s.mine, s.list.id).await.unwrap();
+
+    assert_eq!(
+        ordered.iter().take(2).map(|t| t.id).collect::<Vec<_>>(),
+        vec![urgent, aldi],
+        "what was placed did not lead"
+    );
+    let every = tags::list(&s.ctx, &s.mine, all(), order(tag::Field::Name))
+        .await
+        .unwrap();
+    assert_eq!(
+        ordered.len(),
+        every.items.len(),
+        "tags that were not placed went missing"
+    );
+    // ... and behind them, the global order is intact.
+    let rest: Vec<i64> = ordered.iter().skip(2).map(|t| t.sort_order.0).collect();
+    assert_eq!(rest, {
+        let mut sorted = rest.clone();
+        sorted.sort();
+        sorted
+    });
+}
+
+/// Somebody who has not set an order inherits the earliest one set on the list, so a
+/// list shared with a person who never opens the settings still has a settled shape.
+#[rstest]
+#[tokio::test]
+async fn an_order_is_inherited_from_whoever_set_one_first(
+    #[with(crate::models::fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let s = scene(pool).await;
+    let urgent = tag_named(&s, "urgent").await;
+
+    // They are given the list to read, and set nothing.
+    let token = lists::invite(&s.ctx, &s.mine, s.list.id, Role::Viewer)
+        .await
+        .unwrap();
+    lists::join(&s.ctx, &s.theirs, &token).await.unwrap();
+
+    tags::set_order(&s.ctx, &s.mine, s.list.id, &[urgent])
+        .await
+        .unwrap();
+
+    let theirs = tags::order_for(&s.ctx, &s.theirs, s.list.id).await.unwrap();
+    assert_eq!(theirs.first().map(|t| t.id), Some(urgent), "not inherited");
+
+    // Their own choice outranks what they inherited...
+    let aldi = tag_named(&s, "aldi").await;
+    tags::set_order(&s.ctx, &s.theirs, s.list.id, &[aldi])
+        .await
+        .unwrap();
+    let theirs = tags::order_for(&s.ctx, &s.theirs, s.list.id).await.unwrap();
+    assert_eq!(theirs.first().map(|t| t.id), Some(aldi));
+
+    // ... and does not disturb the person they inherited it from.
+    let mine = tags::order_for(&s.ctx, &s.mine, s.list.id).await.unwrap();
+    assert_eq!(mine.first().map(|t| t.id), Some(urgent), "mine was changed");
+
+    // Clearing theirs puts them back on what they inherit.
+    tags::set_order(&s.ctx, &s.theirs, s.list.id, &[]).await.unwrap();
+    let theirs = tags::order_for(&s.ctx, &s.theirs, s.list.id).await.unwrap();
+    assert_eq!(theirs.first().map(|t| t.id), Some(urgent));
+}
+
+/// A viewer decides the order they read a list in. It changes their screen and
+/// nothing about the list, and permission to read is not permission to be sorted.
+#[rstest]
+#[tokio::test]
+async fn a_viewer_may_order_their_own_view(
+    #[with(crate::models::fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let s = scene(pool).await;
+    let aldi = tag_named(&s, "aldi").await;
+
+    let token = lists::invite(&s.ctx, &s.mine, s.list.id, Role::Viewer)
+        .await
+        .unwrap();
+    lists::join(&s.ctx, &s.theirs, &token).await.unwrap();
+
+    assert!(tags::set_order(&s.ctx, &s.theirs, s.list.id, &[aldi]).await.is_ok());
+}
+
+/// A stranger cannot read the order, nor set one.
+#[rstest]
+#[tokio::test]
+async fn a_strangers_order_is_refused(
+    #[with(crate::models::fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let s = scene(pool).await;
+    let aldi = tag_named(&s, "aldi").await;
+
+    assert_eq!(
+        tags::order_for(&s.ctx, &s.theirs, s.list.id).await.err(),
+        Some(ServiceError::NotFound)
+    );
+    assert_eq!(
+        tags::set_order(&s.ctx, &s.theirs, s.list.id, &[aldi]).await.err(),
+        Some(ServiceError::NotFound)
+    );
+}
+
+/// A tag that does not exist is the caller's mistake. Stored, it would be a position
+/// the resolver silently drops, and nothing would say why the order looked wrong.
+#[rstest]
+#[tokio::test]
+async fn an_unknown_tag_cannot_be_placed(
+    #[with(crate::models::fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let s = scene(pool).await;
+
+    assert_eq!(
+        tags::set_order(&s.ctx, &s.mine, s.list.id, &[tag::Id(9999)])
+            .await
+            .err(),
+        Some(ServiceError::NotFound)
+    );
+}
+
 /// A line that says a unit outranks the remembered one — this week is two litres,
 /// whatever last week was.
 #[rstest]

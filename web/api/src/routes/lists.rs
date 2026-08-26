@@ -11,6 +11,8 @@ use axum::{
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use domain::models::OffsetPage;
 use domain::models::list::{self, List, Name, Role};
+use domain::models::tag::{self, Tag};
+use domain::service::tags;
 use domain::service::lists;
 
 use crate::auth::CurrentUser;
@@ -23,6 +25,7 @@ pub fn router() -> Router<AppState> {
         .route("/", get(list).post(create))
         .route("/{id}", get(read).put(update).delete(delete))
         .route("/{id}/events", get(events))
+        .route("/{id}/tag-order", get(tag_order).put(set_tag_order))
 }
 
 /// A list, plus what the caller may do with it.
@@ -169,4 +172,37 @@ async fn events(
     // Proxies and phone radios drop a connection that says nothing for long enough,
     // and a silent list is the normal case.
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+/// The tags of this list, in the order that decides where its items sit.
+///
+/// Every tag, always, so a client groups by position in this answer and needs no
+/// second opinion about what comes first. Resolved per person — see
+/// [`tags::order_for`] — so two people sharing a list can walk different routes.
+async fn tag_order(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Vec<Tag>>, AppError> {
+    Ok(Json(
+        tags::order_for(&state.ctx, &user.actor(), list::Id(id)).await?,
+    ))
+}
+
+/// What this person wants to lead on this list. An empty list clears their choice and
+/// puts them back on whatever they inherit.
+#[derive(Debug, serde::Deserialize)]
+pub struct TagOrder {
+    pub tag_ids: Vec<i64>,
+}
+
+async fn set_tag_order(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Json(input): Json<TagOrder>,
+) -> Result<StatusCode, AppError> {
+    let placed: Vec<tag::Id> = input.tag_ids.into_iter().map(tag::Id).collect();
+    tags::set_order(&state.ctx, &user.actor(), list::Id(id), &placed).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

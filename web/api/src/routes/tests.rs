@@ -813,6 +813,136 @@ async fn a_list_carries_the_callers_role(#[future(awt)] pool: SqlitePool) {
     assert_eq!(theirs["items"][0]["id"], list_id);
 }
 
+/// A list's tag order: read, set, inherited, and cleared.
+#[rstest]
+#[tokio::test]
+async fn a_lists_tag_order(
+    #[future(awt)]
+    #[with(fixtures::TAGS)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+    let path = format!("/api/lists/{list_id}/tag-order");
+
+    // Unconfigured, it is the order a shop is walked.
+    let (status, order) = send(&app, req("GET", &path, &me(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let positions: Vec<i64> = order
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["sort_order"].as_i64().unwrap())
+        .collect();
+    assert!(!positions.is_empty());
+    assert_eq!(positions, {
+        let mut sorted = positions.clone();
+        sorted.sort();
+        sorted
+    });
+
+    // Placing one puts it in front, and leaves the rest where they were.
+    let last = order.as_array().unwrap().last().unwrap()["id"].as_i64().unwrap();
+    let (status, _) = send(
+        &app,
+        req("PUT", &path, &me(), Some(json!({"tag_ids": [last]}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, order) = send(&app, req("GET", &path, &me(), None)).await;
+    assert_eq!(order[0]["id"], last, "what was placed did not lead");
+    assert_eq!(
+        order.as_array().unwrap().len(),
+        positions.len(),
+        "a tag went missing"
+    );
+
+    // Cleared, it goes back to what it was.
+    send(&app, req("PUT", &path, &me(), Some(json!({"tag_ids": []})))).await;
+    let (_, order) = send(&app, req("GET", &path, &me(), None)).await;
+    assert_ne!(order[0]["id"], last, "clearing did not take");
+}
+
+/// The order is one person's view of a shared list, not a change to the list.
+#[rstest]
+#[tokio::test]
+async fn a_tag_order_is_per_person_and_inherited(
+    #[future(awt)]
+    #[with(fixtures::TAGS)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+    let path = format!("/api/lists/{list_id}/tag-order");
+
+    let (_, order) = send(&app, req("GET", &path, &me(), None)).await;
+    let last = order.as_array().unwrap().last().unwrap()["id"].as_i64().unwrap();
+    send(
+        &app,
+        req("PUT", &path, &me(), Some(json!({"tag_ids": [last]}))),
+    )
+    .await;
+
+    // Given the list to read, having set nothing, they walk the route I chose.
+    let (status, invite) = send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{list_id}/members/invites"),
+            &me(),
+            Some(json!({"role": "viewer"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let token = invite["token"].as_str().unwrap().to_string();
+    send(
+        &app,
+        req("POST", &format!("/api/invites/{token}"), &them(), None),
+    )
+    .await;
+
+    let (status, theirs) = send(&app, req("GET", &path, &them(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(theirs[0]["id"], last, "the order was not inherited");
+
+    // A viewer may choose their own, and it does not disturb mine.
+    let first = theirs.as_array().unwrap()[1]["id"].as_i64().unwrap();
+    let (status, _) = send(
+        &app,
+        req("PUT", &path, &them(), Some(json!({"tag_ids": [first]}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "a viewer could not order");
+
+    let (_, mine) = send(&app, req("GET", &path, &me(), None)).await;
+    assert_eq!(mine[0]["id"], last, "their choice changed mine");
+}
+
+/// A stranger cannot read a list's order, nor set one.
+#[rstest]
+#[tokio::test]
+async fn a_stranger_cannot_touch_a_tag_order(
+    #[future(awt)]
+    #[with(fixtures::TAGS)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+    let path = format!("/api/lists/{list_id}/tag-order");
+
+    let (status, _) = send(&app, req("GET", &path, &them(), None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _) = send(
+        &app,
+        req("PUT", &path, &them(), Some(json!({"tag_ids": [1]}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 /// Clearing takes the ticked-off rows and nothing else.
 #[rstest]
 #[tokio::test]

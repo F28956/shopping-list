@@ -189,7 +189,7 @@ struct WatchItemsView: View {
     private func loadReference() async {
         do {
             async let units = api.units()
-            async let tags = api.tags()
+            async let tags = api.tags(orderedFor: list)
             let (loadedUnits, loadedTags) = try await (units, tags)
             self.units = Dictionary(uniqueKeysWithValues: loadedUnits.map { ($0.id, $0.name) })
             self.tags = loadedTags

@@ -1,6 +1,6 @@
 use time::OffsetDateTime;
 
-use super::{Error, Result};
+use super::{Error, Result, user};
 use super::{OffsetPage, OrderBy, Paging};
 use super::{item, list};
 
@@ -80,6 +80,9 @@ pub enum Field {
     Colour,
     Emoji,
     CreatedAt,
+    /// Where a tag falls when a list is grouped: the order of a shop, not the
+    /// alphabet. Ties break on name, because the shop-name tags all share a position.
+    SortOrder,
 }
 
 impl Tag {
@@ -227,6 +230,7 @@ impl Tag {
                         WHEN 'colour' THEN colour
                         WHEN 'emoji' THEN emoji
                         WHEN 'created_at' THEN created_at
+                        WHEN 'sort_order' THEN sort_order
                     END
                 END ASC NULLS LAST,
             CASE
@@ -237,6 +241,7 @@ impl Tag {
                         WHEN 'colour' THEN colour
                         WHEN 'emoji' THEN emoji
                         WHEN 'created_at' THEN created_at
+                        WHEN 'sort_order' THEN sort_order
                     END
             END DESC NULLS LAST,
             -- keeps paging deterministic when the sort key ties
@@ -325,7 +330,11 @@ impl Tag {
             FROM tags t
             JOIN item_tags it ON it.tag_id = t.id
             WHERE it.item_id = ?1
-            ORDER BY t.name COLLATE NOCASE, t.id
+            -- The same order as `for_list`, which is the order a shop is walked.
+            -- These two disagreed while the fixture gave every tag the same position,
+            -- so "the first tag on this item" meant one thing to a list and another
+            -- to a single item -- and grouping reads the first tag.
+            ORDER BY t.sort_order, t.name COLLATE NOCASE, t.id
             "#,
             item_id,
         )
@@ -426,6 +435,98 @@ impl Tag {
             return Err(Error::NotFound);
         }
 
+        Ok(())
+    }
+}
+
+/// Which tag decides where an item sits, for one person on one list.
+///
+/// A short ordered run of tags. Anything not in it keeps the global order and falls
+/// in behind the ones that are, so setting two tags is a complete answer and does not
+/// mean placing the other nineteen.
+pub struct Order;
+
+impl Order {
+    /// The order this person set on this list, in their order.
+    pub async fn of(
+        pool: &sqlx::SqlitePool,
+        list_id: list::Id,
+        user_id: user::Id,
+    ) -> Result<Vec<Id>> {
+        Ok(sqlx::query_scalar!(
+            r#"
+            SELECT tag_id as "tag_id!: Id"
+            FROM list_tag_order
+            WHERE list_id = ?1 AND user_id = ?2
+            ORDER BY position
+            "#,
+            list_id,
+            user_id,
+        )
+        .fetch_all(pool)
+        .await?)
+    }
+
+    /// The order somebody who has not set one inherits: the earliest anyone set here.
+    ///
+    /// Earliest rather than the owner's, so a list has a settled shape as soon as one
+    /// person gives it one — including a list shared by somebody who never opens the
+    /// settings.
+    pub async fn inherited(pool: &sqlx::SqlitePool, list_id: list::Id) -> Result<Vec<Id>> {
+        Ok(sqlx::query_scalar!(
+            r#"
+            SELECT tag_id as "tag_id!: Id"
+            FROM list_tag_order
+            WHERE list_id = ?1
+              AND user_id = (
+                  SELECT user_id FROM list_tag_order
+                  WHERE list_id = ?1
+                  ORDER BY created_at, user_id
+                  LIMIT 1
+              )
+            ORDER BY position
+            "#,
+            list_id,
+        )
+        .fetch_all(pool)
+        .await?)
+    }
+
+    /// Replaces this person's order on this list. An empty list clears it, which puts
+    /// them back on whatever they would have inherited.
+    pub async fn set(
+        pool: &sqlx::SqlitePool,
+        list_id: list::Id,
+        user_id: user::Id,
+        tags: &[Id],
+    ) -> Result<()> {
+        let mut tx = pool.begin().await?;
+
+        sqlx::query!(
+            r#"DELETE FROM list_tag_order WHERE list_id = ?1 AND user_id = ?2"#,
+            list_id,
+            user_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        for (at, tag_id) in tags.iter().enumerate() {
+            let position = at as i64;
+            sqlx::query!(
+                r#"
+                INSERT INTO list_tag_order (list_id, user_id, tag_id, position)
+                VALUES (?1, ?2, ?3, ?4)
+                "#,
+                list_id,
+                user_id,
+                tag_id,
+                position,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
         Ok(())
     }
 }
@@ -1219,9 +1320,18 @@ mod tests {
             tags.len() < SEEDED as usize,
             "every tag came back, so nothing is scoping"
         );
+        // In shop order, the same as `for_list`. It used to be name order, which was
+        // indistinguishable while every fixture tag shared a position -- and it made
+        // "the first tag on this item" mean one thing here and another there, on a
+        // pair of queries whose whole job is to answer that question the same way.
         let mut sorted = tags.clone();
-        sorted.sort_by(|a, b| a.name.0.cmp(&b.name.0));
-        assert_eq!(sorted, tags, "ordered by name");
+        sorted.sort_by(|a, b| {
+            a.sort_order
+                .0
+                .cmp(&b.sort_order.0)
+                .then_with(|| a.name.0.cmp(&b.name.0))
+        });
+        assert_eq!(sorted, tags, "ordered by where a shop puts it");
 
         let linked = sqlx::query_scalar!(
             r#"SELECT count(*) as "n!: i64" FROM item_tags WHERE item_id = ?1"#,

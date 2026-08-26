@@ -92,10 +92,23 @@ actor API {
         return page.items
     }
 
-    /// Every tag, in the order a shop is walked.
-    func tags() async throws -> [Tag] {
-        let page: Page<Tag> = try await get("/api/tags?order_by=name&size=\(Self.pageLimit)")
-        return page.items.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
+    /// Every tag, in the order that decides where this list's items sit.
+    ///
+    /// Not `/api/tags`, which is one global opinion. This is resolved per person and
+    /// per list by the service, so grouping reads position in this answer and needs
+    /// no second opinion about what leads.
+    func tags(orderedFor list: List) async throws -> [Tag] {
+        try await get("/api/lists/\(list.id)/tag-order")
+    }
+
+    /// Puts these tags in front for this person on this list. An empty array clears
+    /// the choice, putting them back on whatever they inherit.
+    func setTagOrder(_ tags: [Tag], on list: List) async throws {
+        _ = try await send(
+            "PUT",
+            "/api/lists/\(list.id)/tag-order",
+            ["tag_ids": tags.map(\.id)]
+        )
     }
 
     /// What this item is filed under. A bare array, not a page: an item has few.

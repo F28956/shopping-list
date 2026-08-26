@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use axum::extract::{Form, Path, Query, State};
 use axum::http::HeaderMap;
+use axum::response::Redirect;
 use axum::response::Response;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
@@ -81,17 +82,9 @@ async fn board(s: &AppState, actor: &Actor, list_id: list::Id) -> Result<Board, 
         unit_names: unit_lookup(s, actor).await?,
         // One query for the whole page rather than one per item.
         tags_by_item: tags::for_list(&s.ctx, actor, list_id).await?,
-        all_tags: tags::list(
-            &s.ctx,
-            actor,
-            everything(),
-            OrderBy {
-                field: tag::Field::Name,
-                direction: Direction::Ascending,
-            },
-        )
-        .await?
-        .items,
+        // In this person's order for this list, not the global one: `group_by_category`
+        // reads position in this vector, so the whole rule lives in the service.
+        all_tags: tags::order_for(&s.ctx, actor, list_id).await?,
     })
 }
 
@@ -301,11 +294,25 @@ fn measure(i: &item::Item, units: &std::collections::HashMap<i64, String>) -> Op
 fn group_by_category(b: &Board) -> Vec<(String, Vec<&item::Item>)> {
     let mut groups: Vec<(i64, String, Vec<&item::Item>)> = Vec::new();
 
+    // Where a tag falls for this person on this list: its place in `all_tags`, which
+    // the service has already resolved. Position rather than `sort_order`, so a tag
+    // somebody has put first leads even though the shop puts it last.
+    let placed = |id: tag::Id| -> i64 {
+        b.all_tags
+            .iter()
+            .position(|t| t.id == id)
+            .map_or(i64::MAX - 1, |at| at as i64)
+    };
+
     for i in b.items.iter().filter(|i| i.done_at.is_none()) {
-        let primary = b.tags_by_item.get(&i.id.0).and_then(|ts| ts.first());
+        // The item's first tag is whichever of its tags leads in this order.
+        let primary = b
+            .tags_by_item
+            .get(&i.id.0)
+            .and_then(|ts| ts.iter().min_by_key(|t| placed(t.id)));
         let (order, heading) = match primary {
             Some(t) => (
-                t.sort_order.0,
+                placed(t.id),
                 match &t.emoji {
                     Some(e) => format!("{} {}", e.0, t.name.0),
                     None => t.name.0.clone(),
@@ -420,6 +427,109 @@ pub struct Typed {
     pub line: Option<String>,
 }
 
+/// Which tag decides where an item sits on this list.
+///
+/// Up and down rather than dragging: reordering by drag needs JavaScript, and every
+/// other control here works without it. The order is this person's — see
+/// [`tags::order_for`] — so nothing on this page changes what anyone else sees.
+pub async fn tag_order(
+    session: Session,
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Markup, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+    let user = actor.person()?.clone();
+    let list = lists::get(&s.ctx, &actor, list::Id(id)).await?;
+    let ordered = tags::order_for(&s.ctx, &actor, list.id).await?;
+
+    let base = format!("/lists/{}", list.id.0);
+    let last = ordered.len().saturating_sub(1);
+
+    Ok(view::page(
+        "Tag order",
+        Some(&crate::pages::who(&user)),
+        html! {
+            p { a href=(base) { "← " (list.name.0) } }
+            h2 style="font-size:1.1rem;margin:.5rem 0" { "Tag order" }
+            p class="hint" {
+                "An item sits under the first of its tags in this order. "
+                "This is your order for this list; everyone else keeps theirs."
+            }
+
+            form method="post" action={ (base) "/tags/reset" } class="inline" {
+                button class="danger" { "Back to shop order" }
+            }
+
+            ol class="tag-order" {
+                @for (at, tag) in ordered.iter().enumerate() {
+                    li {
+                        span class="grow" {
+                            @if let Some(emoji) = &tag.emoji { (emoji.0) " " }
+                            (tag.name.0)
+                        }
+                        form method="post" action={ (base) "/tags/move" } class="inline" {
+                            input type="hidden" name="tag_id" value=(tag.id.0);
+                            input type="hidden" name="up" value="true";
+                            button disabled[at == 0] title="Up" { "↑" }
+                        }
+                        form method="post" action={ (base) "/tags/move" } class="inline" {
+                            input type="hidden" name="tag_id" value=(tag.id.0);
+                            input type="hidden" name="up" value="false";
+                            button disabled[at == last] title="Down" { "↓" }
+                        }
+                    }
+                }
+            }
+        },
+    ))
+}
+
+/// One step up or down. The whole order is written back, because "one step" only
+/// means anything against the order that was on screen when the button was pressed.
+#[derive(serde::Deserialize)]
+pub struct MoveTag {
+    pub tag_id: i64,
+    pub up: bool,
+}
+
+pub async fn move_tag(
+    session: Session,
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<MoveTag>,
+) -> Result<Redirect, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+    let list_id = list::Id(id);
+
+    let mut ordered: Vec<tag::Id> = tags::order_for(&s.ctx, &actor, list_id)
+        .await?
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+
+    if let Some(at) = ordered.iter().position(|t| t.0 == form.tag_id) {
+        let to = if form.up { at.checked_sub(1) } else { at.checked_add(1) };
+        // At either end there is nowhere to go, and the button is disabled anyway;
+        // a request that arrives regardless is a no-op rather than a failure.
+        if let Some(to) = to.filter(|to| *to < ordered.len()) {
+            ordered.swap(at, to);
+            tags::set_order(&s.ctx, &actor, list_id, &ordered).await?;
+        }
+    }
+
+    Ok(Redirect::to(&format!("/lists/{id}/tags")))
+}
+
+pub async fn reset_tag_order(
+    session: Session,
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Redirect, AppError> {
+    let actor = auth::require_actor(&session, &s.ctx).await?;
+    tags::set_order(&s.ctx, &actor, list::Id(id), &[]).await?;
+    Ok(Redirect::to(&format!("/lists/{id}/tags")))
+}
+
 pub async fn show(
     session: Session,
     State(s): State<AppState>,
@@ -441,7 +551,11 @@ pub async fn show(
         &list.name.0,
         Some(&crate::pages::who(&user)),
         html! {
-            p { a href="/lists" { "← all lists" } }
+            p {
+                a href="/lists" { "← all lists" }
+                " · "
+                a href={ "/lists/" (list.id.0) "/tags" } { "tag order" }
+            }
             h2 style="font-size:1.1rem;margin:.5rem 0 1rem" { (list.name.0) }
 
             (fragment(list.id, &b, None))

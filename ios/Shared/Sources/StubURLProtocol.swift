@@ -31,6 +31,14 @@
                 finish(status: 201, body: world.createList(named: body()["name"] as? String ?? ""))
             case ("GET", "/api/units"):
                 finish(status: 200, body: world.unitsJSON())
+            case ("GET", let p) where p.hasSuffix("/tag-order"):
+                finish(status: 200, body: world.tagOrderJSON(list: onList(p)))
+            case ("PUT", let p) where p.hasSuffix("/tag-order"):
+                let ids = (body()["tag_ids"] as? [Any] ?? []).compactMap { value -> Int64? in
+                    (value as? NSNumber).map { Int64(truncating: $0) }
+                }
+                world.setTagOrder(ids, on: onList(p))
+                finish(status: 204, body: "")
             case ("GET", "/api/tags"):
                 finish(status: 200, body: world.tagsJSON())
             case ("GET", let p) where p.hasSuffix("/history"):

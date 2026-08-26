@@ -587,6 +587,80 @@ async fn a_tag_change_reaches_a_watcher(
     );
 }
 
+/// The tag order page reorders the list it belongs to.
+#[rstest]
+#[tokio::test]
+async fn a_tag_can_be_moved_up_the_order(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let (app, cookie) = signed_in(&pool, "google-oauth2|sorter").await;
+    post(&app, "/lists", &cookie, "name=Shop").await;
+    let (_, body) = get(&app, "/", &cookie).await;
+    let list_id = first_list_id(&body);
+
+    let (status, page) = get(&app, &format!("/lists/{list_id}/tags"), &cookie).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("Tag order"), "{page}");
+
+    // The last tag in the order, moved to the front one step at a time, leads.
+    let last = page
+        .rmatch_indices("name=\"tag_id\" value=\"")
+        .next()
+        .map(|(at, m)| {
+            page[at + m.len()..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+        })
+        .expect("no tags on the page");
+
+    for _ in 0..40 {
+        post(
+            &app,
+            &format!("/lists/{list_id}/tags/move"),
+            &cookie,
+            &format!("tag_id={last}&up=true"),
+        )
+        .await;
+    }
+
+    let (_, page) = get(&app, &format!("/lists/{list_id}/tags"), &cookie).await;
+    let first = page[page.find("name=\"tag_id\" value=\"").unwrap() + 21..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>();
+    assert_eq!(first, last, "it did not reach the front");
+
+    // Reset puts the shop's own order back.
+    post(&app, &format!("/lists/{list_id}/tags/reset"), &cookie, "").await;
+    let (_, page) = get(&app, &format!("/lists/{list_id}/tags"), &cookie).await;
+    let first = page[page.find("name=\"tag_id\" value=\"").unwrap() + 21..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>();
+    assert_ne!(first, last, "reset did not take");
+}
+
+/// A stranger cannot see a list's order, nor change it.
+#[rstest]
+#[tokio::test]
+async fn a_stranger_cannot_reorder_my_tags(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|owner").await;
+    post(&app, "/lists", &mine, "name=Shop").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+
+    let (_, theirs) = signed_in(&pool, "google-oauth2|stranger").await;
+    let (status, _) = get(&app, &format!("/lists/{list_id}/tags"), &theirs).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 /// Watching is a read, so it is authorised like one -- and the page that a watcher
 /// re-reads is too.
 #[rstest]

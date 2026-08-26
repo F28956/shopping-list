@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            SELECT\n                t.id          as \"id: Id\",\n                t.name        as \"name: Name\",\n                t.colour      as \"colour?: Colour\",\n                t.emoji       as \"emoji?: Emoji\",\n                t.created_at  as \"created_at: CreatedAt\",\n                t.sort_order  as \"sort_order: SortOrder\"\n            FROM tags t\n            JOIN item_tags it ON it.tag_id = t.id\n            WHERE it.item_id = ?1\n            ORDER BY t.name COLLATE NOCASE, t.id\n            ",
+  "query": "\n            SELECT\n                t.id          as \"id: Id\",\n                t.name        as \"name: Name\",\n                t.colour      as \"colour?: Colour\",\n                t.emoji       as \"emoji?: Emoji\",\n                t.created_at  as \"created_at: CreatedAt\",\n                t.sort_order  as \"sort_order: SortOrder\"\n            FROM tags t\n            JOIN item_tags it ON it.tag_id = t.id\n            WHERE it.item_id = ?1\n            -- The same order as `for_list`, which is the order a shop is walked.\n            -- These two disagreed while the fixture gave every tag the same position,\n            -- so \"the first tag on this item\" meant one thing to a list and another\n            -- to a single item -- and grouping reads the first tag.\n            ORDER BY t.sort_order, t.name COLLATE NOCASE, t.id\n            ",
   "describe": {
     "columns": [
       {
@@ -82,5 +82,5 @@
       false
     ]
   },
-  "hash": "0a5c9f533c5215dc849eb930391d6d99420a4d4ca45ddc1c88da8d65594f3dc9"
+  "hash": "5283ea88b0daff7fcc561308cbc83dcb3b11062756085d87b4bb631c73350d5e"
 }

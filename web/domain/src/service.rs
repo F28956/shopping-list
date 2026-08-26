@@ -108,6 +108,14 @@ pub fn everything() -> crate::models::Paging {
 }
 
 /// Alphabetical, for a list a person reads.
+/// Tags in the order a shop is walked, which is what grouping a list means.
+pub(crate) fn by_shop() -> crate::models::OrderBy<crate::models::tag::Field> {
+    crate::models::OrderBy {
+        field: crate::models::tag::Field::SortOrder,
+        direction: crate::models::Direction::Ascending,
+    }
+}
+
 pub(crate) fn by_name<F: NamedField>() -> crate::models::OrderBy<F> {
     crate::models::OrderBy {
         field: F::NAME,

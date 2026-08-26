@@ -20,6 +20,7 @@ struct ItemsView: View {
     @State private var tags: [Tag] = []
     @State private var editing: Editing?
     @State private var confirmingClear = false
+    @State private var ordering = false
     @State private var error: String?
     @State private var loaded = false
     @FocusState private var typing: Bool
@@ -110,6 +111,22 @@ struct ItemsView: View {
         }
         .navigationTitle(list.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    ordering = true
+                } label: {
+                    Label("Tag order", systemImage: "arrow.up.arrow.down")
+                }
+                .accessibilityIdentifier("order.open")
+            }
+        }
+        .sheet(isPresented: $ordering) {
+            TagOrderSheet(list: list, tags: tags) { chosen in
+                await attempt { try await api.setTagOrder(chosen, on: list) }
+                await loadReference()
+            }
+        }
         .refreshable { await load() }
         .task { await loadReference() }
         .task { await load() }
@@ -372,7 +389,7 @@ struct ItemsView: View {
     private func loadReference() async {
         do {
             async let units = api.units()
-            async let tags = api.tags()
+            async let tags = api.tags(orderedFor: list)
             (self.units, self.tags) = try await (units, tags)
         } catch {
             // Not shown: without these, rows lose their measure and their grouping,

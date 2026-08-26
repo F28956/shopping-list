@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM list_tag_order WHERE list_id = ?1 AND user_id = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "bc259730a966d862518d3ceb304ffb6bacf6ce7107f191b32de9caca563cb12b"
+}

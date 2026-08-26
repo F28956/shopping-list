@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                INSERT INTO list_tag_order (list_id, user_id, tag_id, position)\n                VALUES (?1, ?2, ?3, ?4)\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "f5a3b8dd139ee16f47c0dd0d7b033c7d8ce053cbda32beabe40d675a02f8a047"
+}

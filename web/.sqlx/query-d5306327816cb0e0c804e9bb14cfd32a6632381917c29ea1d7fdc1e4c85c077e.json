@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT tag_id as \"tag_id!: Id\"\n            FROM list_tag_order\n            WHERE list_id = ?1 AND user_id = ?2\n            ORDER BY position\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "tag_id!: Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "list_tag_order",
+            "name": "tag_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d5306327816cb0e0c804e9bb14cfd32a6632381917c29ea1d7fdc1e4c85c077e"
+}

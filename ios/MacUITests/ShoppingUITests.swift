@@ -368,6 +368,94 @@ final class ShoppingUITests: XCTestCase {
         waitForExpectations(timeout: 5)
     }
 
+    // MARK: - Which tag decides where an item sits
+
+    /// The order in force decides the order of the list. Moving a tag to the top
+    /// moves everything filed under it with it.
+    func testChangingTheTagOrderRegroupsTheList() {
+        let app = launch()
+        expect(app.buttons["item.Apples"])
+
+        // As it starts: fruits before dairy, because that is the shop's order.
+        XCTAssertLessThan(
+            app.buttons["item.Apples"].frame.minY,
+            app.buttons["item.Milk"].frame.minY
+        )
+
+        app.buttons["order.open"].click()
+        expect(app.staticTexts["order.produce"], "the tag order sheet did not open")
+
+        // Dairy to the front, by dragging it above the first row.
+        app.staticTexts["order.dairy"].click(
+            forDuration: 0.4,
+            thenDragTo: app.staticTexts["order.produce"]
+        )
+        app.buttons["order.save"].click()
+
+        let dairyLeads = NSPredicate(format: "exists == true")
+        expectation(for: dairyLeads, evaluatedWith: app.buttons["item.Milk"])
+        waitForExpectations(timeout: 5)
+
+        XCTAssertLessThan(
+            app.buttons["item.Milk"].frame.minY,
+            app.buttons["item.Apples"].frame.minY,
+            "dairy was moved to the front and the list did not follow"
+        )
+    }
+
+    /// Reset puts the list back on the order a shop is walked in.
+    func testResettingTheTagOrder() {
+        let app = launch()
+        expect(app.buttons["item.Apples"])
+
+        app.buttons["order.open"].click()
+        expect(app.staticTexts["order.dairy"])
+        app.staticTexts["order.dairy"].click(
+            forDuration: 0.4,
+            thenDragTo: app.staticTexts["order.produce"]
+        )
+        app.buttons["order.save"].click()
+
+        let moved = NSPredicate(format: "exists == true")
+        expectation(for: moved, evaluatedWith: app.buttons["item.Milk"])
+        waitForExpectations(timeout: 5)
+        XCTAssertLessThan(
+            app.buttons["item.Milk"].frame.minY,
+            app.buttons["item.Apples"].frame.minY
+        )
+
+        app.buttons["order.open"].click()
+        expect(app.buttons["order.reset"])
+        app.buttons["order.reset"].click()
+
+        let backAgain = NSPredicate(format: "exists == true")
+        expectation(for: backAgain, evaluatedWith: app.buttons["item.Apples"])
+        waitForExpectations(timeout: 5)
+        XCTAssertLessThan(
+            app.buttons["item.Apples"].frame.minY,
+            app.buttons["item.Milk"].frame.minY,
+            "reset did not put the shop's order back"
+        )
+    }
+
+    /// Cancel changes nothing, which is what makes dragging safe to try.
+    func testCancellingTheTagOrderChangesNothing() {
+        let app = launch()
+        expect(app.buttons["item.Apples"])
+        let before = app.buttons["item.Apples"].frame.minY
+
+        app.buttons["order.open"].click()
+        expect(app.staticTexts["order.dairy"])
+        app.staticTexts["order.dairy"].click(
+            forDuration: 0.4,
+            thenDragTo: app.staticTexts["order.produce"]
+        )
+        app.buttons["order.cancel"].click()
+
+        expect(app.buttons["item.Apples"])
+        XCTAssertEqual(app.buttons["item.Apples"].frame.minY, before)
+    }
+
     // MARK: - What a viewer is not offered
 
     /// A viewer is given a list to read, not one covered in controls that would

@@ -83,6 +83,65 @@ pub async fn for_list(
 }
 
 /// Tagging is an edit to the item, so it needs the item, not the tag.
+/// The tags of this list, in the order that decides where its items sit.
+///
+/// Every tag comes back, always, so a caller can group by position in this list and
+/// nothing else. Resolved in three steps:
+///
+/// 1. the order this person set on this list,
+/// 2. failing that, the earliest order anyone set here — a list shared with somebody
+///    who never opens the settings still walks the route the other person chose,
+/// 3. and whatever is left keeps the global order, behind the tags that were placed.
+///
+/// A list nobody has configured therefore comes back exactly as it does today.
+pub async fn order_for(ctx: &Ctx, actor: &Actor, list_id: list::Id) -> Result<Vec<Tag>> {
+    let user = actor.person()?;
+    lists::readable(ctx, user, list_id).await?;
+
+    let mut chosen = tag::Order::of(&ctx.db, list_id, user.id).await?;
+    if chosen.is_empty() {
+        chosen = tag::Order::inherited(&ctx.db, list_id).await?;
+    }
+
+    let all = Tag::list(&ctx.db, super::everything(), super::by_shop()).await?.items;
+
+    // Placed first, in the order they were placed; then everything else, in the order
+    // it already had. A tag that has been deleted since it was placed simply is not
+    // in `all`, and drops out here rather than becoming a hole.
+    let mut ordered: Vec<Tag> = chosen
+        .iter()
+        .filter_map(|id| all.iter().find(|t| t.id == *id).cloned())
+        .collect();
+    ordered.extend(all.into_iter().filter(|t| !chosen.contains(&t.id)));
+
+    Ok(ordered)
+}
+
+/// Replaces this person's order on this list. An empty list clears it, putting them
+/// back on whatever they would have inherited.
+///
+/// A viewer may set one: it changes how they see the list and nothing about the list
+/// itself, and telling somebody they may read a list but not decide what order they
+/// read it in would be a strange kind of permission.
+pub async fn set_order(
+    ctx: &Ctx,
+    actor: &Actor,
+    list_id: list::Id,
+    tags: &[tag::Id],
+) -> Result<()> {
+    let user = actor.person()?;
+    lists::readable(ctx, user, list_id).await?;
+
+    // Checked rather than trusted: a position given to a tag that does not exist
+    // would be a row the resolver silently drops, and a caller that mistyped an id
+    // deserves to be told rather than to watch nothing happen.
+    for id in tags {
+        Tag::get(&ctx.db, tag::Lookup::Id(*id)).await?;
+    }
+
+    Ok(tag::Order::set(&ctx.db, list_id, user.id, tags).await?)
+}
+
 /// Teaches the memory what this item is now filed under.
 ///
 /// The whole set is read back and stored, rather than the one tag that just moved.

@@ -36,6 +36,9 @@
         private let lock = NSLock()
         private var rows: [Row] = []
         private var lists: [StubList] = []
+        /// This person's tag order for a list, as the service resolves it: what they
+        /// placed leads, everything else keeps the shop's order behind it.
+        private var placed: [Int64: [Int64]] = [:]
         private(set) var itemsTruncated = false
         private(set) var itemsTotal: Int64 = 0
 
@@ -54,6 +57,7 @@
             defer { lock.unlock() }
 
             lists = [StubList(id: 1, name: "Home", role: scenario == "viewer" ? "viewer" : "owner")]
+            placed = [:]
             itemsTruncated = scenario == "truncated"
             rows = [
                 Row(id: 1, name: "Milk", amount: 1, unitID: 3, doneAt: nil, tagIDs: [40]),
@@ -152,6 +156,31 @@
         func unitsJSON() -> String {
             let items = units.map { #"{"id": \#($0.0), "name": "\#($0.1)"}"# }
             return page(items)
+        }
+
+        /// Tags in the order that decides where this list's items sit.
+        func tagOrderJSON(list: Int64) -> String {
+            lock.lock()
+            defer { lock.unlock() }
+
+            let leading = placed[list] ?? []
+            let ordered = leading.compactMap { id in tags.first { $0.0 == id } }
+                + tags.filter { !leading.contains($0.0) }
+
+            return "[\(ordered.map(tagJSON).joined(separator: ","))]"
+        }
+
+        func setTagOrder(_ ids: [Int64], on list: Int64) {
+            lock.lock()
+            defer { lock.unlock() }
+            placed[list] = ids
+        }
+
+        private func tagJSON(_ tag: (Int64, String, Int64, String?)) -> String {
+            """
+            {"id": \(tag.0), "name": "\(tag.1)", "sort_order": \(tag.2),
+             "emoji": \(tag.3.map { "\"\($0)\"" } ?? "null")}
+            """
         }
 
         func tagsJSON() -> String {

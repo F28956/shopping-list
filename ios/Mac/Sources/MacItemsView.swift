@@ -20,6 +20,7 @@ struct MacItemsView: View {
     @State private var suggestions = Suggestions()
     @State private var editing: Editing?
     @State private var confirmingClear = false
+    @State private var ordering = false
     @State private var error: String?
     @FocusState private var typing: Bool
 
@@ -87,6 +88,25 @@ struct MacItemsView: View {
             }
         }
         .navigationTitle(list.name)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    ordering = true
+                } label: {
+                    Label("Tag order", systemImage: "arrow.up.arrow.down")
+                }
+                .help("Which tag decides where an item sits")
+                .accessibilityIdentifier("order.open")
+            }
+        }
+        .sheet(isPresented: $ordering) {
+            TagOrderSheet(list: list, tags: tags) { chosen in
+                await attempt { try await api.setTagOrder(chosen, on: list) }
+                // The order changed, so what leads changed: read it back rather than
+                // reordering the copy held here and hoping the two agree.
+                await loadReference()
+            }
+        }
         .task { await loadReference() }
         .task { await load() }
         .task { await watch() }
@@ -375,7 +395,7 @@ struct MacItemsView: View {
     private func loadReference() async {
         do {
             async let units = api.units()
-            async let tags = api.tags()
+            async let tags = api.tags(orderedFor: list)
             (self.units, self.tags) = try await (units, tags)
         } catch {}
     }

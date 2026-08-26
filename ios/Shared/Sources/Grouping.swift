@@ -8,44 +8,44 @@ struct ItemGroup: Identifiable, Equatable {
     var id: String { heading }
 }
 
-/// The items under their category heading, in the order the shop is laid out.
+/// The items under their category heading, in the order this list is walked.
 ///
-/// The same rule the browser follows, kept here so the three screens agree: an item
-/// with several tags falls under the one that comes first in the shop, and an untagged
-/// one falls under "Other", last whatever the tags are numbered.
+/// `tags` arrives already in that order — resolved by the service, per person, per
+/// list — so this reads position in that array and nothing else. It used to read
+/// `sortOrder`, which is one global opinion: it put every shop-name tag last and
+/// could never let `urgent` lead.
 ///
-/// "First" is decided from `sortOrder` rather than from the order the ids arrive in.
-/// The server does send them sorted, but a rule that depends on that is a rule that
-/// breaks silently the day something else answers.
+/// An item with several tags falls under whichever of them comes first here, and an
+/// untagged one falls under "Other", last.
 func grouped(_ items: [Item], by tags: [Tag]) -> [ItemGroup] {
-    let byID = Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0) })
+    let placed = Dictionary(uniqueKeysWithValues: tags.enumerated().map { ($0.element.id, $0.offset) })
 
     /// Where this item sits, and what to call the group.
-    func category(_ item: Item) -> (order: Int64, heading: String) {
+    func category(_ item: Item) -> (order: Int, heading: String) {
         let primary = item.tagIDs
-            .compactMap { byID[$0] }
-            .min { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
+            .compactMap { id in placed[id].map { (at: $0, tag: tags[$0]) } }
+            .min { $0.at < $1.at }
 
         guard let primary else { return (.max, "Other") }
 
-        guard let emoji = primary.emoji, !emoji.isEmpty else {
-            return (primary.sortOrder, primary.name)
+        guard let emoji = primary.tag.emoji, !emoji.isEmpty else {
+            return (primary.at, primary.tag.name)
         }
-        return (primary.sortOrder, "\(emoji) \(primary.name)")
+        return (primary.at, "\(emoji) \(primary.tag.name)")
     }
 
     // Built in encounter order and sorted at the end, so items keep the order they
     // arrived in within their group -- that order is the server's answer about what
     // is outstanding and what is done, and re-sorting it here would discard it.
-    var order: [String: Int64] = [:]
+    var order: [String: Int] = [:]
     var members: [String: [Item]] = [:]
     var seen: [String] = []
 
     for item in items {
-        let (sortOrder, heading) = category(item)
+        let (position, heading) = category(item)
         if members[heading] == nil {
             seen.append(heading)
-            order[heading] = sortOrder
+            order[heading] = position
         }
         members[heading, default: []].append(item)
     }
