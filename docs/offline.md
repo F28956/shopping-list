@@ -191,11 +191,156 @@ Each step is useful on its own, and the app is never half-migrated: an operation
 either has an offline path or it does not, and the ones that do not stay
 online-only until they get one.
 
-## Open questions
+## Settled
 
-1. **How long may a queued change wait** before we stop trying and ask? A week?
-   Never?
-2. **Should a rejected operation be recoverable** — kept so it can be retried
-   against a list you have been re-invited to — or discarded with a note?
-3. **Is `attach wins` right for tags**, or should a detach made later on a
-   different device stick? The first is safer, the second is more obedient.
+* **Every change is an event.** Devices accumulate them offline and send them
+  when they can; the server replays them in order and that dictates the state.
+* **The latest event wins** where two events genuinely contradict.
+* **A queue never expires.** A phone left in a drawer for a month still has its
+  changes applied when it comes back.
+* **Losing access ends your influence.** Somebody removed from a list has no
+  effect on it from that moment, whatever is still queued on their device.
+
+Most pairs of changes never contradict and need no rule: two people crossing the
+same thing off agree; one crossing off while the other files it under a tag are
+about different fields and both apply.
+
+## Scenarios that need a decision
+
+These are the ones where "latest wins" either has no answer or gives an answer
+somebody would be surprised by. Each is written as it would actually happen.
+
+### 1. Add is not the same as set
+
+*Anna adds `2 kg apples`. Ben, offline, adds `2 kg apples` too.*
+
+Read as "latest wins", the list ends with 2 kg and one of them is wrong. Read as
+an increment — which is what the server does today — it ends with 4 kg.
+
+Adds have to be **additive**, not last-wins, which means an event that says
+"+2 kg" and an event that says "the amount is now 5" are different events and
+the client must know which it is sending. That is settled by which screen was
+used: the add field increments, the editor sets.
+
+**Consequence to accept:** the same add event must never be applied twice, so
+every event carries an id and the server records what it has applied.
+
+### 2. Editing something that has been deleted
+
+*Anna deletes `Milk`. Ben, offline, renames it to `Whole milk` and ticks it off.*
+
+Ben's events are later, so "latest wins" says apply them — but there is nothing
+to apply them to.
+
+* **(a) Delete is final.** Ben's edits are dropped. Simple, and he loses work he
+  believes he did.
+* **(b) The edit brings it back.** The row returns, renamed and ticked. Nothing
+  is lost, but a deliberate deletion undoes itself and Anna sees a ghost.
+* **(c) Delete is final, and Ben is told** in a "what changed" note.
+
+*Recommendation: (c).* Deleting is the more deliberate act, and the surprise is
+survivable if it is explained.
+
+### 3. Crossing off something that has been deleted
+
+The same shape as (2) but far more common — you tick things off in a shop while
+somebody at home tidies the list. Almost certainly wants the same answer as (2),
+but it is worth confirming, because "my tick did nothing" is more annoying than
+"my rename did nothing".
+
+### 4. Clear done, replayed late
+
+*Ben taps "clear 3 done" in the shop, offline. An hour later Anna ticks off four
+more things. Ben's phone finds signal.*
+
+"Clear everything that is done" replayed now removes Anna's four as well.
+
+The fix is that the event records **the ids it meant** at the time, so it clears
+Ben's three and nothing else. This seems clearly right; it is listed because it
+is invisible until it bites and it changes the event's shape.
+
+### 5. Two people editing different fields of the same item
+
+*Anna changes the amount to 5 kg. Ben, offline, renames it and adds a tag.*
+
+* **Whole-record latest-wins** keeps Ben's version and silently discards Anna's
+  amount.
+* **Per-field latest-wins** keeps the amount from Anna and the name and tag from
+  Ben, because they never actually disagreed.
+
+*Recommendation: per-field.* It is barely more work — the events are already
+per-field — and whole-record loses edits nobody was arguing about.
+
+### 6. A rename that splits or merges a row
+
+*The list has `Milk`. Anna renames it to `Whole milk`. Ben, offline, adds
+`milk`.*
+
+Replayed in that order there are two rows; in the other order, one row of two
+units called `Whole milk`. Both are defensible and the outcome depends on
+timing, which is the uncomfortable part.
+
+* **(a) Accept it.** Adding by name is how merging works, and a rename genuinely
+  changes what the name means.
+* **(b) Adds match on the identity they were made against**, not the name, when
+  the device could see the row.
+
+*Recommendation: (a),* on the grounds that (b) makes `add` behave differently
+depending on what was on screen, which is harder to explain than an extra row.
+
+### 7. Whose clock decides "latest"?
+
+Every rule above says "later". Devices disagree about the time, sometimes by
+hours, and a phone that is wrong by a day would win every conflict for a day.
+
+* **(a) Trust the device**, and accept that a wrong clock beats a right one.
+* **(b) Order by arrival at the server.** Nobody can lie, but a person who was
+  genuinely offline for a day loses to somebody who edited a minute ago.
+* **(c) Trust the device but clamp it** to a plausible window, ordering ties by
+  device id so every replica agrees.
+
+*Recommendation: (c).*
+
+### 8. Losing access, and what "after that time" means
+
+The rule is settled — actions after being removed have no effect — but it needs
+a clock, and (7) decides which one.
+
+*Ben is editing a shared list on a train with no signal. At 14:00 Anna removes
+him. At 14:30 he reaches signal, and his phone says his edits happened at 13:50.*
+
+* **By the device's clock**, the edits land: they happened before he was removed.
+  But a device can claim any time it likes, so this is also how a removed person
+  keeps writing to a list.
+* **By arrival**, they are refused: he was removed before they arrived. Safe, and
+  it discards work that genuinely happened while he had access.
+
+*Recommendation: refuse by arrival.* Removal is a security decision and a
+security decision should not depend on the removed party's clock. Ben's phone
+keeps the refused events and can say what was lost.
+
+**Follow-on:** what happens to those refused events? Kept in case he is invited
+back, or dropped with a note? This one I have no strong view on.
+
+### 9. Events for a list that no longer exists
+
+A queue never expires, so a device can arrive with a fortnight of changes for a
+list somebody deleted. They cannot be applied and never will be.
+
+* Drop them silently.
+* Drop them and say so.
+* Offer to recreate the list from them.
+
+*Recommendation: drop and say so.* Recreating a deleted list from somebody
+else's queue is the sort of clever that people find alarming.
+
+### 10. Tags: does a later detach beat an earlier attach?
+
+*Anna files `Bread` under `bakery`. Ben, offline and later, takes it off.*
+
+Strict latest-wins says the tag goes. The earlier draft of this document argued
+attach should always win, on the grounds that losing filing is worse than an
+extra tag. Under your model, latest-wins is the consistent answer and the
+special case is the odd one out.
+
+*Recommendation: follow the rule — latest wins,* and drop the special case.
