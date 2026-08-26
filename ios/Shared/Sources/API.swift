@@ -132,6 +132,66 @@ actor API {
 
     // MARK: - Writing
 
+    // MARK: - Sharing
+
+    /// Who this is, so a screen can tell which member is you.
+    func whoAmI() async throws -> Me {
+        try await get("/api/me")
+    }
+
+    /// Everyone who can see this list, the owner first.
+    func people(on list: List) async throws -> [Person] {
+        try await get("/api/lists/\(list.id)/members")
+    }
+
+    /// A link to share, returned exactly once — only its hash is kept, so a caller
+    /// that loses it makes another rather than looking the old one up.
+    func invite(to list: List, as role: Role = .editor) async throws -> URL {
+        struct Invitation: Decodable { let token: String }
+
+        let data = try await send(
+            "POST",
+            "/api/lists/\(list.id)/members/invites",
+            ["role": role.rawValue]
+        )
+        let invitation: Invitation
+        do {
+            invitation = try Self.decoder.decode(Invitation.self, from: data)
+        } catch {
+            throw APIError.transport(error)
+        }
+
+        // The browser's own join address: whoever it is sent to opens it wherever
+        // they are, and the app reads the token out of it — see `token(in:)`.
+        guard let url = URL(string: "/join/\(invitation.token)", relativeTo: baseURL) else {
+            throw APIError.badInput("Could not make a link")
+        }
+        return url.absoluteURL
+    }
+
+    /// Withdraws every outstanding link to this list. The only revocation there is:
+    /// an owner never sees a link again and cannot tell one from another.
+    func revokeInvites(to list: List) async throws {
+        _ = try await send("DELETE", "/api/lists/\(list.id)/members/invites", nil)
+    }
+
+    /// Follows a link. Answers with the list, so a caller can go straight to it.
+    @discardableResult
+    func join(withToken token: String) async throws -> List {
+        let data = try await send("POST", "/api/invites/\(token)", nil)
+        do {
+            return try Self.decoder.decode(List.self, from: data)
+        } catch {
+            throw APIError.transport(error)
+        }
+    }
+
+    /// Takes somebody off a list. Yourself, which is leaving, or somebody else, which
+    /// only an owner may do.
+    func remove(_ person: Person, from list: List) async throws {
+        _ = try await send("DELETE", "/api/lists/\(list.id)/members/\(person.userID)", nil)
+    }
+
     // MARK: - Lists
 
     /// Makes a list. The server answers with it, role included.

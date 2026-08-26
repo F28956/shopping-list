@@ -97,6 +97,31 @@ struct Item: Identifiable, Decodable, Hashable {
     }
 }
 
+/// Somebody who can see a list, and what they may do with it.
+struct Person: Identifiable, Decodable, Hashable {
+    let userID: Int64
+    let name: String?
+    let email: String?
+    let role: Role
+
+    var id: Int64 { userID }
+
+    /// What to call them. A name if the provider gave one, else the address, else
+    /// something honest — an account can have neither, and "Someone" at least does
+    /// not pretend otherwise.
+    var shown: String { name ?? email ?? "Someone" }
+
+    enum CodingKeys: String, CodingKey {
+        case name, email, role
+        case userID = "user_id"
+    }
+}
+
+/// The signed-in person, as the server knows them.
+struct Me: Decodable {
+    let id: Int64
+}
+
 struct Unit: Identifiable, Decodable, Hashable {
     let id: Int64
     let name: String

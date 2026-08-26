@@ -15,6 +15,8 @@ struct ListsView: View {
     @State private var loaded = false
     @State private var naming: ListNameSheet.Purpose?
     @State private var deleting: List?
+    @State private var sharing: List?
+    @State private var joining = false
 
     var body: some View {
         NavigationStack {
@@ -38,6 +40,14 @@ struct ListsView: View {
                             }
                             // Renaming and deleting are the owner's. An editor was
                             // given a list, not the say over whether it exists.
+                            .swipeActions(edge: .leading) {
+                                Button {
+                                    sharing = list
+                                } label: {
+                                    Label("Share", systemImage: "person.badge.plus")
+                                }
+                                .tint(.accentColor)
+                            }
                             .swipeActions(edge: .trailing) {
                                 if list.role >= .owner {
                                     Button(role: .destructive) {
@@ -75,13 +85,25 @@ struct ListsView: View {
                     Button("Sign out") { identity.signOut() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        naming = .create
+                    Menu {
+                        Button("New list", systemImage: "plus") { naming = .create }
+                        Button("Join a list", systemImage: "person.badge.plus") {
+                            joining = true
+                        }
                     } label: {
-                        Label("New list", systemImage: "plus")
+                        Label("Add", systemImage: "plus")
                     }
                     .accessibilityIdentifier("list.new")
                 }
+            }
+            .sheet(item: $sharing) { list in
+                ShareSheet(list: list, api: api) { await load() }
+            }
+            .sheet(isPresented: $joining) {
+                JoinSheet { found in
+                    await attempt { _ = try await api.join(withToken: found) }
+                }
+                .presentationDetents([.height(240)])
             }
             .sheet(item: $naming) { purpose in
                 ListNameSheet(purpose: purpose) { name in

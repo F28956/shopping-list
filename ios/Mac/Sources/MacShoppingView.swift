@@ -17,6 +17,8 @@ struct MacShoppingView: View {
     @State private var loaded = false
     @State private var naming: ListNameSheet.Purpose?
     @State private var deleting: List?
+    @State private var sharing: List?
+    @State private var joining = false
 
     private var selected: List? { lists.first { $0.id == chosen } }
 
@@ -48,6 +50,8 @@ struct MacShoppingView: View {
                             .tag(list.id)
                             .accessibilityIdentifier("list.\(list.name)")
                             .contextMenu {
+                                Button("Share…") { sharing = list }
+                                Divider()
                                 // Renaming and deleting are the owner's, not an
                                 // editor's: an editor was given a list, not the say
                                 // over whether it exists.
@@ -96,8 +100,31 @@ struct MacShoppingView: View {
                 .help("New list")
                 .accessibilityIdentifier("list.new")
             }
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    joining = true
+                } label: {
+                    Label("Join a list", systemImage: "person.badge.plus")
+                }
+                .help("Join a list somebody shared with you")
+                .accessibilityIdentifier("list.join")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button("Sign out") { identity.signOut() }
+            }
+        }
+        .sheet(item: $sharing) { list in
+            ShareSheet(list: list, api: api) { await load() }
+        }
+        .sheet(isPresented: $joining) {
+            JoinSheet { found in
+                await attempt {
+                    let joined = try await api.join(withToken: found)
+                    await load()
+                    // Opened on arrival: following a link is how you say which list
+                    // you want to be looking at.
+                    chosen = joined.id
+                }
             }
         }
         .sheet(item: $naming) { purpose in
