@@ -57,11 +57,11 @@ timestamp, and its arguments.
 |---|---|---|
 | `add(list, line)` | Apply as-is: already there means nothing happens | Idempotent, so arriving twice or late is the same as arriving once |
 | `setDone(item, done, at)` | Last write by `at` wins | The flag is already a timestamp; the later decision is the real one |
-| `rename(item, name, at)` | Last write per field by `at` | Two people renaming the same row is rare and one of them must win |
+| `rename(item, name, at)` | Splits into a second row if the row changed under it, otherwise renames in place | Nobody loses an edit; see scenario 5 |
 | `setAmount(item, amount, at)` | Last write by `at` | **Not** the same as adding — see below |
 | `attach/detach(item, tag)` | Attach wins over a concurrent detach | Filing something is a positive act; losing it is worse than an extra tag |
 | `delete(item)` | Delete is final — it beats edits arriving after it too; a *later* `add` of the same name creates a new row | Deletion is a fact about the server, not an intention on a device; re-adding is a new intention |
-| `clearDone(list, ids)` | Deletes **only the listed ids** | See "the dangerous one" |
+| `clearDone(list, ids)` | Deletes **only the listed ids** | The device is the only thing that can say what was clearable; see "the dangerous one" |
 | `createList / renameList` | Last write by `at` | Single-owner data |
 | `deleteList(list)` | Delete wins | Owner-only already |
 | `setTagOrder(list, tags)` | Last write by `at`, per person | Already per person; nobody else is affected |
@@ -90,7 +90,12 @@ away things somebody ticked off in the meantime, which nobody asked for.
 
 So the operation records **the ids it meant**, decided on the device at the time.
 Replayed late, it deletes those rows and nothing else. Rows already gone are a
-no-op.
+no-op, and a row somebody has put back on the list since is left alone — putting
+something back is a newer decision than a sweep queued before it.
+
+This is not a compromise, it is the only thing the device can honestly say. It
+cannot know what anybody else ticked off while it had no signal, so it clears
+what it could see and leaves the rest to whoever can see it.
 
 The same reasoning applies to any "all the ones that…" operation we add later.
 
@@ -322,17 +327,36 @@ The fix is that the event records **the ids it meant** at the time, so it clears
 Ben's three and nothing else. This seems clearly right; it is listed because it
 is invisible until it bites and it changes the event's shape.
 
-### 5. Two people editing different fields of the same item
+### 5. Two people editing different fields of the same item — settled
 
-*Anna changes the amount to 5 kg. Ben, offline, renames it and adds a tag.*
+*Anna changes Milk to 5 kg. Ben, offline, renames it to `Whole milk`.*
 
-* **Whole-record latest-wins** keeps Ben's version and silently discards Anna's
-  amount.
-* **Per-field latest-wins** keeps the amount from Anna and the name and tag from
-  Ben, because they never actually disagreed.
+**Both survive.** `Milk` keeps Anna's 5 kg, and `Whole milk` appears beside it
+carrying what Ben's screen showed. Nobody's edit is discarded, and the cost is a
+row somebody may have to tidy up — which is a cost you can see and undo, unlike
+an edit that quietly vanished.
 
-*Recommendation: per-field.* It is barely more work — the events are already
-per-field — and whole-record loses edits nobody was arguing about.
+The rule, precisely:
+
+* **A rename splits only when the row changed under it.** The operation carries
+  the name, amount and unit the device saw when somebody typed the new name. If
+  the row still looks like that, nothing was contested and it is a plain rename —
+  one row, new name. If it does not, somebody else edited it meanwhile, and the
+  rename becomes a second row rather than an overwrite.
+* **An edit that is not a rename never splits.** Two people changing the amount
+  are arguing about one number and one of them has to win; two rows both called
+  `Milk` would be a worse answer than either. Latest wins, as everywhere else.
+* **The new row carries what the renaming device saw** — Ben's 1 kg, not Anna's
+  5 kg. It is the row he was looking at, renamed. Giving it Anna's amount would
+  hand him a number he never saw and leave two rows claiming the same thing.
+* **It inherits the original's tags.** A rename is not a re-filing, and an
+  unfiled row is a worse answer than one filed where its predecessor was.
+
+*Known rough edge, until step 5.* A device that renames and then ticks off, all
+offline, sends both against the id it knew. If the rename splits, the tick lands
+on the original row rather than on the new one — the device has no way to learn
+the new row's id until it reloads. `POST /api/sync` can answer that in the same
+round trip; the REST routes cannot.
 
 ### 6. A rename that splits or merges a row
 

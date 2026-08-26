@@ -145,6 +145,29 @@ pub async fn get(ctx: &Ctx, actor: &Actor, id: item::Id) -> Result<Item> {
 /// because adding twice is one intention entered twice, and an edit is somebody
 /// saying what this particular row is. Silently folding it into another would delete
 /// a row they did not ask to lose.
+/// The row as the device last saw it, when an edit was made against a stale copy.
+///
+/// Only a client replaying a queue sends this. Somebody editing a row that is on their
+/// screen right now has nothing to compare against and needs nothing compared.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Seen {
+    pub name: Name,
+    pub amount: Amount,
+    pub unit_id: Option<unit::Id>,
+}
+
+/// Replaces what a person typed: name, amount, unit.
+///
+/// `seen` is what the row looked like when the edit was made, and it is what decides
+/// between renaming a row and splitting one. See scenario 5 of `docs/offline.md`:
+///
+/// * Nothing else touched the row since — a plain edit, in place.
+/// * Somebody else edited it, and this edit **changes the name** — their row keeps
+///   their edit, and the new name becomes a second row carrying what this device saw.
+///   Neither person loses anything they typed.
+/// * Somebody else edited it and this edit does *not* change the name — latest wins,
+///   in place. Two people arguing about one number is one argument, and two rows both
+///   called `Milk` would be a worse answer than either of them winning.
 pub async fn update(
     ctx: &Ctx,
     actor: &Actor,
@@ -152,9 +175,17 @@ pub async fn update(
     name: Name,
     amount: Amount,
     unit_id: Option<unit::Id>,
+    seen: Option<Seen>,
 ) -> Result<Item> {
     let owner = actor.person()?;
-    editable(ctx, owner, id).await?;
+    let current = editable(ctx, owner, id).await?;
+
+    if let Some(seen) = seen
+        && splits(&current, &seen, &name)
+    {
+        return split(ctx, actor, &current, name, seen).await;
+    }
+
     let item = Item::update(&ctx.db, id, name, amount, unit_id).await?;
 
     // Correcting a name teaches the correction. The typo it replaced stays until it
@@ -164,6 +195,53 @@ pub async fn update(
 
     ctx.changes.announce(item.list_id);
     Ok(item)
+}
+
+/// Whether an edit made against a stale copy of a row should become a second row.
+///
+/// Both halves are needed. A row that has not changed is not contested, however late
+/// the edit is; and an edit that leaves the name alone has nothing to split *into*.
+fn splits(current: &Item, seen: &Seen, wanted: &Name) -> bool {
+    let moved = current.name.0.trim() != seen.name.0.trim()
+        || current.amount != seen.amount
+        || current.unit_id != seen.unit_id;
+
+    // Compared after trimming and capitalising, because that is what the model would
+    // have stored -- otherwise `milk` "renamed" to `Milk` splits a row in two.
+    let renaming = current.name != wanted.clone().trimmed().capitalised();
+
+    moved && renaming
+}
+
+/// Puts the new name on a row of its own, leaving the contested one alone.
+///
+/// The new row carries the amount and unit **this device saw**, not the ones it has
+/// now: it is the row somebody was looking at when they renamed it, and handing them
+/// the other person's number would be giving them something they never asked for.
+///
+/// The tags come from the original as it stands. A rename is not a re-filing, and a
+/// row that lands in no category is a worse answer than one filed where the thing it
+/// was renamed from is filed.
+async fn split(ctx: &Ctx, actor: &Actor, current: &Item, name: Name, seen: Seen) -> Result<Item> {
+    let renamed = create(
+        ctx,
+        actor,
+        current.list_id,
+        None,
+        name,
+        seen.amount,
+        seen.unit_id,
+    )
+    .await?;
+
+    for filed in tag::Tag::for_item(&ctx.db, current.id).await? {
+        // Best effort: a tag that will not attach is a row filed less well, which is
+        // not worth failing a rename over.
+        let _ = tag::Tag::attach(&ctx.db, renamed.id, filed.id).await;
+    }
+
+    ctx.changes.announce(current.list_id);
+    Ok(renamed)
 }
 
 /// Ticks an item off, or puts it back.

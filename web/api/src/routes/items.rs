@@ -39,6 +39,28 @@ pub struct ItemInput {
     #[serde(default = "one")]
     pub amount: f64,
     pub unit_id: Option<i64>,
+    /// The row as the sender last saw it, when this edit was made against a copy
+    /// rather than against the row on screen. Only a client replaying a queue sends
+    /// it; see [`items::Seen`] for what it decides.
+    pub seen: Option<SeenInput>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SeenInput {
+    pub name: String,
+    #[serde(default = "one")]
+    pub amount: f64,
+    pub unit_id: Option<i64>,
+}
+
+impl SeenInput {
+    fn parts(self) -> items::Seen {
+        items::Seen {
+            name: Name(self.name),
+            amount: Amount(self.amount),
+            unit_id: self.unit_id.map(unit::Id),
+        }
+    }
 }
 
 /// What to add, either way a caller might mean it.
@@ -65,11 +87,12 @@ fn one() -> f64 {
 }
 
 impl ItemInput {
-    fn parts(self) -> (Name, Amount, Option<unit::Id>) {
+    fn parts(self) -> (Name, Amount, Option<unit::Id>, Option<items::Seen>) {
         (
             Name(self.name),
             Amount(self.amount),
             self.unit_id.map(unit::Id),
+            self.seen.map(SeenInput::parts),
         )
     }
 }
@@ -177,7 +200,7 @@ async fn update(
     Path((_list_id, item_id)): Path<(i64, i64)>,
     Json(input): Json<ItemInput>,
 ) -> Result<Json<Item>, AppError> {
-    let (name, amount, unit_id) = input.parts();
+    let (name, amount, unit_id, seen) = input.parts();
     Ok(Json(
         items::update(
             &state.ctx,
@@ -186,6 +209,7 @@ async fn update(
             name,
             amount,
             unit_id,
+            seen,
         )
         .await?,
     ))

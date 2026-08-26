@@ -751,6 +751,9 @@ pub async fn edit(
         Name(form.name),
         Amount(form.amount.unwrap_or(1.0)),
         unit_id,
+        // The browser is editing the row it is looking at, so there is nothing stale
+        // to compare against and nothing to split.
+        None,
     )
     .await?;
 

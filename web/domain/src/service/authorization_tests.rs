@@ -122,8 +122,7 @@ async fn a_stranger_cannot_touch_an_item(#[future(awt)] pool: SqlitePool) {
             id,
             item::Name("theirs".into()),
             item::Amount(9.0),
-            None
-        )
+            None, None)
         .await,
         Err(ServiceError::NotFound)
     );
@@ -705,17 +704,25 @@ async fn an_unconfigured_list_keeps_the_global_order(
 /// behind that add on that device says the same name, so a server that renamed it would
 /// orphan the lot. The second call is what a flaky connection produces -- the add landed
 /// and the answer did not -- and it has to be the same row rather than a second one.
+/// A rename made against a row somebody else has edited becomes a second row.
+///
+/// Anna sets the amount to 5, Ben renames it from a copy that still said 1. Both edits
+/// survive: Anna's row keeps her number, and Ben's name arrives beside it carrying what
+/// he was looking at. See scenario 5 of docs/offline.md.
+///
+/// Both edits are made by the same actor here, because who made them is not what the
+/// rule turns on -- it turns on the row having moved since the copy was taken, which is
+/// as true of two of somebody's own devices as of two people.
 #[rstest]
 #[tokio::test]
-async fn an_add_keeps_the_name_the_device_gave_it(#[future(awt)] pool: SqlitePool) {
+async fn a_rename_against_a_changed_row_splits_it(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
-    let named = item::Uuid::mint();
 
-    let first = items::create(
+    let milk = items::create(
         &s.ctx,
         &s.mine,
         s.list.id,
-        Some(named.clone()),
+        None,
         item::Name("Milk".into()),
         item::Amount(1.0),
         None,
@@ -723,25 +730,62 @@ async fn an_add_keeps_the_name_the_device_gave_it(#[future(awt)] pool: SqlitePoo
     .await
     .unwrap();
 
-    assert_eq!(first.uuid, named);
+    // What Ben's phone had on screen when he typed the new name.
+    let seen = items::Seen {
+        name: item::Name("Milk".into()),
+        amount: item::Amount(1.0),
+        unit_id: milk.unit_id,
+    };
 
-    // Renamed in between, so the name-matching path cannot be what answers.
+    // Anna, meanwhile.
     items::update(
         &s.ctx,
         &s.mine,
-        first.id,
-        item::Name("Whole milk".into()),
-        item::Amount(1.0),
+        milk.id,
+        item::Name("Milk".into()),
+        item::Amount(5.0),
+        milk.unit_id,
         None,
     )
     .await
     .unwrap();
 
-    let resent = items::create(
+    let renamed = items::update(
+        &s.ctx,
+        &s.mine,
+        milk.id,
+        item::Name("Whole milk".into()),
+        item::Amount(1.0),
+        milk.unit_id,
+        Some(seen),
+    )
+    .await
+    .unwrap();
+
+    assert_ne!(renamed.id, milk.id, "the contested row was overwritten");
+    assert_eq!(renamed.name, item::Name("Whole milk".into()));
+    assert_eq!(
+        renamed.amount,
+        item::Amount(1.0),
+        "the new row carries what the renaming device saw, not the other person's number"
+    );
+
+    let still = items::get(&s.ctx, &s.mine, milk.id).await.unwrap();
+    assert_eq!(still.name, item::Name("Milk".into()));
+    assert_eq!(still.amount, item::Amount(5.0), "the amount edit was lost");
+}
+
+/// A row nothing else has touched is not contested, however late the rename is.
+#[rstest]
+#[tokio::test]
+async fn a_rename_against_an_unchanged_row_renames_it(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    let milk = items::create(
         &s.ctx,
         &s.mine,
         s.list.id,
-        Some(named),
+        None,
         item::Name("Milk".into()),
         item::Amount(1.0),
         None,
@@ -749,12 +793,130 @@ async fn an_add_keeps_the_name_the_device_gave_it(#[future(awt)] pool: SqlitePoo
     .await
     .unwrap();
 
-    assert_eq!(resent.id, first.id, "a resend is the same row");
-    assert_eq!(
-        resent.name,
+    let renamed = items::update(
+        &s.ctx,
+        &s.mine,
+        milk.id,
         item::Name("Whole milk".into()),
-        "and it is returned as it is now, not as the add described it"
-    );
+        item::Amount(1.0),
+        milk.unit_id,
+        Some(items::Seen {
+            name: item::Name("Milk".into()),
+            amount: item::Amount(1.0),
+            unit_id: milk.unit_id,
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(renamed.id, milk.id, "an uncontested rename must not split");
+    assert_eq!(renamed.name, item::Name("Whole milk".into()));
+}
+
+/// Two people arguing about one number is one argument, and one of them wins.
+///
+/// Splitting here would leave two rows both called `Milk`, which is a worse answer
+/// than either person losing their number.
+#[rstest]
+#[tokio::test]
+async fn an_edit_that_is_not_a_rename_never_splits(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    let milk = items::create(
+        &s.ctx,
+        &s.mine,
+        s.list.id,
+        None,
+        item::Name("Milk".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+
+    items::update(
+        &s.ctx,
+        &s.mine,
+        milk.id,
+        item::Name("Milk".into()),
+        item::Amount(5.0),
+        milk.unit_id,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let after = items::update(
+        &s.ctx,
+        &s.mine,
+        milk.id,
+        item::Name("Milk".into()),
+        item::Amount(9.0),
+        milk.unit_id,
+        Some(items::Seen {
+            name: item::Name("Milk".into()),
+            amount: item::Amount(1.0),
+            unit_id: milk.unit_id,
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(after.id, milk.id);
+    assert_eq!(after.amount, item::Amount(9.0), "latest wins, in place");
+}
+
+/// Capitalisation is the model's, not a rename.
+///
+/// `Item::update` trims and capitalises what it stores, so a device that sends back
+/// `milk` for a row the server calls `Milk` is not renaming anything -- and splitting a
+/// row in two over a capital letter would be an unpleasant surprise.
+#[rstest]
+#[tokio::test]
+async fn a_difference_the_model_would_have_made_is_not_a_rename(#[future(awt)] pool: SqlitePool) {
+    let s = scene(pool).await;
+
+    let milk = items::create(
+        &s.ctx,
+        &s.mine,
+        s.list.id,
+        None,
+        item::Name("Milk".into()),
+        item::Amount(1.0),
+        None,
+    )
+    .await
+    .unwrap();
+
+    items::update(
+        &s.ctx,
+        &s.mine,
+        milk.id,
+        item::Name("Milk".into()),
+        item::Amount(5.0),
+        milk.unit_id,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let after = items::update(
+        &s.ctx,
+        &s.mine,
+        milk.id,
+        item::Name("  milk ".into()),
+        item::Amount(2.0),
+        milk.unit_id,
+        Some(items::Seen {
+            name: item::Name("Milk".into()),
+            amount: item::Amount(1.0),
+            unit_id: milk.unit_id,
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(after.id, milk.id, "a capital letter split the row in two");
 }
 
 /// A sweep that names the rows it meant takes those and leaves the rest.
@@ -1583,6 +1745,7 @@ async fn an_editor_may_change_what_is_on_the_list(#[future(awt)] pool: SqlitePoo
         added.id,
         item::Name("pears".into()),
         item::Amount(1.0),
+        None,
         None,
     )
     .await
