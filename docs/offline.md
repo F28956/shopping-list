@@ -36,9 +36,9 @@ domain actually needs.
 A shopping list is nearly all commutative, and this server already leans that
 way:
 
-* **Adding merges.** `items::create` already finds an item with the same name
-  and unit and adds the amounts. Two devices each adding `2 kg apples` offline
-  produce 4 kg, in either order, with no special handling.
+* **Adding is idempotent.** `items::create` finds an item with the same name and
+  unit and leaves it alone. Two devices each adding `2 kg apples` offline produce
+  one row, in either order, however many times the event arrives.
 * **Crossing off is a timestamp**, not a flag, so the later one plainly wins.
 * **Tags are a set.** Attaching twice is attaching once.
 * **The memory and the suggestions are derived.** They never need syncing;
@@ -55,7 +55,7 @@ timestamp, and its arguments.
 
 | Operation | Late-arrival rule | Why |
 |---|---|---|
-| `add(list, line)` | Apply as-is: the service merges by name and unit | Adding twice is one intention entered twice — already true today |
+| `add(list, line)` | Apply as-is: already there means nothing happens | Idempotent, so arriving twice or late is the same as arriving once |
 | `setDone(item, done, at)` | Last write by `at` wins | The flag is already a timestamp; the later decision is the real one |
 | `rename(item, name, at)` | Last write per field by `at` | Two people renaming the same row is rare and one of them must win |
 | `setAmount(item, amount, at)` | Last write by `at` | **Not** the same as adding — see below |
@@ -70,19 +70,17 @@ Not queued, ever: **invitations and joining.** A share code is a secret the
 server issues, and an offline device cannot invent one. These stay online-only
 and say so.
 
-## Add is not the same as set
+## Adding and setting are different, and only one of them is risky
 
-The single most important distinction, and the one a naive design gets wrong.
+* `add(2 kg apples)` means **put apples on the list**. Already there? Nothing
+  happens. Safe to replay any number of times.
+* `setAmount(item, 5)` means **the amount is now 5**. Also safe to replay: the
+  second application does nothing the first did not.
 
-* `add(2 kg apples)` means **+2**. Two devices, two adds, offline: 4 kg.
-* `setAmount(item, 5)` means **=5**. Two devices, two sets: the later wins.
-
-Today both go through the same door and the difference is implicit in which
-screen you used. Offline, they must be different operations, because replaying
-"the amount is now 5" three times is fine and replaying "+2" three times is not.
-
-This is why every operation carries an id and the server records which it has
-applied: a client that times out and resends must not add twice.
+Neither is an increment, which is what makes replay cheap here. Operations still
+carry ids, because a duplicate `delete` or a duplicate `clearDone` is worth
+recognising and because a rejection needs something to name — but no rule
+depends on exactly-once delivery.
 
 ## The dangerous one: clear done
 
@@ -210,20 +208,23 @@ about different fields and both apply.
 These are the ones where "latest wins" either has no answer or gives an answer
 somebody would be surprised by. Each is written as it would actually happen.
 
-### 1. Add is not the same as set
+### 1. Add is idempotent — settled
 
 *Anna adds `2 kg apples`. Ben, offline, adds `2 kg apples` too.*
 
-Read as "latest wins", the list ends with 2 kg and one of them is wrong. Read as
-an increment — which is what the server does today — it ends with 4 kg.
+Adding something the list already wants **changes nothing**: it is already there,
+and that is the whole answer. It does not become 4 kg — somebody adding a thing
+has not looked at the amount and is not asking for it to move. Only the editor
+sets an amount.
 
-Adds have to be **additive**, not last-wins, which means an event that says
-"+2 kg" and an event that says "the amount is now 5" are different events and
-the client must know which it is sending. That is settled by which screen was
-used: the add field increments, the editor sets.
+Crossed off is the one exception, and barely one: adding something already ticked
+off puts it back, with the amount it had. Otherwise a person types a name, sees
+nothing happen, and reasonably concludes the app is broken.
 
-**Consequence to accept:** the same add event must never be applied twice, so
-every event carries an id and the server records what it has applied.
+This is the decision that makes the rest of the design easy. An event saying "put
+milk on the list" can arrive twice, or an hour late, or interleaved with anybody
+else's, and mean the same thing every time. There is no increment to double-apply
+and no need for the server to remember which adds it has already seen.
 
 ### 2. Editing something that has been deleted
 

@@ -335,8 +335,9 @@ final class ShoppingUITests: XCTestCase {
 
     // MARK: - Adding what is already there
 
-    /// Two rows saying Milk are never two intentions. Adding it again adds to it.
-    func testAddingSomethingAlreadyOnTheListAddsToIt() {
+    /// Two rows saying Milk are never two intentions -- and neither is three pints
+    /// when somebody asked for two. It is already there; that is the whole answer.
+    func testAddingSomethingAlreadyOnTheListChangesNothing() {
         let app = launch()
         let field = app.textFields["add.field"]
         expect(field)
@@ -346,9 +347,11 @@ final class ShoppingUITests: XCTestCase {
         field.typeText("2 pint milk")
         app.buttons["add.button"].click()
 
-        let merged = NSPredicate(format: "label CONTAINS %@", "3 pint")
-        expectation(for: merged, evaluatedWith: app.buttons["item.Milk"])
+        // Given a moment to have done the wrong thing, and then checked.
+        let stillOne = NSPredicate(format: "label CONTAINS %@", "1 pint")
+        expectation(for: stillOne, evaluatedWith: app.buttons["item.Milk"])
         waitForExpectations(timeout: 5)
+        XCTAssertFalse(app.buttons["item.Milk"].label.contains("3 pint"))
     }
 
     /// Adding something crossed off puts it back, which is how you say you need it

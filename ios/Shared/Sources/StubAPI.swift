@@ -261,9 +261,9 @@
             let next = (rows.map(\.id).max() ?? 0) + 1
             let parts = line.split(separator: " ").map(String.init)
 
-            /// Adding what the list already wants adds to it, as the service does:
-            /// same name ignoring case, same unit, outstanding row preferred, and a
-            /// crossed-off one comes back.
+            /// Adding what the list already wants changes nothing, as the service
+            /// does: same name ignoring case, same unit. A crossed-off one comes back,
+            /// with the amount it had.
             func put(_ name: String, _ amount: Double, _ unitID: Int64?) {
                 let wanted = name.trimmingCharacters(in: .whitespaces).lowercased()
                 let alike = rows.indices
@@ -276,7 +276,8 @@
                     }
 
                 if let at = alike {
-                    rows[at].amount += amount
+                    // Not `+= amount`: it is already there, and somebody adding a thing
+                    // has not looked at the number.
                     rows[at].doneAt = nil
                 } else {
                     rows.append(

@@ -47,10 +47,10 @@ pub async fn create(
     let owner = actor.person()?;
     lists::editable(ctx, owner, list_id).await?;
 
-    // Checked here, not left to `CHECK (amount > 0)`. That constraint only guards the
-    // insert, and the merge below is an addition: `2 + -1` is 1, which the column is
-    // perfectly happy with. Without this, adding a negative amount of something
-    // already on the list quietly took some of it away.
+    // Checked here rather than left to `CHECK (amount > 0)`, so a nonsense amount is
+    // the caller's mistake rather than a constraint violation surfacing as a database
+    // error -- and so it is refused whether or not the item turns out to exist
+    // already, which is the path that does no insert at all.
     if !amount.0.is_finite() || amount.0 <= 0.0 {
         return Err(ServiceError::InvalidInput);
     }
@@ -66,15 +66,23 @@ pub async fn create(
             .ok(),
     };
 
-    // Adding something the list already wants adds to it rather than beside it. Two
-    // rows saying `Milk` are never two intentions; they are one intention entered
-    // twice, and a list that grows a second copy every time somebody reaches for it
-    // is a list that has to be tidied before it can be read.
+    // Adding something the list already wants changes nothing: it is already there,
+    // and that is the whole answer. Two rows saying `Milk` are never two intentions,
+    // and neither is `4 kg` when two people each asked for two -- somebody adding a
+    // thing has not looked at the amount and is not asking for it to move.
     //
-    // Here rather than in a transport, so the browser, the phone, the watch and the
-    // Mac cannot disagree about what adding something twice means.
+    // Crossed off is the exception, and not really an exception: adding something you
+    // have already ticked off is how you say you need it after all, so it comes back
+    // -- with the amount it had, untouched.
+    //
+    // Being idempotent is what makes this safe to replay. An event that says "put
+    // milk on the list" can arrive twice, or an hour late, and mean the same thing
+    // both times -- see docs/offline.md.
     let item = match Item::alike(&ctx.db, list_id, &name, unit_id).await? {
-        Some(existing) => Item::add_to(&ctx.db, existing.id, amount).await?,
+        Some(existing) if existing.done_at.is_some() => {
+            Item::put_back(&ctx.db, existing.id).await?
+        }
+        Some(existing) => existing,
         None => Item::create(&ctx.db, list_id, name, amount, unit_id).await?,
     };
 

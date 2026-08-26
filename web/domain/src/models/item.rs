@@ -123,16 +123,17 @@ impl Item {
             .find(|i| i.unit_id == unit_id && i.name.0.trim().to_lowercase() == wanted))
     }
 
-    /// Adds to an item's amount, and puts it back on the list if it was crossed off.
+    /// Puts an item back on the list, leaving everything else as it was.
     ///
-    /// Un-crossing is the point as much as the arithmetic: adding something you have
-    /// already ticked off is how you say you need it after all.
-    pub async fn add_to(pool: &sqlx::SqlitePool, id: Id, extra: Amount) -> Result<Item> {
+    /// The amount is untouched: adding something already on the list is somebody
+    /// saying they need it, not saying how much — they have not looked at the number,
+    /// and changing it under them is the app deciding something it was not told.
+    pub async fn put_back(pool: &sqlx::SqlitePool, id: Id) -> Result<Item> {
         let item = sqlx::query_as!(
             Item,
             r#"
             UPDATE items
-            SET amount = amount + ?2, done_at = NULL
+            SET done_at = NULL
             WHERE id = ?1
             RETURNING
                 id          as "id!: Id",
@@ -144,7 +145,6 @@ impl Item {
                 created_at  as "created_at!: CreatedAt"
             "#,
             id,
-            extra,
         )
         .fetch_optional(pool)
         .await?

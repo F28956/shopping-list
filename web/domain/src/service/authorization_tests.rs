@@ -545,12 +545,12 @@ async fn a_remembered_item_returns_measured_and_filed(#[future(awt)] pool: Sqlit
     assert_eq!(again.unit_id, Some(pint.id), "the unit was not remembered");
 
     // Remembering the unit is what makes the second one the same thing as the first,
-    // so it lands on the row already there: four pints and another is five.
+    // so it lands on the row already there -- and changes nothing about it.
     assert_eq!(again.id, first.id, "a second row was made for the same thing");
     assert_eq!(
         again.amount,
-        item::Amount(5.0),
-        "the amounts were not added together"
+        item::Amount(4.0),
+        "adding it again moved the amount"
     );
 
     let on_it = tags::for_item(&s.ctx, &s.mine, again.id).await.unwrap();
@@ -988,14 +988,17 @@ async fn what_is_already_typed_is_not_offered(#[future(awt)] pool: SqlitePool) {
     assert!(!offered.iter().any(|n| n.0 == "Milk"));
 }
 
-/// Adding what the list already wants adds to it, rather than beside it.
+/// Adding what the list already wants changes nothing.
 ///
-/// Two rows saying `Milk` are never two intentions; they are one intention entered
-/// twice, and a list that grows a copy every time somebody reaches for it has to be
-/// tidied before it can be read.
+/// It is already there, and that is the whole answer. Two rows saying `Milk` are
+/// never two intentions, and neither is four kilograms when two people each asked for
+/// two -- somebody adding a thing has not looked at the amount.
+///
+/// Being idempotent is also what makes an add safe to replay: the same event twice,
+/// or an hour late, means the same thing both times.
 #[rstest]
 #[tokio::test]
-async fn adding_the_same_thing_twice_adds_to_it(#[future(awt)] pool: SqlitePool) {
+async fn adding_the_same_thing_twice_changes_nothing(#[future(awt)] pool: SqlitePool) {
     let s = scene(pool).await;
     let kg = units::create(&s.ctx, &Actor::System, unit::Name("kg".into()))
         .await
@@ -1031,7 +1034,7 @@ async fn adding_the_same_thing_twice_adds_to_it(#[future(awt)] pool: SqlitePool)
     .unwrap();
 
     assert_eq!(again.id, first.id, "a second row was made");
-    assert_eq!(again.amount, item::Amount(3.0));
+    assert_eq!(again.amount, item::Amount(2.0), "the amount was moved under them");
     assert_eq!(again.name, item::Name("Apples".into()), "the spelling stood");
 
     let page = items::for_list(&s.ctx, &s.mine, list.id, all(), order(item::Field::Id))
@@ -1104,7 +1107,11 @@ async fn adding_something_crossed_off_puts_it_back(#[future(awt)] pool: SqlitePo
 
     assert_eq!(again.id, first.id);
     assert!(again.done_at.is_none(), "it stayed crossed off");
-    assert_eq!(again.amount, item::Amount(2.0));
+    assert_eq!(
+        again.amount,
+        item::Amount(1.0),
+        "putting it back changed the amount"
+    );
 }
 
 /// An outstanding row wins over a crossed-off one: adding milk when milk is on the
@@ -1226,8 +1233,7 @@ async fn an_item_with_no_unit_gets_the_unit_unit(
         .unwrap();
 
     assert!(plain.unit_id.is_some(), "no unit was filled in");
-    assert_eq!(spelled.id, plain.id, "the two did not merge");
-    assert_eq!(spelled.amount, item::Amount(2.0));
+    assert_eq!(spelled.id, plain.id, "the two were not recognised as one thing");
 }
 
 /// A typo can be taken back.
