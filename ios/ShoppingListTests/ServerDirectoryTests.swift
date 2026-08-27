@@ -118,6 +118,21 @@ struct ServerDirectoryTests {
         #expect(!about("closed").admitsAnyone)
     }
 
+    /// The state that is easy to miss. On a build compiled with an address, forgetting
+    /// must not fall back to it — that would be a "change server" button that appears
+    /// to work and does nothing.
+    @Test func forgettingIsNotTheSameAsNeverHavingBeenAsked() {
+        let key = "server.address"
+        let before = UserDefaults.standard.string(forKey: key)
+        defer { UserDefaults.standard.set(before, forKey: key) }
+
+        ServerDirectory.remember(try! ServerAddress.parse("https://one.example.com").get())
+        ServerDirectory.forget()
+
+        #expect(ServerDirectory.current == nil)
+        #expect(ServerDirectory.needsAnAddress)
+    }
+
     @Test func everyRefusalSaysSomething() {
         for refusal: ServerDirectory.Refusal in [.unreachable, .notThisSoftware, .certificateRefused] {
             #expect(!refusal.sentence.isEmpty)

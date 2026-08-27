@@ -16,14 +16,21 @@ enum ServerDirectory {
     /// Falls back to the build setting, so a development build with
     /// `SHOPPING_LIST_API_BASE_URL` in `Config.xcconfig` keeps working with nothing
     /// entered and the simulator keeps talking to `localhost`.
+    /// One key, three states, and the third is the one that is easy to miss.
+    ///
+    /// * **Absent** — nobody has ever been asked, so the build setting applies.
+    /// * **A value** — what somebody entered.
+    /// * **Empty** — somebody deliberately cleared it, and the build setting must
+    ///   *not* apply. Without this state, "change server" on a build compiled with an
+    ///   address would clear the stored one and fall straight back to the built-in,
+    ///   which is a button that appears to work and does nothing.
     static var current: ServerAddress? {
-        if let stored = UserDefaults.standard.string(forKey: key),
-           case .success(let address) = ServerAddress.parse(stored, allowingCleartext: true)
-        {
-            return address
-        }
+        guard let stored = UserDefaults.standard.string(forKey: key) else { return built }
 
-        return built
+        guard case .success(let address) = ServerAddress.parse(stored, allowingCleartext: true)
+        else { return nil }
+
+        return address
     }
 
     /// What the build was pointed at, if anything.
@@ -61,7 +68,9 @@ enum ServerDirectory {
     /// suggestions belong to an account on it. Carrying them across would show one
     /// server's lists under another server's name.
     static func forget() {
-        UserDefaults.standard.removeObject(forKey: key)
+        // Emptied rather than removed: removing it would mean "never asked", and a
+        // build with a compiled-in address would answer with that one — see `current`.
+        UserDefaults.standard.set("", forKey: key)
     }
 
     // MARK: - Asking

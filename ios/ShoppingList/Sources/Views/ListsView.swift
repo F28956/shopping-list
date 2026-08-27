@@ -33,6 +33,21 @@ struct ListsView: View {
     @State private var deleting: List?
     @State private var sharing: List?
     @State private var joining = false
+    /// Asked once, and worth asking: changing servers throws away everything on this
+    /// device (C4).
+    @State private var changingServer = false
+
+    /// Forgets the server and everything that came from it.
+    ///
+    /// The order matters only in that the address goes last: if anything above throws,
+    /// the device is still pointed at a server it can be signed into again, rather than
+    /// at nothing with a cache full of somebody else's ids.
+    private func leaveThisServer() {
+        // `forgetEverything` takes the outbox with it — see `Cache`.
+        cache.forgetEverything()
+        identity.signOut()
+        ServerDirectory.forget()
+    }
 
     var body: some View {
         NavigationStack {
@@ -152,11 +167,31 @@ struct ListsView: View {
                         Button("Join a list", systemImage: "person.badge.plus") {
                             joining = true
                         }
+                        Divider()
+                        Button("Change server", systemImage: "server.rack", role: .destructive) {
+                            changingServer = true
+                        }
+                        .accessibilityIdentifier("change-server")
                     } label: {
                         Label("Add", systemImage: "plus")
                     }
                     .accessibilityIdentifier("list.new")
                 }
+            }
+            // C4. Not a precaution: the cache holds rows keyed by ids and uuids the
+            // old server minted, and the history and suggestions belong to an account
+            // on it. Carrying them across would show one server's lists under another
+            // server's name.
+            .alert("Change server?", isPresented: $changingServer) {
+                Button("Cancel", role: .cancel) {}
+                Button("Change server", role: .destructive) { leaveThisServer() }
+            } message: {
+                Text(
+                    """
+                    This signs you out and removes everything stored on this device. \
+                    Anything still waiting to be sent will be lost.
+                    """
+                )
             }
             .sheet(item: $sharing) { list in
                 ShareSheet(list: list, api: api) { await load() }
