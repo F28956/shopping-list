@@ -119,14 +119,20 @@ the plan stops here it has delivered the thing that started this conversation.
 
 ## P2 · Somebody else can install it
 
-1. **Local-only lists** — S1. The largest item in the first half, and the one that
+1. **The owner's screens.** P1 gave the server `/api/admissions` and `/api/server`
+   and gave the clients nothing, so an owner can admit somebody over HTTP and nowhere
+   else. That is P1 work counted as done because the server half was; it is written
+   down here rather than left implicit. It also earns its place in P2 on its own
+   terms: a reviewer who opens an app and finds a working administration screen is
+   looking at an app with substance, which is the 4.2 argument again.
+2. **Local-only lists** — S1. The largest item in the first half, and the one that
    decides App Store review. Also the first step of P3, which is the argument for
    doing it here rather than arguing about 4.2 with a demo instance.
-2. **ATS** — S4's client half. Small, and currently a silent failure for anybody
+3. **ATS** — S4's client half. Small, and currently a silent failure for anybody
    typing an address that is not `localhost`.
-3. **The demo instance and the listing** — S5 and S6.
+4. **The demo instance and the listing** — S5 and S6.
 
-**Off-ramp:** TestFlight needs 1 and 2 and none of 3. If the store turns out not to
+**Off-ramp:** TestFlight needs 1 to 3 and none of 4. If the store turns out not to
 be worth a permanent demo server, stop after item 2 and distribute that way — which
 [self-hosting.md](self-hosting.md)'s Open already suspects is the right answer.
 
