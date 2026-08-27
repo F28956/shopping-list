@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Whether this watch is in step with its phone, as one dot.
+/// Whether this watch is in step with the far end, as one dot.
 ///
 /// A wrist has no room for a sentence. The phones can afford "Offline. 2 changes
 /// waiting to be sent." because they have a line to spare; here that line costs a row,
@@ -8,23 +8,28 @@ import SwiftUI
 ///
 /// Two colours, and the reading is deliberately coarse:
 ///
-/// * **Green** — everything you have done here has reached the phone.
-/// * **Orange** — something you did is still waiting for the phone to come into range.
+/// * **Green** — what is on screen is current and nothing is waiting to go back.
+/// * **Orange** — one of those is not true: either something you did is still queued,
+///   or the last look failed and this list is from memory.
 ///
-/// There is no "offline" any more, and its absence is the point. This watch does not
-/// talk to a server, so it cannot be out of touch with one; the only question it can
-/// answer is whether the phone has heard, and that is what the dot says.
+/// Folding both into one colour is the point. The difference between them is not
+/// something anybody acts on mid-shop — either way the answer is "carry on, it will
+/// sort itself out" — and a third colour would be a legend to learn for no decision.
+///
+/// It says nothing about *which* far end. With a server that is the server; with none
+/// it is the phone. The watch behaves the same either way and so does this — see
+/// `WatchLink`.
 struct WatchStatusDot: View {
-    /// Ticks made here that have not reached the phone.
+    /// Changes made here that have not reached the far end.
     var waiting: Int
-    /// Whether there is a server anywhere in this arrangement, which changes what
-    /// "reached the phone" means — with no server the phone is the end of the journey,
-    /// so nothing is in transit to anywhere else.
-    var onDeviceOnly: Bool
+    /// Whether the last attempt to reach it failed.
+    var offline: Bool
+
+    private var inStep: Bool { waiting == 0 && !offline }
 
     var body: some View {
         Circle()
-            .fill(waiting == 0 ? Color.green : Color.orange)
+            .fill(inStep ? Color.green : Color.orange)
             .frame(width: 8, height: 8)
             .accessibilityLabel(said)
     }
@@ -32,9 +37,10 @@ struct WatchStatusDot: View {
     /// Spoken in full, because the thing that makes a dot right on a wrist is exactly
     /// what makes it useless to somebody reading by ear.
     private var said: String {
-        if waiting == 0 {
-            return onDeviceOnly ? "On your phone" : "Up to date"
+        switch (offline, waiting) {
+        case (false, 0): return "Up to date"
+        case (true, 0): return "Out of touch. Showing what was last loaded."
+        case (_, let n): return "^[\(n) change](inflect: true) waiting to be sent"
         }
-        return "^[\(waiting) change](inflect: true) waiting for your phone"
     }
 }

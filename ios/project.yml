@@ -119,7 +119,14 @@ targets:
     sources:
       - path: ShoppingListWatch/Sources
       - path: Shared/Sources
-    dependencies: []
+      # The watch keeps its own cache and its own outbox, and has to: it must be
+      # usable with the phone left at home, which means a list it can read and a
+      # queue it can add to without anything else being awake. What differs between
+      # the two modes is only where that queue drains to -- see `WatchStore`.
+      - path: Store/Sources
+    dependencies:
+      - package: GRDB
+        product: GRDB
     info:
       path: ShoppingListWatch/Info.plist
       properties:

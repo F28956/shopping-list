@@ -23,12 +23,11 @@ final class PhoneLink: NSObject, WCSessionDelegate {
     /// noise in a log that should only carry real ones.
     private var lastSent: WatchLink.Snapshot?
 
-    /// Applies a tick that arrived from the wrist.
+    /// A current credential for the server, when there is one.
     ///
-    /// Set by the app at startup. A closure rather than a direct call into the cache,
-    /// because crossing something off is not one write: it is an optimistic change, a
-    /// queued operation and a drain, and that sequence lives in one place already.
-    var apply: ((WatchLink.Tick) async -> Void)?
+    /// Set by the app at startup. A closure rather than a direct call, because what
+    /// counts as current is the identity's business and it may have to go and get one.
+    var token: (() async -> String?)?
 
     private override init() {
         super.init()
@@ -113,11 +112,9 @@ final class PhoneLink: NSObject, WCSessionDelegate {
     /// is the lists.
     private func snapshot() -> WatchLink.Snapshot {
         var remaining = WatchLink.cap
+        let units = cache.units()
 
         let lists = cache.lists().map { list -> WatchLink.ListOnTheWatch in
-            let units = Dictionary(
-                uniqueKeysWithValues: cache.units().map { ($0.id, $0.name) }
-            )
             let tags = cache.tags(on: list)
             let all = cache.items(on: list)
 
@@ -135,16 +132,19 @@ final class PhoneLink: NSObject, WCSessionDelegate {
                 id: list.uuid,
                 name: list.name,
                 tags: tags.map {
-                    WatchLink.TagOnTheWatch(id: $0.id, name: $0.name, emoji: $0.emoji)
+                    WatchLink.TagOnTheWatch(
+                        id: $0.id,
+                        name: $0.name,
+                        emoji: $0.emoji,
+                        sortOrder: $0.sortOrder
+                    )
                 },
                 items: sent.map { item in
                     WatchLink.ItemOnTheWatch(
                         id: item.uuid,
                         name: item.name,
                         amount: item.amount,
-                        // Spelled here, so the watch needs no units and no rule about
-                        // how to write one.
-                        measure: item.measure(units: units),
+                        unitID: item.unitID,
                         done: item.isDone,
                         tagIDs: item.tagIDs
                     )
@@ -156,52 +156,70 @@ final class PhoneLink: NSObject, WCSessionDelegate {
 
         return WatchLink.Snapshot(
             lists: lists,
-            onDeviceOnly: ServerDirectory.isOnDeviceOnly
+            onDeviceOnly: ServerDirectory.isOnDeviceOnly,
+            server: ServerDirectory.current?.origin,
+            units: units.map { WatchLink.UnitOnTheWatch(id: $0.id, name: $0.name) }
         )
     }
 
     // MARK: - Receiving
 
-    /// A tick that arrived the queued way — the phone was asleep or out of range when
-    /// it was made.
-    nonisolated func session(
-        _ session: WCSession,
-        didReceiveUserInfo userInfo: [String: Any]
-    ) {
-        take(userInfo)
-    }
-
-    /// A tick that arrived the immediate way — the phone was awake and nearby. Same
-    /// payload, same handling; only the route differs. See `WatchStore.send`.
-    nonisolated func session(
-        _ session: WCSession,
-        didReceiveMessage message: [String: Any]
-    ) {
-        take(message)
-    }
-
-    /// The reply-expected form. WatchConnectivity calls whichever of the two the sender
-    /// asked for, and a delegate implementing only the other leaves that sender waiting
-    /// for a timeout, so both are here and both answer.
+    /// The watch's queue, arriving the immediate way — it is in range and awake.
+    ///
+    /// Answered rather than acknowledged: the watch is running `Outbox.drain` and is
+    /// waiting to be told what to forget.
     nonisolated func session(
         _ session: WCSession,
         didReceiveMessage message: [String: Any],
         replyHandler: @escaping ([String: Any]) -> Void
     ) {
-        take(message)
-        replyHandler([:])
-    }
+        // The credential, asked for rather than pushed. First, because it is the one
+        // message that arrives before the watch knows anything else.
+        if message[WatchLink.tokenRequest] != nil {
+            Task { @MainActor in
+                // An empty reply rather than none, for the same reason as below.
+                guard let token = await token?(), let server = ServerDirectory.current else {
+                    replyHandler([:])
+                    return
+                }
+                replyHandler([
+                    WatchLink.tokenRequest: token,
+                    WatchLink.serverAddress: server.origin,
+                ])
+            }
+            return
+        }
 
-    private nonisolated func take(_ payload: [String: Any]) {
-        guard let tick = WatchLink.decode(payload, as: WatchLink.Tick.self) else { return }
+        guard let request = WatchLink.decode(message, as: WatchLink.SyncRequest.self) else {
+            // A watch asking for something this build does not understand. An empty
+            // answer rather than none: it is waiting, and a reply that never comes
+            // leaves it hanging until WatchConnectivity times out.
+            replyHandler([:])
+            return
+        }
+
         Task { @MainActor in
-            await apply?(tick)
-            // The watch's picture is now out of date by exactly the change it just
-            // made. It has already drawn the row ticked, so this is not what makes it
-            // look right — it is what stops the *next* snapshot from arriving with the
-            // tick missing and un-ticking it on screen.
+            let outcomes = await WatchTicks.replay(request.operations)
+            replyHandler(WatchLink.encode(WatchLink.SyncReply(outcomes: outcomes)))
+            // The watch's picture is now out of date by exactly the changes it just
+            // sent. It has already drawn them, so this is not what makes it look
+            // right — it is what stops the next snapshot from arriving without them
+            // and undoing them on screen.
             push()
         }
+    }
+
+    /// The credential, when there is a server.
+    ///
+    /// Request and reply rather than pushed: a session token is not something to leave
+    /// lying in an application context, which is persisted and latest-wins. The watch
+    /// asks when it needs one — see `WatchIdentity`.
+    nonisolated func session(
+        _ session: WCSession,
+        didReceiveMessage message: [String: Any]
+    ) {
+        // The no-reply form. Nothing the watch sends today uses it, but a delegate
+        // that implements only the other leaves such a sender waiting on a timeout.
     }
 
     // MARK: - Session lifecycle

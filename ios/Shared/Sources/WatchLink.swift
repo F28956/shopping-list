@@ -6,36 +6,46 @@ import Foundation
 /// targets and nothing links them together, so a mistyped key would not fail to
 /// build — it would fail to answer, on a watch, in a shop.
 ///
-/// ## The watch reads the phone, not the server
+/// ## The watch is a client; the phone tells it which kind
 ///
-/// It used to ask the phone for a credential and then talk to the server itself. That
-/// stopped working the day a server stopped being required: with none configured there
-/// was nothing to hand over and nothing to talk to, so the watch app was simply dead —
-/// and that is now the **default** state of a fresh install.
+/// A watch has to work with the phone left at home. So it keeps **its own cache and
+/// its own outbox** — the same ones the phones use, the same rows, the same queue —
+/// and it is a real client rather than a screen mirroring one. What changes between
+/// the two modes is only where that queue drains to:
 ///
-/// So the phone is the watch's server. It holds the cache, the queue and whatever
-/// account there is; the watch holds a picture of a list and a way to tick it off.
-/// Everything the watch would have needed to do this itself — a database, a keychain,
-/// a token, an outbox, the units table — is gone, because the phone already has one of
-/// each and WatchConnectivity keeps the two ends fed:
+/// * **With a server**, the watch talks to it directly. It is completely independent:
+///   its own cache, its own queue, its own requests. A watch with no network of its
+///   own still reaches the server, because watchOS routes `URLSession` through the
+///   paired phone when it has to — so this works on a non-cellular watch with the
+///   phone merely nearby, and on a cellular one with the phone at home.
+/// * **With no server**, the phone *is* the far end. It holds the only copy of the
+///   lists there is, so it pushes what it has and accepts the watch's queue in
+///   exactly the shape the server would have accepted it.
 ///
-/// * **`updateApplicationContext`** carries the snapshot. Latest-wins, delivered while
-///   both apps are in the background, and **persisted by the system** — so a watch that
-///   has heard once shows the list instantly at the next launch with nothing running.
-///   That persistence is why the watch needs no database of its own.
-/// * **`transferUserInfo`** carries the ticks back. Queued, in order, retried by the
-///   system until the phone takes them, and **also persisted** — so a tick made in a
-///   shop with the phone in a locker is not lost. That queue is why the watch needs no
-///   outbox of its own.
+/// The queue drains through ``Destination`` either way, which is what keeps this from
+/// being two clients: the rules about what to forget, what to keep, and what to say
+/// out loud are written once and run in both modes.
 ///
-/// **What this costs:** a watch out of range of its phone can no longer reach the
-/// server on its own. It still *shows* the last list it was given and still takes
-/// ticks — they leave when the phone is next in range. Only a cellular watch genuinely
-/// away from its phone loses anything, and the alternative was a second full client,
-/// with its own cache, queue and merge rules, that does not work at all in the
-/// configuration most people will be in.
+/// **Config always comes from the phone, never from the wrist.** Nobody types a URL on
+/// a watch and nobody signs in on one — there is no browser to run the flow in. So the
+/// address arrives in the application context and the credential is asked for when
+/// needed, and a watch that has never met its phone simply says so.
 enum WatchLink {
-    /// The key both payloads travel under.
+    /// Watch asks for a credential with this key; the phone replies under the same one.
+    ///
+    /// Not in the application context with everything else, deliberately: a context is
+    /// persisted and latest-wins, which is the wrong shape for a credential. It is
+    /// asked for when it is needed and never stored anywhere it would go stale.
+    static let tokenRequest = "token"
+
+    /// The phone's answer to a token request also carries which server it is for.
+    ///
+    /// In the same message rather than a second one, because the two are useless
+    /// apart: a watch holding a token for a server it cannot name would send it
+    /// somewhere, and a watch that knew the address without a token could not use it.
+    static let serverAddress = "server"
+
+    /// The key the other payloads travel under.
     ///
     /// One key holding encoded JSON rather than a dictionary of loose keys: the shape
     /// is then described in one place, by types both targets compile, and adding a
@@ -56,9 +66,57 @@ enum WatchLink {
 
         var lists: [ListOnTheWatch] = []
 
-        /// Whether a server is involved at all, so the watch's status dot can say the
-        /// same thing the phone's does rather than inventing its own vocabulary.
+        /// Whether a server is involved at all. This is what picks the watch's mode,
+        /// and it is the phone's answer rather than the watch's guess — there is one
+        /// place that decides whether this household has a server, and it is not here.
         var onDeviceOnly = false
+
+        /// Where that server is, when there is one. The only way an address can reach
+        /// a watch: nobody types a URL on a wrist.
+        var server: String?
+
+        /// The units, so the watch can spell a measure itself.
+        ///
+        /// Sent rather than pre-formatted on the phone. A spelled string looked
+        /// simpler and made the watch's rows a *different shape* from the ones it
+        /// holds with a server, which meant two ways to draw a row and one of them
+        /// only exercised in one mode. With the ids the watch's cache holds the same
+        /// `Item` either way and `measure(units:)` is the only formatter there is.
+        var units: [UnitOnTheWatch] = []
+    }
+
+    struct UnitOnTheWatch: Codable, Equatable, Hashable, Identifiable {
+        var id: Int64
+        var name: String
+    }
+
+    /// The watch's queue, on its way to the phone.
+    ///
+    /// The server's own batch, unchanged — see ``Destination``. The phone applies it
+    /// against the only copy of the lists there is and answers per operation, which is
+    /// what lets the watch run the same drain in both modes.
+    struct SyncRequest: Codable, Versioned {
+        var version = Snapshot.current
+        var operations: [SyncOperation]
+    }
+
+    struct SyncReply: Codable, Versioned {
+        var version = Snapshot.current
+        var outcomes: [Outcome]
+    }
+
+    /// What became of one queued operation.
+    ///
+    /// Deliberately smaller than the server's answer. That one carries the row it
+    /// produced, so a device can learn the id of something it made offline; the watch
+    /// only ever queues a crossing-off, which creates nothing and needs nothing back.
+    /// Sending an item here would be sending something nobody reads.
+    struct Outcome: Codable {
+        var id: String
+        /// `applied`, `already_applied` or `refused` — the server's words, so the
+        /// drain does not need to learn a second vocabulary.
+        var outcome: String
+        var why: String?
     }
 
     struct ListOnTheWatch: Codable, Equatable, Hashable, Identifiable {
@@ -80,9 +138,7 @@ enum WatchLink {
         var id: String
         var name: String
         var amount: Double
-        /// Already spelled, e.g. `2 kg`, or nil when there is nothing to say. Resolved
-        /// on the phone so the watch carries no units table and no formatting rule.
-        var measure: String?
+        var unitID: Int64?
         var done: Bool
         var tagIDs: [Int64] = []
     }
@@ -91,20 +147,9 @@ enum WatchLink {
         var id: Int64
         var name: String
         var emoji: String?
-    }
-
-    /// One crossing-off, made on the wrist.
-    ///
-    /// Naturally idempotent, which is why there is no id and no record of what has been
-    /// applied: setting a row done twice is setting it done. `at` is the watch's clock
-    /// and travels with it, because the phone will queue this behind whatever else it
-    /// holds and the ordering rules run on when it *happened* — docs/offline.md.
-    struct Tick: Codable, Equatable, Versioned {
-        var version = Snapshot.current
-        var list: String
-        var item: String
-        var done: Bool
-        var at: Date
+        /// Where this falls when a list is grouped. Carried rather than re-derived so
+        /// the watch walks the shop in the same order every other screen does.
+        var sortOrder: Int64
     }
 
     /// The most items worth sending.
@@ -115,13 +160,8 @@ enum WatchLink {
     /// long list is shortened" and "the list is gone", and the watch says which it is.
     static let cap = 400
 
-    static func encode(_ snapshot: Snapshot) -> [String: Any] {
-        guard let data = try? encoder.encode(snapshot) else { return [:] }
-        return [payload: data]
-    }
-
-    static func encode(_ tick: Tick) -> [String: Any] {
-        guard let data = try? encoder.encode(tick) else { return [:] }
+    static func encode<T: Codable & Versioned>(_ value: T) -> [String: Any] {
+        guard let data = try? encoder.encode(value) else { return [:] }
         return [payload: data]
     }
 

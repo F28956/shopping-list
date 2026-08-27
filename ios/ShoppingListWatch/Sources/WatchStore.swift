@@ -2,46 +2,46 @@ import Foundation
 import Observation
 import WatchConnectivity
 
-/// What this watch knows, and the only thing that knows it.
+/// What this watch is, and who it talks to.
 ///
-/// The phone is the server — see `WatchLink`. This holds the last picture the phone
-/// sent and the ticks made here that have not reached it yet, and both of those are
-/// **stored by the system rather than by this app**:
+/// The watch is a full client either way — its own cache, its own outbox, usable with
+/// the phone left at home. This decides only where that queue drains to, and it takes
+/// the answer from the phone rather than guessing: there is one place that knows
+/// whether this household has a server, and it is not the wrist.
 ///
-/// * `WCSession.receivedApplicationContext` is the last snapshot, kept across launches.
-///   So there is no database on this watch, and there does not need to be.
-/// * `WCSession.outstandingUserInfoTransfers` is the queue of ticks the system is still
-///   trying to deliver, also kept across launches. So there is no outbox either.
-///
-/// That is the whole reason this app got smaller rather than larger: the two things it
-/// used to need persistence for are things WatchConnectivity already persists.
+/// See `WatchLink` for the whole arrangement.
 @MainActor
 @Observable
 final class WatchStore: NSObject, WCSessionDelegate {
 
-    /// The lists, as the phone last described them, with this watch's unsent ticks laid
-    /// back over the top — the same trick the phone plays on the server's answer. Without
-    /// it, a tick would show for a moment and then be undone by the next snapshot, which
-    /// was sent before the phone had heard about it.
-    private(set) var lists: [WatchLink.ListOnTheWatch] = []
+    enum Mode: Equatable {
+        /// Nothing has been heard from the phone yet. Not the same as having no server:
+        /// a watch that has never been told anything must not decide it is alone and
+        /// start behaving as though the phone's lists do not exist.
+        case unknown
+        /// A server, at this address. The watch talks to it directly.
+        case server(ServerAddress)
+        /// No server anywhere. The phone holds the lists and is the far end.
+        case onDevice
+    }
 
-    /// Whether the phone has ever said anything.
+    private(set) var mode: Mode = .unknown
+
+    /// Ticks made here that have not reached wherever they are going.
+    private(set) var waiting = 0
+
+    /// Whether the phone has ever said anything at all.
     ///
     /// What earns an empty state. A watch that has heard nothing is not a watch whose
     /// owner has no lists, and saying "no lists" to somebody who has ten is worse than
     /// saying nothing.
     private(set) var heard = false
 
-    /// There is no server anywhere in this arrangement, which the status dot says
-    /// differently from "waiting".
-    private(set) var onDeviceOnly = false
+    private let cache = Cache.shared
 
-    /// Ticks the system has not yet handed to the phone.
-    private(set) var waiting = 0
-
-    /// This watch's own ticks, by item uuid, until the phone confirms them by sending
-    /// a snapshot that already agrees.
-    private var pending: [String: Bool] = [:]
+    /// The credential, when there is a server. Held here rather than in the views so
+    /// that a token fetched for one screen is not fetched again for the next.
+    private let identity = WatchIdentity()
 
     override init() {
         super.init()
@@ -49,110 +49,140 @@ final class WatchStore: NSObject, WCSessionDelegate {
         WCSession.default.delegate = self
         WCSession.default.activate()
         // Whatever arrived while this app was not running. Read rather than waited for:
-        // the system does not re-deliver a context on launch, it just has it.
+        // the system holds the last context and does not re-deliver it on launch.
         adopt(WCSession.default.receivedApplicationContext)
+        refreshWaiting()
     }
 
-    // MARK: - Crossing things off
+    // MARK: - Where the queue goes
 
-    /// Crosses something off, or puts it back.
+    /// The far end, or nothing if this watch does not yet know what it is.
     ///
-    /// The row changes here and now. Whether the phone is in range does not come into
-    /// it: a tick in a shop is a decision somebody has already made, and an app that
-    /// waits for a phone before showing it has made them wait for something they cannot
-    /// influence. `transferUserInfo` keeps it and retries until the phone takes it.
-    func toggle(_ item: WatchLink.ItemOnTheWatch, on list: WatchLink.ListOnTheWatch) {
-        let done = !item.done
-        pending[item.id] = done
-        restack()
-
-        send(WatchLink.Tick(list: list.id, item: item.id, done: done, at: Date()))
-    }
-
-    /// Gets one tick to the phone, by whichever route can carry it.
-    ///
-    /// Two routes, and both are needed:
-    ///
-    /// * **`sendMessage`** when the phone is reachable — awake, nearby, listening. It
-    ///   arrives in milliseconds, which is what somebody standing next to their phone
-    ///   expects, and it tells us if it failed.
-    /// * **`transferUserInfo`** otherwise, and as the fallback when a send fails. The
-    ///   system keeps it, retries it, and delivers it in order whenever the phone comes
-    ///   back — which is the case this app exists for: a shop, and a phone in a pocket
-    ///   that has gone to sleep.
-    ///
-    /// Sending only the queued way looked right and was not: a tick made with the phone
-    /// in your hand sat there, because "eventually" is a promise about the worst case
-    /// and this was the best one.
-    private func send(_ tick: WatchLink.Tick) {
-        let session = WCSession.default
-        guard session.activationState == .activated else {
-            queue(tick)
-            return
+    /// One queue, two destinations — the whole point of `Destination`. Everything the
+    /// drain does with the answers is identical; only the address of the other end
+    /// differs.
+    var destination: Destination? {
+        switch mode {
+        case .unknown:
+            return nil
+        case .onDevice:
+            return PhoneDestination()
+        case .server(let address):
+            return API(server: { address.url }, token: { [identity] in await identity.token() })
         }
+    }
 
-        guard session.isReachable else {
-            queue(tick)
-            return
+    /// Whether this watch can fetch a list for itself.
+    ///
+    /// With a server it can, and does. With none it cannot and must not try: the lists
+    /// arrive from the phone, and a screen that "loads" would only ever be able to fail.
+    var fetches: Bool {
+        if case .server = mode { return true }
+        return false
+    }
+
+    /// Empties the queue, wherever its contents belong.
+    @discardableResult
+    func send() async -> Drained {
+        guard let destination, cache.outbox.waiting > 0 else {
+            refreshWaiting()
+            return Drained()
         }
-
-        session.sendMessage(
-            WatchLink.encode(tick),
-            replyHandler: nil,
-            errorHandler: { [weak self] _ in
-                // Reachable a moment ago and not any more, which is ordinary: a wrist
-                // drops out of range mid-gesture. The queued route still has it.
-                Task { @MainActor in self?.queue(tick) }
-            }
-        )
+        let drained = await cache.outbox.drain(through: destination)
+        refreshWaiting()
+        return drained
     }
 
-    private func queue(_ tick: WatchLink.Tick) {
-        WCSession.default.transferUserInfo(WatchLink.encode(tick))
-        countWaiting()
+    /// The server said no to the credential we had.
+    ///
+    /// The only reliable news that a session has ended — revoked on the phone, or idle
+    /// past ninety days. Throwing it away makes the next request ask the phone for a
+    /// new one, which is the whole recovery path on a watch.
+    func credentialRefused() {
+        identity.refused()
     }
 
-    // MARK: - What arrives
+    func refreshWaiting() {
+        waiting = cache.outbox.waiting
+    }
+
+    // MARK: - What the phone says
 
     private func adopt(_ context: [String: Any]) {
         guard let snapshot = WatchLink.decode(context, as: WatchLink.Snapshot.self) else {
             return
         }
-        latest = snapshot
-        onDeviceOnly = snapshot.onDeviceOnly
         heard = true
 
-        // A tick the phone has caught up with stops being this watch's business. Kept
-        // by value rather than by counting transfers: the system's queue empties when
-        // it *delivers*, which is before the phone has necessarily written anything, so
-        // agreement is the honest signal that a tick has landed.
-        for list in snapshot.lists {
-            for item in list.items where pending[item.id] == item.done {
-                pending.removeValue(forKey: item.id)
+        if snapshot.onDeviceOnly {
+            mode = .onDevice
+        } else if let raw = snapshot.server,
+                  case .success(let address) = ServerAddress.parse(raw, allowingCleartext: true) {
+            let was = mode
+            mode = .server(address)
+            // A different server is a different world: its ids, its uuids, its people.
+            // Keeping the old one's rows would show one server's shopping under
+            // another's name -- the same rule the phones follow when the address
+            // changes (C4).
+            if case .server(let before) = was, before != address {
+                cache.forgetEverything()
+                identity.refused()
             }
         }
-        restack()
-        countWaiting()
-    }
 
-    private var latest = WatchLink.Snapshot()
-
-    /// Lays this watch's unsent ticks over the phone's picture.
-    private func restack() {
-        lists = latest.lists.map { list in
-            var list = list
-            list.items = list.items.map { item in
-                guard let ticked = pending[item.id] else { return item }
-                var item = item
-                item.done = ticked
-                return item
-            }
-            return list
+        // Only ever sent when there is no server, because only then is the phone the
+        // authority on what a list contains. With a server the watch asks it directly
+        // and a second opinion here would be a second source of truth.
+        if snapshot.onDeviceOnly {
+            write(snapshot)
         }
     }
 
-    private func countWaiting() {
-        waiting = WCSession.default.outstandingUserInfoTransfers.count
+    /// Writes the phone's picture into this watch's own cache.
+    ///
+    /// Into the cache and not into a variable, which is what makes the watch usable
+    /// with the phone at home: the rows are still there at the next launch with nothing
+    /// running and nothing in range. The queue sits on top of them exactly as it does
+    /// on the phones — see `Outbox`.
+    private func write(_ snapshot: WatchLink.Snapshot) {
+        cache.remember(units: snapshot.units.map { Unit(id: $0.id, name: $0.name) })
+
+        let lists = snapshot.lists.enumerated().map { at, list in
+            // A negative id, because there is no server to have minted a real one and
+            // the uuid is the only name that means anything here. Stable across
+            // snapshots so that navigation does not break under somebody's thumb.
+            List(
+                id: -Int64(at + 1),
+                uuid: list.id,
+                name: list.name,
+                ownerID: 0,
+                role: .editor
+            )
+        }
+        cache.remember(lists: lists)
+
+        for (list, wire) in zip(lists, snapshot.lists) {
+            cache.remember(
+                items: wire.items.enumerated().map { at, item in
+                    Item(
+                        id: -Int64(at + 1),
+                        uuid: item.id,
+                        name: item.name,
+                        amount: item.amount,
+                        unitID: item.unitID,
+                        doneAt: item.done ? Date() : nil,
+                        tagIDs: item.tagIDs
+                    )
+                },
+                on: list
+            )
+            cache.remember(
+                tags: wire.tags.map {
+                    Tag(id: $0.id, name: $0.name, emoji: $0.emoji, sortOrder: $0.sortOrder)
+                },
+                on: list
+            )
+        }
     }
 
     // MARK: - Session
@@ -164,6 +194,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
     ) {
         Task { @MainActor in
             adopt(WCSession.default.receivedApplicationContext)
+            await send()
         }
     }
 
@@ -171,14 +202,16 @@ final class WatchStore: NSObject, WCSessionDelegate {
         _ session: WCSession,
         didReceiveApplicationContext applicationContext: [String: Any]
     ) {
-        Task { @MainActor in adopt(applicationContext) }
+        Task { @MainActor in
+            adopt(applicationContext)
+            // Back in range, so anything queued can go now. This is what "aligned when
+            // they are back together" actually is: the watch sends what it did, the
+            // phone applies it, and the phone's next snapshot already agrees.
+            await send()
+        }
     }
 
-    nonisolated func session(
-        _ session: WCSession,
-        didFinish userInfoTransfer: WCSessionUserInfoTransfer,
-        error: Error?
-    ) {
-        Task { @MainActor in countWaiting() }
+    nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
+        Task { @MainActor in await send() }
     }
 }

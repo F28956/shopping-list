@@ -7,19 +7,36 @@ import SwiftUI
 struct WatchListsView: View {
     @Environment(WatchStore.self) private var store
 
+    private let cache = Cache.shared
+
+    @State private var lists: [List] = []
+    @State private var problem: Problem?
+    @State private var loaded = false
+    /// Whether the far end has ever answered. What is shown while this is false came
+    /// out of the cache and may be old — and, crucially, is not evidence of an empty
+    /// list.
+    @State private var fresh = false
+
     var body: some View {
         NavigationStack {
             Group {
-                if store.lists.isEmpty && !store.heard {
-                    // Not an empty state: this watch has never been told anything, which
-                    // is different from being told there is nothing. Saying "no lists"
-                    // to somebody who has ten is worse than saying nothing.
+                if !loaded {
+                    ProgressView()
+                } else if lists.isEmpty && store.mode == .unknown {
+                    // Never been told anything, which is different from being told there
+                    // is nothing. Saying "no lists" to somebody who has ten is worse
+                    // than saying nothing.
                     ContentUnavailableView(
                         "Waiting for your phone",
                         systemImage: "iphone.radiowaves.left.and.right",
                         description: Text("Open Shopping on your phone once, and this fills in.")
                     )
-                } else if store.lists.isEmpty {
+                } else if let problem, lists.isEmpty {
+                    // Only when there is nothing cached to show. Replacing a list this
+                    // watch has seen with an error loses the one thing somebody came to
+                    // look at, over a connection they cannot do anything about.
+                    WatchProblemView(problem: problem) { Task { await load() } }
+                } else if lists.isEmpty && fresh {
                     ContentUnavailableView(
                         "No lists",
                         systemImage: "cart",
@@ -27,7 +44,7 @@ struct WatchListsView: View {
                     )
                 } else {
                     SwiftUI.List {
-                        ForEach(store.lists) { list in
+                        ForEach(lists) { list in
                             NavigationLink(value: list) {
                                 Text(list.name)
                             }
@@ -38,12 +55,58 @@ struct WatchListsView: View {
             .navigationTitle("Lists")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    WatchStatusDot(waiting: store.waiting, onDeviceOnly: store.onDeviceOnly)
+                    WatchStatusDot(waiting: store.waiting, offline: problem != nil)
                 }
             }
-            .navigationDestination(for: WatchLink.ListOnTheWatch.self) { list in
+            .navigationDestination(for: List.self) { list in
                 WatchItemsView(list: list)
             }
+            .task {
+                showWhatWeHave()
+                await load()
+            }
+            // The phone's picture landing in the cache, which on a device with no
+            // server is the only way a list ever changes here.
+            .onReceive(NotificationCenter.default.publisher(for: .cacheChanged)) { _ in
+                showWhatWeHave()
+            }
         }
+    }
+
+    /// The last lists this watch saw, put up before anything is asked of anybody.
+    private func showWhatWeHave() {
+        let remembered = cache.lists()
+        guard !remembered.isEmpty else {
+            loaded = true
+            return
+        }
+        lists = remembered
+        loaded = true
+    }
+
+    /// Asks the server, when there is one.
+    ///
+    /// With no server there is nothing to ask: the lists arrive from the phone and are
+    /// already in the cache. Trying anyway would be a request that can only ever fail,
+    /// and an error on screen about a server nobody has.
+    private func load() async {
+        await store.send()
+
+        guard store.fetches, let api = store.destination as? API else {
+            fresh = store.heard
+            loaded = true
+            return
+        }
+
+        do {
+            let answered = try await api.lists().items
+            cache.remember(lists: answered)
+            lists = answered
+            problem = nil
+            fresh = true
+        } catch {
+            problem = Problem(error)
+        }
+        loaded = true
     }
 }

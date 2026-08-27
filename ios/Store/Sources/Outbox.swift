@@ -279,13 +279,13 @@ final class Outbox: @unchecked Sendable {
     ///   is not coming back, and blocking the queue on it would cost every change behind
     ///   it too.
     /// - **No connection** — nothing is forgotten and nothing is said. The ordinary case.
-    func drain(through api: API) async -> Drained {
+    func drain(through destination: Destination) async -> Drained {
         let queued = all()
         guard !queued.isEmpty else { return Drained() }
 
         let answers: [AppliedOperation]
         do {
-            answers = try await api.sync(queued.map(\.onTheWire))
+            answers = try await destination.sync(queued.map(\.onTheWire))
         } catch {
             // The request itself did not get through, or the route refused it rather
             // than the changes in it. Either way nothing here is thrown away.
@@ -349,3 +349,21 @@ final class Outbox: @unchecked Sendable {
         try? queue.write(work)
     }
 }
+
+/// Somewhere a queue can be emptied to.
+///
+/// One method, and it is the sync route's: a batch of operations in, an answer for each
+/// one out. Everything the drain does with those answers — what to forget, what to keep
+/// for later, what to say out loud — is the same wherever they came from, which is why
+/// this is a protocol rather than two drains.
+///
+/// Two things conform. `API`, which is the server. And, on the watch, the **phone** —
+/// because with no server the phone is where a queue goes, and it can answer the same
+/// questions about a batch that a server can. The watch is then the same client in both
+/// modes, holding the same cache and the same queue, and only the address of the far end
+/// changes.
+protocol Destination {
+    func sync(_ operations: [SyncOperation]) async throws -> [AppliedOperation]
+}
+
+extension API: Destination {}

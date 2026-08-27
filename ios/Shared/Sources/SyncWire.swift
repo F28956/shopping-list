@@ -10,7 +10,7 @@ struct SyncBatch: Encodable {
     var operations: [SyncOperation]
 }
 
-struct SyncOperation: Encodable {
+struct SyncOperation: Codable {
     /// What this operation is called. The server records it, so a resend is a no-op.
     var id: String
     /// When this device says it happened. The server clamps it forward only: behind is
@@ -39,7 +39,7 @@ struct SyncOperation: Encodable {
     }
 }
 
-struct SeenOn: Encodable {
+struct SeenOn: Codable {
     var name: String
     var amount: Double
     var unitID: Int64?

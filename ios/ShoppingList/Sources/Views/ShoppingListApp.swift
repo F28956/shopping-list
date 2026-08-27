@@ -5,12 +5,14 @@ struct ShoppingListApp: App {
     @State private var identity = Identity()
 
     init() {
-        _identity = State(initialValue: Identity())
+        let identity = Identity()
+        _identity = State(initialValue: identity)
 
-        // The phone is the watch's server -- see `WatchLink`. Started here rather than
-        // held as state: it is a singleton because `WCSession` has one delegate, and a
-        // second one would silently take over from the first.
-        PhoneLink.shared.apply = { tick in await WatchTicks.apply(tick) }
+        // The phone is where the watch gets its config, and -- when there is no server
+        // -- where its queue goes. See `WatchLink`. Started here rather than held as
+        // state: it is a singleton because `WCSession` has one delegate, and a second
+        // one would silently take over from the first.
+        PhoneLink.shared.token = { await identity.token() }
         PhoneLink.shared.start()
     }
 
