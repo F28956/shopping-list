@@ -114,6 +114,15 @@ pub enum What {
     /// bundle `reference.json`: the ids in that file are the ids in the seed, so a
     /// phone that has never met a server still means aisle 5 by 5.
     Tag { item: item::Uuid, tag: tag::Id, attached: bool },
+    /// The order this person walks this list in.
+    ///
+    /// Names no item, like `MakeList`. Last write by `at` wins, and that is safe
+    /// because the row it writes is keyed by the person: somebody who has chosen an
+    /// order keeps it whatever anybody else queues. It is not invisible to others --
+    /// `tags::order_for` falls back to the list's when a person has never set one, so
+    /// a second shopper starts somewhere sensible rather than alphabetical -- but it
+    /// cannot overwrite a choice somebody made. See docs/offline.md's table.
+    SetTagOrder { tags: Vec<tag::Id> },
 }
 
 impl What {
@@ -128,6 +137,7 @@ impl What {
             What::ClearDone { .. } => "clear_done",
             What::Tag { attached: true, .. } => "attach_tag",
             What::Tag { attached: false, .. } => "detach_tag",
+            What::SetTagOrder { .. } => "set_tag_order",
         }
     }
 }
@@ -356,6 +366,18 @@ async fn apply(
             Ok(Outcome::Applied { item: None, list: None })
         }
 
+        What::SetTagOrder { tags: order } => {
+            match tags::set_order(ctx, actor, list.id, order).await {
+                Ok(()) => Ok(Outcome::Applied { item: None, list: None }),
+                // A tag id that is not a tag -- the same reading as filing under one.
+                Err(ServiceError::NotFound | ServiceError::InvalidInput) => {
+                    Ok(Outcome::Refused { why: Refusal::Invalid })
+                }
+                Err(ServiceError::Forbidden) => Ok(Outcome::Refused { why: Refusal::NotAllowed }),
+                Err(other) => Err(other),
+            }
+        }
+
         What::Tag { item, tag, attached } => match find(ctx, item).await? {
             None => Ok(Outcome::Refused { why: Refusal::Gone }),
             Some(row) => {
@@ -467,7 +489,7 @@ async fn remembered(ctx: &Ctx, operation: &Operation) -> Result<Option<Remembere
         | What::Update { item, .. }
         | What::Delete { item, .. }
         | What::Tag { item, .. } => Some(item.clone()),
-        What::MakeList { .. } | What::ClearDone { .. } => None,
+        What::MakeList { .. } | What::ClearDone { .. } | What::SetTagOrder { .. } => None,
     };
 
     match named {

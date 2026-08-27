@@ -649,3 +649,94 @@ async fn tags_on(s: &Two, item: item::Id) -> Vec<crate::models::tag::Id> {
         .map(|t| t.id)
         .collect()
 }
+
+/// Ben, with no signal, changes the order he walks the shop in.
+///
+/// Per person, so it can be last-write-wins without anybody else being affected --
+/// docs/offline.md's table says so and this is what makes it true offline as well.
+#[rstest]
+#[tokio::test]
+async fn a_walking_order_set_offline_arrives(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let dairy = a_tag(&s, "dairy").await;
+    let bakery = a_tag(&s, "bakery").await;
+
+    let answers = sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![s.op("order", What::SetTagOrder { tags: vec![bakery, dairy] })],
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        matches!(answers[0].outcome, Outcome::Applied { .. }),
+        "the order was refused: {:?}",
+        answers[0].outcome
+    );
+
+    let walked = super::tags::order_for(&s.ctx, &s.ben, s.list.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|t| t.id)
+        .collect::<Vec<_>>();
+    assert_eq!(walked.first(), Some(&bakery), "bakery was moved to the front");
+}
+
+/// Somebody who has set their own walk keeps it when another person changes theirs.
+///
+/// The reason this one is safe to resolve by last-write-wins. Not because an order
+/// cannot reach anybody else -- it can: `order_for` falls back to whatever the list
+/// has when a person has never set one, which is how a second shopper starts out
+/// somewhere sensible rather than alphabetical. But an order somebody *has* chosen is
+/// theirs, and nobody else's queue can overwrite it.
+#[rstest]
+#[tokio::test]
+async fn one_persons_walk_does_not_overwrite_anothers(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let dairy = a_tag(&s, "dairy").await;
+    let bakery = a_tag(&s, "bakery").await;
+
+    // Anna has said how she walks it.
+    super::tags::set_order(&s.ctx, &s.anna, s.list.id, &[dairy, bakery])
+        .await
+        .unwrap();
+
+    // Ben, offline, says the opposite.
+    sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![s.op("order", What::SetTagOrder { tags: vec![bakery, dairy] })],
+    )
+    .await
+    .unwrap();
+
+    let anna = super::tags::order_for(&s.ctx, &s.anna, s.list.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|t| t.id)
+        .collect::<Vec<_>>();
+    assert_eq!(anna.first(), Some(&dairy), "Ben's walk overwrote Anna's");
+}
+
+/// A tag id that is not a tag, in an order.
+#[rstest]
+#[tokio::test]
+async fn a_walking_order_naming_nothing_is_invalid(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+
+    let answers = sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![s.op(
+            "order",
+            What::SetTagOrder { tags: vec![crate::models::tag::Id(9_999)] },
+        )],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(answers[0].outcome, Outcome::Refused { why: Refusal::Invalid });
+}

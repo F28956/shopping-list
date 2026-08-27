@@ -197,8 +197,7 @@ struct ItemsView: View {
                 // of twenty-one names are the ones that would change anything.
                 inUse: Set(items.flatMap(\.tagIDs))
             ) { chosen in
-                await attempt { try await api.setTagOrder(chosen, on: list) }
-                await loadReference()
+                await reorder(chosen)
             }
         }
         .refreshable { await load() }
@@ -467,6 +466,24 @@ struct ItemsView: View {
         )
         cache.outbox.add(uuid: uuid, localID: local.id, line: typed, on: list)
         show { $0 + [local] }
+        await drain()
+    }
+
+    /// Records the order this person walks this list in.
+    ///
+    /// Written down here first, and queued rather than sent. It used to go straight at
+    /// the server and put "Something went wrong" on screen when it could not get there
+    /// -- which on a device with no server was every time, so rearranging the aisles
+    /// was a control that always failed.
+    ///
+    /// The order is this person's, so nothing has to be merged: the queue carries it to
+    /// a server if there ever is one, and until then the cache is the only place it
+    /// needs to exist.
+    private func reorder(_ chosen: [Tag]) async {
+        tags = chosen
+        cache.remember(tags: chosen, on: list)
+        cache.outbox.setTagOrder(chosen, on: list)
+        show { $0 }
         await drain()
     }
 

@@ -90,6 +90,10 @@ pub enum WhatInput {
         item: item::Uuid,
         tag_id: i64,
     },
+    /// The order this person walks this list in. Names no item.
+    SetTagOrder {
+        tag_ids: Vec<i64>,
+    },
 }
 
 /// The row as the device saw it when an edit was made against it.
@@ -164,6 +168,9 @@ impl From<WhatInput> for What {
                 item,
                 tag: tag::Id(tag_id),
                 attached: false,
+            },
+            WhatInput::SetTagOrder { tag_ids } => What::SetTagOrder {
+                tags: tag_ids.into_iter().map(tag::Id).collect(),
             },
         }
     }

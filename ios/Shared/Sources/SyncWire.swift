@@ -31,11 +31,14 @@ struct SyncOperation: Codable {
     var done: Bool?
     /// The aisle an `attach_tag` or `detach_tag` names.
     var tagID: Int64?
+    /// The walk a `set_tag_order` describes.
+    var tagIDs: [Int64]?
 
     enum CodingKeys: String, CodingKey {
         case id, at, list, kind, item, items, line, name, amount, seen, done
         case unitID = "unit_id"
         case tagID = "tag_id"
+        case tagIDs = "tag_ids"
     }
 }
 

@@ -33,6 +33,7 @@ struct QueuedOperation: Identifiable, Equatable {
         static let clearDone = "clear_done"
         static let attachTag = "attach_tag"
         static let detachTag = "detach_tag"
+        static let setTagOrder = "set_tag_order"
     }
 
     // MARK: - Reading the payload
@@ -57,6 +58,8 @@ struct QueuedOperation: Identifiable, Equatable {
     var sweptUUIDs: Set<String> { Set(fields["items"] as? [String] ?? []) }
     /// The aisle a queued ``Kind/attachTag`` or ``Kind/detachTag`` names.
     var tagID: Int64? { (fields["tag_id"] as? NSNumber)?.int64Value }
+    /// The walk a queued ``Kind/setTagOrder`` describes.
+    var tagIDs: [Int64]? { (fields["tag_ids"] as? [NSNumber])?.map(\.int64Value) }
 
     /// This operation as the route wants it.
     var onTheWire: SyncOperation {
@@ -80,7 +83,8 @@ struct QueuedOperation: Identifiable, Equatable {
                 )
             },
             done: kind == Kind.setDone ? done : nil,
-            tagID: tagID
+            tagID: tagID,
+            tagIDs: tagIDs
         )
     }
 }
@@ -190,6 +194,15 @@ final class Outbox: @unchecked Sendable {
             list,
             ["tag_id": tagID]
         )
+    }
+
+    /// Records the order this person walks this list in.
+    ///
+    /// About a list rather than a row, so there is no item to name -- the same shape as
+    /// a sweep. Per person on the server, which is what makes last-write-wins safe: it
+    /// cannot overwrite anybody else's walk.
+    func setTagOrder(_ tags: [Tag], on list: List) {
+        queue(Kind.setTagOrder, "", 0, list, ["tag_ids": tags.map(\.id)])
     }
 
     func delete(_ item: Item, on list: List) {
