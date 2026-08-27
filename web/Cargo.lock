@@ -778,6 +778,7 @@ name = "domain"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "parsing",
  "rand 0.10.2",
  "rstest",
  "serde",
@@ -2091,6 +2092,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "parsing"
+version = "0.1.0"
+dependencies = [
+ "rstest",
+]
+
+[[package]]
 name = "pem"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2249,6 +2257,14 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "version_check",
+]
+
+[[package]]
+name = "quickadd-ffi"
+version = "0.1.0"
+dependencies = [
+ "parsing",
+ "serde_json",
 ]
 
 [[package]]

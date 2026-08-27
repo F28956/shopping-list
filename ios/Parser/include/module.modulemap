@@ -1,0 +1,7 @@
+// Makes the header importable from Swift as a module, which is what lets the wrapper
+// live in an ordinary source file instead of behind a per-target bridging header --
+// there are two targets that want it and a bridging header is one per target.
+module QuickAddC {
+    header "quickadd.h"
+    export *
+}

@@ -7,6 +7,7 @@ edition = "2024"
 # library's, and `use core::...` then resolves ambiguously.
 
 [dependencies]
+parsing = { path = "../parsing" }
 serde = { version = "1.0.229", features = ["derive"] }
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite", "migrate", "time"] }
 strum = { version = "0.28.0", features = ["derive"] }

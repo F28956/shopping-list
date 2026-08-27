@@ -1,0 +1,15 @@
+[package]
+name = "parsing"
+version = "0.1.0"
+edition = "2024"
+
+# No dependencies, and that is the whole design. This crate is what a phone compiles
+# when it wants to read `2 kg apples` the way the server reads it, so anything added
+# here has to cross-compile to iOS and Android as well.
+[dependencies]
+
+# Test-only, so it never reaches a phone: the forty-three parser cases are table-driven
+# and rewriting them as forty-three functions to keep this list empty would be trading
+# something real for something cosmetic.
+[dev-dependencies]
+rstest = "0.26.1"

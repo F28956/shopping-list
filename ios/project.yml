@@ -48,6 +48,10 @@ targets:
       - path: Auth/Sources
       - path: UI/Sources
       - path: Store/Sources
+      # The shared parser. See UI/Sources/QuickAdd.swift for why it is Rust, and
+      # Scripts/build-parser.sh for how it becomes a library.
+      - path: Parser/include
+        buildPhase: none
     dependencies:
       - package: GRDB
         product: GRDB
@@ -95,6 +99,17 @@ targets:
         # defining them would silently override Config.xcconfig with no sign the
         # file was ignored. They come from Config.xcconfig alone.
         CODE_SIGN_ENTITLEMENTS: ShoppingList/ShoppingList.entitlements
+        SWIFT_INCLUDE_PATHS: $(SRCROOT)/Parser/include
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/Parser/lib/$(PLATFORM_NAME)
+        OTHER_LDFLAGS: -lquickadd
+    preBuildScripts:
+      # Before the compile, because the library it produces is what the link step
+      # looks for. `basedOnDependencyAnalysis: false` because cargo decides what needs
+      # rebuilding far better than a list of inputs and outputs here could.
+      - script: "\"$SRCROOT/Scripts/build-parser.sh\""
+        name: Build the shared parser
+        basedOnDependencyAnalysis: false
+
 
   # A single watchOS app target -- the old app-plus-extension pair has not been
   # needed since watchOS 9, and the deployment target below is well past that.
@@ -167,6 +182,10 @@ targets:
       # shortcuts, no bordered text fields, and nothing here it could show.
       - path: UI/Sources
       - path: Store/Sources
+      # The shared parser. See UI/Sources/QuickAdd.swift for why it is Rust, and
+      # Scripts/build-parser.sh for how it becomes a library.
+      - path: Parser/include
+        buildPhase: none
     dependencies:
       - package: GRDB
         product: GRDB
@@ -210,6 +229,13 @@ targets:
         # against a provisioning profile, so an ad-hoc signature would fail at the
         # button rather than at the build.
         ENABLE_HARDENED_RUNTIME: "NO"
+        SWIFT_INCLUDE_PATHS: $(SRCROOT)/Parser/include
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/Parser/lib/$(PLATFORM_NAME)
+        OTHER_LDFLAGS: -lquickadd
+    preBuildScripts:
+      - script: "\"$SRCROOT/Scripts/build-parser.sh\""
+        name: Build the shared parser
+        basedOnDependencyAnalysis: false
 
   # Drives the Mac app the way a person does. Against `-uiTesting`, which swaps the
   # wire for an in-memory world and the sign-in for a signed-in person -- a UI test
@@ -240,6 +266,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cernauskas.shoppinglist.tests
         GENERATE_INFOPLIST_FILE: "YES"
+        # `@testable import ShoppingList` re-exports what the app imported, so the
+        # tests have to be able to find the parser's module map even though they never
+        # link the library themselves -- the app they are hosted in already has.
+        SWIFT_INCLUDE_PATHS: $(SRCROOT)/Parser/include
 
 schemes:
   ShoppingListMac:

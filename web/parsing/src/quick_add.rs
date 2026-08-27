@@ -317,8 +317,10 @@ mod tests {
     }
 
     #[rstest]
-    #[tokio::test]
-    async fn an_empty_line_stays_empty() {
+    // Plain `#[test]`, unlike its neighbours in `domain`: nothing here is async, and a
+    // runtime dependency for a crate the phones compile is not worth the symmetry.
+    #[test]
+    fn an_empty_line_stays_empty() {
         // The CHECK constraint rejects it downstream; this must not invent a name.
         assert_eq!(parse("   ", &units()).name, "");
     }

@@ -1,3 +1,4 @@
 Config.xcconfig
 *.xcodeproj
 DerivedData/
+Parser/lib/
