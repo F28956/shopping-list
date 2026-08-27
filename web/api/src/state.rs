@@ -12,16 +12,15 @@ use crate::jwks::Jwks;
 /// production because there is no code for it to turn on.
 #[derive(Clone)]
 pub enum AuthMode {
-    /// Verify the token's signature, issuer, audience and expiry against Google's
-    /// published keys.
-    /// Several audiences, because one identity provider issues a different client id
-    /// per platform: the browser's tokens carry the web client id and the phone's
-    /// carry the iOS one. Both are this application, and a token minted for neither
-    /// is rejected — the list is what makes that check mean anything.
-    Google {
-        jwks: Arc<Jwks>,
-        client_ids: Vec<String>,
-    },
+    /// Verify the token's signature, issuer, audience and expiry against the published
+    /// keys of whichever provider issued it.
+    ///
+    /// A list, because there is more than one: the Apple clients sign in with Apple,
+    /// and Android and the browser sign in with Google. A token is offered to each in
+    /// turn and the first that accepts it decides who sent it — nothing reads a claim
+    /// out of an unverified token to choose, because an unverified claim is whatever
+    /// the sender felt like writing.
+    Providers(Vec<Provider>),
     /// Tests only: the bearer token is taken to be the subject, unverified.
     ///
     /// Behind a feature rather than `#[cfg(test)]` so that other crates can drive
@@ -30,6 +29,24 @@ pub enum AuthMode {
     /// only from dev-dependencies, so a release build does not contain this variant.
     #[cfg(any(test, feature = "test-support"))]
     TrustTheToken,
+}
+
+/// One identity provider, and what a token from it has to say.
+#[derive(Clone)]
+pub struct Provider {
+    /// What to call it in `user_identities`. Part of the key there, so it is a stable
+    /// name rather than a display one.
+    pub name: &'static str,
+    pub jwks: Arc<Jwks>,
+    /// Who may have issued it. Google is spelled two ways historically, which is why
+    /// this is a list rather than a string.
+    pub issuers: Vec<String>,
+    /// Who it was minted for. Several, because one provider issues a different client
+    /// id per platform: the browser's tokens carry the web client id, Android's the
+    /// Android one, and Apple's carry the bundle identifier. All of them are this
+    /// application, and a token minted for none of them is rejected — the list is
+    /// what makes that check mean anything.
+    pub audiences: Vec<String>,
 }
 
 #[derive(Clone)]

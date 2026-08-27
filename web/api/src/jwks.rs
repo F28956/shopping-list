@@ -4,7 +4,6 @@ use tokio::sync::{Mutex, RwLock};
 
 use super::error::AppError;
 
-const CERTS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
 const TTL: Duration = Duration::from_secs(3600);
 const MIN_REFRESH: Duration = Duration::from_secs(60);
 
@@ -15,14 +14,21 @@ struct Cached {
 }
 
 pub struct Jwks {
+    /// Where this provider publishes its signing keys.
+    ///
+    /// A field rather than a constant since there is more than one provider: Apple and
+    /// Google each publish their own set, and a key from the wrong one is not a key
+    /// that failed to verify — it is a key that was never asked about.
+    certs_url: String,
     cache: RwLock<Cached>,
     refresh_lock: Mutex<()>,
     http: reqwest::Client,
 }
 
 impl Jwks {
-    pub fn new(http: reqwest::Client) -> Self {
+    pub fn new(http: reqwest::Client, certs_url: impl Into<String>) -> Self {
         Self {
+            certs_url: certs_url.into(),
             cache: RwLock::new(Cached {
                 keys: JwkSet { keys: Vec::new() },
                 fetched_at: None,
@@ -71,7 +77,7 @@ impl Jwks {
         self.cache.write().await.last_attempt = Some(Instant::now());
         let keys: JwkSet = self
             .http
-            .get(CERTS_URL)
+            .get(&self.certs_url)
             .send()
             .await?
             .error_for_status()?

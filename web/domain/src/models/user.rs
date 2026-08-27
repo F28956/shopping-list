@@ -159,6 +159,134 @@ impl User {
         Ok(user)
     }
 
+    /// The person behind a provider identity, if this server has seen it before.
+    ///
+    /// `(provider, subject)` rather than `subject` alone: a subject is only unique
+    /// within the provider that issued it.
+    pub async fn by_identity(
+        pool: &sqlx::SqlitePool,
+        provider: &str,
+        subject: &Sub,
+    ) -> Result<Option<User>> {
+        let subject = subject.clone().trimmed();
+
+        Ok(sqlx::query_as!(
+            User,
+            r#"
+            SELECT
+                u.id          as "id!: Id",
+                u.sub         as "sub: Sub",
+                u.email       as "email?: Email",
+                u.name        as "name?: Name",
+                u.created_at  as "created_at!: CreatedAt"
+            FROM user_identities i
+            JOIN users u ON u.id = i.user_id
+            WHERE i.provider = ?1 AND i.subject = ?2
+            "#,
+            provider,
+            subject,
+        )
+        .fetch_optional(pool)
+        .await?)
+    }
+
+    /// The person with this address, if there is one.
+    ///
+    /// What lets somebody who signed in with Google on their phone sign in with Apple
+    /// on their laptop and find the same lists. Only ever consulted for an address the
+    /// provider has told us it verified — an unverified one is a claim, not an
+    /// identity, and matching on it would let anybody who can type your address
+    /// inherit your shopping.
+    pub async fn by_email(pool: &sqlx::SqlitePool, email: &Email) -> Result<Option<User>> {
+        let email = email.clone().normalized();
+
+        Ok(sqlx::query_as!(
+            User,
+            r#"
+            SELECT
+                id          as "id!: Id",
+                sub         as "sub: Sub",
+                email       as "email?: Email",
+                name        as "name?: Name",
+                created_at  as "created_at!: CreatedAt"
+            FROM users WHERE email = ?1
+            "#,
+            email,
+        )
+        .fetch_optional(pool)
+        .await?)
+    }
+
+    /// Records that this provider identity is this person.
+    ///
+    /// Idempotent: signing in again is the same identity arriving again, not a second
+    /// one. Attaching an identity already attached to somebody else is refused by the
+    /// primary key rather than silently moving it.
+    pub async fn attach_identity(
+        pool: &sqlx::SqlitePool,
+        provider: &str,
+        subject: &Sub,
+        user_id: Id,
+    ) -> Result<()> {
+        let subject = subject.clone().trimmed();
+
+        sqlx::query!(
+            r#"
+            INSERT INTO user_identities (provider, subject, user_id)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(provider, subject) DO NOTHING
+            "#,
+            provider,
+            subject,
+            user_id,
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Takes what a provider has told us this time, keeping what it has not.
+    ///
+    /// The coalescing half of [`User::find_or_create`], addressed by id rather than by
+    /// subject — which is what an attached identity needs, since its subject is not the
+    /// one in `users.sub`.
+    ///
+    /// Distinct from [`User::update`], where `None` clears: a provider that stops
+    /// sending a claim has not told us the value is gone. Apple sends an address once
+    /// and a name never, and reading either absence as "delete it" would empty a
+    /// profile on the second sign-in.
+    pub async fn refresh(
+        pool: &sqlx::SqlitePool,
+        id: Id,
+        name: Option<Name>,
+        email: Option<Email>,
+    ) -> Result<User> {
+        let name = name.map(Name::trimmed);
+        let email = email.map(Email::normalized);
+
+        Ok(sqlx::query_as!(
+            User,
+            r#"
+            UPDATE users SET
+                name  = coalesce(?2, name),
+                email = coalesce(?3, email)
+            WHERE id = ?1
+            RETURNING
+                id          as "id!: Id",
+                sub         as "sub: Sub",
+                email       as "email?: Email",
+                name        as "name?: Name",
+                created_at  as "created_at!: CreatedAt"
+            "#,
+            id,
+            name,
+            email,
+        )
+        .fetch_one(pool)
+        .await?)
+    }
+
     /// Replaces a user's profile.
     ///
     /// Both columns are written every time, so `None` clears rather than keeps —

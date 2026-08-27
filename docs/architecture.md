@@ -251,6 +251,19 @@ that header, so they exercise it on every run.
   stylesheet and the two `hx-on` handlers moved into served files, because a policy
   that has to allow `unsafe-inline` is decoration. A test asserts the markup contains
   nothing the policy would block.
+- **Two providers, one person.** The Apple clients sign in with Apple; Android and the
+  browser sign in with Google. `user_identities(provider, subject)` is who somebody is;
+  `users.sub` is a record of how they first arrived, qualified by provider on anything
+  created since — a subject is only unique within the provider that issued it, and that
+  column is unique across the table. A new identity whose **verified** address matches
+  an existing account joins it rather than making a second one. Unverified addresses
+  never reach that check: matching on a claim nobody vouched for would be a way into
+  somebody else's shopping.
+- **Apple sends an address once and a name never.** Admission reads the address, so it
+  falls back to the one stored against that identity rather than the one on the token —
+  otherwise a person would be let in on their first sign-in and refused on every one
+  after. The name comes to the *client* in the credential, not in the token, so an
+  Apple-only account has none and `Person::shown` falls back to the address.
 - **Admission is a different refusal from authorisation**, and the wire says which.
   `ServiceError::NotAdmitted` is "this account may not use this server", raised before
   any row is written for a stranger; `ServiceError::Forbidden` is "you may read this
@@ -353,27 +366,6 @@ An irreversible `DELETE` deserves a confirmation flow designed on purpose.
 Answering it means deciding what a `viewer` may do — and, separately, whose history a
 shared list draws on. History is per-user by design: what you buy is yours, and
 merging two people's habits would make both sets of suggestions worse.
-
-### Sign in with Apple
-
-The Apple clients use Google, and will keep doing so. Sign in with Apple needs the
-`com.apple.developer.applesignin` entitlement, and that needs an App ID with the
-capability enabled, which needs a paid Apple Developer Program membership. This is a
-personal shopping list; the membership costs more per year than the problem is worth.
-
-It was weighed rather than skipped, and three things would have to be answered if the
-price ever stops being the objection:
-
-* **Both providers, not one.** Android would stay on Google, so the API would verify
-  Apple's JWKS and issuer alongside Google's. That half is small.
-* **Apple's subject is not Google's**, so the same person signing in the other way
-  arrives as a stranger with no lists. Linking them means matching on email — which
-  works only if they choose "Share my email", because "Hide my email" yields a
-  `@privaterelay.appleid.com` address that matches nothing and, being absent from
-  `ALLOWED_EMAILS`, is refused outright.
-* **Apple sends `email` only on the first authorisation.** Every later sign-in omits
-  it, so admission — which reads the email off the token — would pass once and refuse
-  for ever after. It would have to fall back to the address stored against that `sub`.
 
 ### Working without the server
 

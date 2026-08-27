@@ -103,6 +103,9 @@ async fn callback(
     //    which is good for about an hour and is not refreshed anywhere.
     let actor = domain::service::identity::from_claims(
         &s.ctx,
+        // The browser signs in with Google and only Google: the OIDC flow here is
+        // Google's, and Apple's is a native affair with no server-side redirect.
+        "google",
         user::Sub(claims.subject().to_string()),
         Some(name)
             .filter(|n: &String| !n.is_empty())

@@ -17,22 +17,74 @@ use super::{Actor, Ctx, Result, ServiceError};
 /// Resolves the identity behind a verified provider token, creating the user on first
 /// sight.
 ///
-/// Idempotent, because it runs on every authenticated request — see
-/// [`User::find_or_create`].
+/// Idempotent, because it runs on every authenticated request.
+///
+/// `provider` is which service vouched for the subject. It is part of the key: a
+/// subject is only unique within the provider that issued it, and the same person
+/// arrives with a different one depending on which device is in their hand — Apple on
+/// the phone and the Mac, Google on Android.
 pub async fn from_claims(
     ctx: &Ctx,
+    provider: &str,
     sub: Sub,
     name: Option<Name>,
     email: Option<Email>,
 ) -> Result<Actor> {
-    // Checked before the row is written, not after. Refusing someone who has already
-    // been created leaves an account behind for every stranger who tried the door.
+    // Somebody this server has seen before, on this provider. Answered first, and
+    // without consulting the token's email, because Apple stops sending one after the
+    // first authorisation -- admission that read the token alone would let a person in
+    // once and refuse them for ever after.
+    if let Some(known) = User::by_identity(&ctx.db, provider, &sub).await? {
+        if !ctx.admission.admits(known.email.as_ref()) {
+            tracing::warn!(user = known.id.0, "sign-in refused: no longer an admitted address");
+            return Err(ServiceError::NotAdmitted);
+        }
+
+        // Still coalesced, so a name or an address the provider has started sending is
+        // picked up. `find_or_create` keys on `users.sub`, which for an attached
+        // identity is not this subject -- so the update goes through the id.
+        let refreshed = match (name, email) {
+            (None, None) => known,
+            (name, email) => User::refresh(&ctx.db, known.id, name, email).await?,
+        };
+        return Ok(Actor::User(refreshed));
+    }
+
+    // A new identity. From here the token's email is all there is, and Apple does send
+    // it on a first authorisation -- which is the only time this branch runs.
     if !ctx.admission.admits(email.as_ref()) {
-        tracing::warn!(sub = %sub.0, "sign-in refused: not an admitted address");
+        tracing::warn!(%provider, sub = %sub.0, "sign-in refused: not an admitted address");
         return Err(ServiceError::NotAdmitted);
     }
 
-    let user = User::find_or_create(&ctx.db, sub, name, email).await?;
+    // The same person, arriving the other way. Somebody who signed in with Google on
+    // their phone and with Apple on their laptop is one person with one list, and
+    // matching on the address is what says so.
+    //
+    // Only an address the provider vouches for reaches this far -- see the transports.
+    // Apple's "Hide my email" gives a relay address instead, which matches nothing and
+    // is refused by admission above anyway, so a hidden sign-in is a new account or no
+    // account rather than a way into somebody else's.
+    if let Some(email) = email.clone()
+        && let Some(existing) = User::by_email(&ctx.db, &email).await?
+    {
+        User::attach_identity(&ctx.db, provider, &sub, existing.id).await?;
+        tracing::info!(user = existing.id.0, %provider, "identity attached by address");
+        let refreshed = User::refresh(&ctx.db, existing.id, name, Some(email)).await?;
+        return Ok(Actor::User(refreshed));
+    }
+
+    // Qualified, because `users.sub` is unique across the whole table and a subject is
+    // only unique within the provider that issued it. Unqualified, an Apple subject
+    // that happened to match a Google one would land on `ON CONFLICT(sub)` and hand
+    // somebody else's account to a stranger.
+    //
+    // Only new accounts are qualified. The ones that predate two providers keep the
+    // raw subject they were created with, and are found by their identity row rather
+    // than by this column -- which is why nothing had to be rewritten.
+    let qualified = user::Sub(format!("{provider}|{}", sub.0));
+    let user = User::find_or_create(&ctx.db, qualified, name, email).await?;
+    User::attach_identity(&ctx.db, provider, &sub, user.id).await?;
     Ok(Actor::User(user))
 }
 

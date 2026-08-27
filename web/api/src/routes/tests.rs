@@ -1214,12 +1214,17 @@ async fn me_is_the_signed_in_person(#[future(awt)] pool: SqlitePool) {
 
     let (status, mine) = send(&app, req("GET", "/api/me", &me(), None)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(mine["sub"], "google-oauth2|me");
+    // Qualified by the provider that vouched for it. A subject is only unique within
+    // the provider that issued it, and `users.sub` is unique across the table -- so an
+    // account created since there was more than one provider records both halves. Who
+    // this person is now lives in `user_identities`; this is a record of how they
+    // arrived.
+    assert_eq!(mine["sub"], "google|google-oauth2|me");
 
     let (status, theirs) = send(&app, req("GET", "/api/me", &them(), None)).await;
     assert_eq!(status, StatusCode::OK);
     assert_ne!(theirs["id"], mine["id"], "two tokens, two people");
-    assert_eq!(theirs["sub"], "google-oauth2|someone-else");
+    assert_eq!(theirs["sub"], "google|google-oauth2|someone-else");
 }
 
 #[rstest]

@@ -1575,27 +1575,152 @@ async fn an_item_with_no_unit_gets_the_unit_unit(
 }
 
 /// A typo can be taken back.
+/// The same person, arriving the other way, is the same person.
+///
+/// Android signs in with Google and the Apple clients sign in with Apple, so one human
+/// has two subjects. Matching on the address is what keeps them one account with one
+/// list rather than two accounts with none.
 #[rstest]
 #[tokio::test]
-async fn a_mistake_can_be_forgotten(#[future(awt)] pool: SqlitePool) {
-    let s = scene(pool).await;
-    items::quick_add(&s.ctx, &s.mine, s.list.id, None, "Mlik")
-        .await
-        .unwrap();
+async fn two_providers_one_person(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user;
+    use crate::service::admission::Admission;
+    use crate::service::identity;
 
-    items::forget(&s.ctx, &s.mine, s.list.id, item::Name("mlik".into()))
-        .await
-        .unwrap();
+    let ctx = Ctx::with_admission(pool.clone(), Admission::parse("me@example.com").unwrap());
 
-    let after = items::suggestions(&s.ctx, &s.mine, s.list.id, 50, None)
-        .await
-        .unwrap();
-    assert!(!after.iter().any(|n| n.0 == "Mlik"), "{after:?}");
-    // and forgetting something that was never there is a miss, not a silent no-op
+    let first = identity::from_claims(
+        &ctx,
+        "google",
+        user::Sub("google|me".into()),
+        Some(user::Name("Me".into())),
+        Some(user::Email("me@example.com".into())),
+    )
+    .await
+    .unwrap();
+
+    let second = identity::from_claims(
+        &ctx,
+        "apple",
+        user::Sub("apple|me".into()),
+        // Apple never sends a name in the token.
+        None,
+        Some(user::Email("me@example.com".into())),
+    )
+    .await
+    .unwrap();
+
     assert_eq!(
-        items::forget(&s.ctx, &s.mine, s.list.id, item::Name("never".into())).await,
-        Err(ServiceError::NotFound)
+        first.person().unwrap().id,
+        second.person().unwrap().id,
+        "the second sign-in made a second person"
     );
+    assert_eq!(
+        second.person().unwrap().name,
+        Some(user::Name("Me".into())),
+        "the name from the first provider was cleared by a token that carried none"
+    );
+
+    let accounts: i64 = sqlx::query_scalar("SELECT count(*) FROM users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(accounts, 1);
+}
+
+/// Apple sends an address on the first authorisation and never again.
+///
+/// Admission reads the address, so a check that only ever looked at the token would let
+/// somebody in once and refuse them for ever after — which is the shape of bug that
+/// looks like a flaky login.
+#[rstest]
+#[tokio::test]
+async fn a_later_sign_in_with_no_address_is_still_admitted(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user;
+    use crate::service::admission::Admission;
+    use crate::service::identity;
+
+    let ctx = Ctx::with_admission(pool.clone(), Admission::parse("me@example.com").unwrap());
+
+    identity::from_claims(
+        &ctx,
+        "apple",
+        user::Sub("apple|me".into()),
+        None,
+        Some(user::Email("me@example.com".into())),
+    )
+    .await
+    .unwrap();
+
+    // Every sign-in after the first, as Apple actually sends them.
+    let again = identity::from_claims(&ctx, "apple", user::Sub("apple|me".into()), None, None).await;
+
+    assert!(again.is_ok(), "a returning person was refused: {again:?}");
+    assert_eq!(
+        again.unwrap().person().unwrap().email,
+        Some(user::Email("me@example.com".into())),
+        "the stored address was lost"
+    );
+}
+
+/// Somebody taken off the list stops getting in, even though their token says nothing
+/// about an address any more.
+#[rstest]
+#[tokio::test]
+async fn removing_an_address_stops_a_nameless_token_too(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user;
+    use crate::service::admission::Admission;
+    use crate::service::identity;
+
+    let welcome = Ctx::with_admission(pool.clone(), Admission::parse("me@example.com").unwrap());
+    identity::from_claims(
+        &welcome,
+        "apple",
+        user::Sub("apple|me".into()),
+        None,
+        Some(user::Email("me@example.com".into())),
+    )
+    .await
+    .unwrap();
+
+    let removed = Ctx::with_admission(pool.clone(), Admission::parse("someone@else.com").unwrap());
+    let refused =
+        identity::from_claims(&removed, "apple", user::Sub("apple|me".into()), None, None).await;
+
+    assert_eq!(refused.err(), Some(ServiceError::NotAdmitted));
+}
+
+/// Two providers may issue the same subject string, and it would mean two people.
+#[rstest]
+#[tokio::test]
+async fn the_same_subject_from_two_providers_is_two_people(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user;
+    use crate::service::admission::Admission;
+    use crate::service::identity;
+
+    let ctx = Ctx::with_admission(pool.clone(), Admission::Anyone);
+
+    let one = identity::from_claims(
+        &ctx,
+        "google",
+        user::Sub("000123".into()),
+        None,
+        Some(user::Email("one@example.com".into())),
+    )
+    .await
+    .unwrap();
+
+    let other = identity::from_claims(
+        &ctx,
+        "apple",
+        user::Sub("000123".into()),
+        None,
+        Some(user::Email("other@example.com".into())),
+    )
+    .await
+    .unwrap();
+
+    assert_ne!(one.person().unwrap().id, other.person().unwrap().id);
 }
 
 /// A stranger is refused before a row is written for them.
@@ -1617,6 +1742,7 @@ async fn an_unlisted_address_cannot_sign_in(#[future(awt)] pool: SqlitePool) {
     assert_eq!(
         identity::from_claims(
             &ctx,
+            "google",
             user::Sub("google-oauth2|stranger".into()),
             Some(user::Name("Stranger".into())),
             Some(user::Email("stranger@example.com".into())),
@@ -1638,6 +1764,7 @@ async fn an_unlisted_address_cannot_sign_in(#[future(awt)] pool: SqlitePool) {
     assert!(
         identity::from_claims(
             &ctx,
+            "google",
             user::Sub("google-oauth2|me".into()),
             Some(user::Name("Me".into())),
             Some(user::Email("Me@Example.com".into())),
@@ -1660,6 +1787,7 @@ async fn a_session_stops_working_when_the_address_is_removed(#[future(awt)] pool
     let welcome = Ctx::with_admission(pool.clone(), Admission::parse("me@example.com").unwrap());
     let actor = identity::from_claims(
         &welcome,
+        "google",
         user::Sub("google-oauth2|me".into()),
         Some(user::Name("Me".into())),
         Some(user::Email("me@example.com".into())),

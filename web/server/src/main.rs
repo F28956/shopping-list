@@ -20,7 +20,7 @@ use tower_http::{catch_panic::CatchPanicLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use api::jwks::Jwks;
-use api::state::{AppState as ApiState, AuthMode};
+use api::state::{AppState as ApiState, AuthMode, Provider};
 use domain::service::Ctx;
 use domain::service::admission::Admission;
 use web::sessions::SqliteSessions;
@@ -49,10 +49,7 @@ async fn main() -> anyhow::Result<()> {
 
     let api_state = ApiState {
         ctx: ctx.clone(),
-        auth: AuthMode::Google {
-            jwks: Arc::new(Jwks::new(reqwest::Client::new())),
-            client_ids: google_client_ids()?,
-        },
+        auth: AuthMode::Providers(providers()?),
     };
     let web_ctx = ctx.clone();
     let sessions = web::session_store(&web_ctx).await?;
@@ -196,15 +193,63 @@ fn lan_address(port: u16) -> Option<String> {
 ///   not to name the audience. `GOOGLE_ANDROID_CLIENT_ID` is here for the case where
 ///   a token does arrive addressed to it, so that discovering as much is a line of
 ///   configuration rather than a change to the server.
-fn google_client_ids() -> anyhow::Result<Vec<String>> {
-    let ids = audiences([
+/// Who this server will accept a token from.
+///
+/// Google is required: it is how the browser and Android sign in, and a server with no
+/// Google audiences is one nobody can reach. Apple is optional, because it needs a paid
+/// developer account and a bundle identifier, and a checkout without one should still
+/// start rather than fail at boot with a message about a platform the person may not
+/// own.
+fn providers() -> anyhow::Result<Vec<Provider>> {
+    let http = reqwest::Client::new();
+    let mut providers = Vec::new();
+
+    let google = audiences([
         Some(std::env::var("GOOGLE_CLIENT_ID")?),
         std::env::var("GOOGLE_IOS_CLIENT_ID").ok(),
         std::env::var("GOOGLE_ANDROID_CLIENT_ID").ok(),
     ]);
+    tracing::info!(audiences = google.len(), "accepting Google tokens");
+    providers.push(Provider {
+        name: "google",
+        jwks: Arc::new(Jwks::new(
+            http.clone(),
+            "https://www.googleapis.com/oauth2/v3/certs",
+        )),
+        // Spelled two ways historically, and Google still issues both.
+        issuers: vec![
+            "https://accounts.google.com".into(),
+            "accounts.google.com".into(),
+        ],
+        audiences: google,
+    });
 
-    tracing::info!(audiences = ids.len(), "accepting Google tokens");
-    Ok(ids)
+    // The audience of a native Sign in with Apple token is the app's bundle
+    // identifier -- there is no separate client id to configure, which is why this is
+    // the bundle id and not something from a console.
+    let apple = audiences([std::env::var("APPLE_BUNDLE_IDS").ok()].into_iter().flat_map(
+        |configured| {
+            configured
+                .into_iter()
+                .flat_map(|list| list.split(',').map(str::to_string).collect::<Vec<_>>())
+                .map(Some)
+                .collect::<Vec<_>>()
+        },
+    ));
+
+    if apple.is_empty() {
+        tracing::info!("not accepting Apple tokens: APPLE_BUNDLE_IDS is not set");
+    } else {
+        tracing::info!(audiences = apple.len(), "accepting Apple tokens");
+        providers.push(Provider {
+            name: "apple",
+            jwks: Arc::new(Jwks::new(http, "https://appleid.apple.com/auth/keys")),
+            issuers: vec!["https://appleid.apple.com".into()],
+            audiences: apple,
+        });
+    }
+
+    Ok(providers)
 }
 
 /// The configured ids, minus the blanks and the repeats.

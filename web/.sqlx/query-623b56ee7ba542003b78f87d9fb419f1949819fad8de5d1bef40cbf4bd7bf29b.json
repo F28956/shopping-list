@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO user_identities (provider, subject, user_id)\n            VALUES (?1, ?2, ?3)\n            ON CONFLICT(provider, subject) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "623b56ee7ba542003b78f87d9fb419f1949819fad8de5d1bef40cbf4bd7bf29b"
+}
