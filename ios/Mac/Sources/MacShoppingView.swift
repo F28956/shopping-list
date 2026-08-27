@@ -40,10 +40,16 @@ struct MacShoppingView: View {
             Group {
                 if !loaded {
                     ProgressView()
-                } else if lists.isEmpty && !fresh {
+                } else if lists.isEmpty && !fresh && !onDeviceOnly {
                     // Before the empty state: after any failed load with nothing
                     // cached, "No lists" is an emptiness nobody has verified. Only a
                     // server that answered can earn the empty state.
+                    //
+                    // Except on a Mac kept to itself, where there is no server to have
+                    // checked with and this machine is the only thing that could know.
+                    // There, empty means empty -- and saying "Can't reach the server"
+                    // to somebody who chose not to have one is the app complaining
+                    // about a decision they made on purpose.
                     ContentUnavailableView(
                         offline ? "Can't reach the server" : "Couldn't load your lists",
                         systemImage: offline ? "icloud.slash" : "exclamationmark.triangle",
@@ -57,11 +63,17 @@ struct MacShoppingView: View {
                     ContentUnavailableView(
                         "No lists",
                         systemImage: "cart",
-                        description: Text("Make one in the browser and it appears here.")
+                        description: Text(
+                            onDeviceOnly
+                                ? "Make one with the button above. It stays on this Mac."
+                                : "Make one in the browser and it appears here."
+                        )
                     )
                 } else {
                     SwiftUI.List(selection: $chosen) {
-                        if offline {
+                        // Nothing to say on a Mac with no server: nothing is stale,
+                        // because there is nowhere it could have gone stale against.
+                        if offline && !onDeviceOnly {
                             OfflineNote()
                         }
 

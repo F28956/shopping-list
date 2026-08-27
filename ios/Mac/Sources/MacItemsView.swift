@@ -26,6 +26,8 @@ struct MacItemsView: View {
     @State private var error: String?
     /// See `ListsView.offline` on the phone.
     @State private var offline = false
+    /// There is no server. The default -- see `ServerDirectory`.
+    @State private var onDeviceOnly = ServerDirectory.isOnDeviceOnly
     @State private var fresh = false
     @State private var loaded = false
     /// How many changes made here are still waiting to be sent.
@@ -72,13 +74,16 @@ struct MacItemsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if offline || waiting > 0 || refused {
+            // Not on a Mac with no server: everything is queued there and nothing
+            // ever leaves, so a permanent "2 changes waiting to be sent" would be
+            // reporting the arrangement rather than a problem.
+            if (offline || waiting > 0 || refused) && !onDeviceOnly {
                 OfflineNote(offline: offline, waiting: waiting, refused: refused)
             }
 
             // "Nothing on this list yet" is a claim, and after a load that failed
             // with nothing cached it is a claim nobody has checked.
-            if items.isEmpty && loaded && !fresh {
+            if items.isEmpty && loaded && !fresh && !onDeviceOnly {
                 Text(
                     offline
                         ? "Can't reach the server. This list will appear as soon as there is a connection."
@@ -141,12 +146,12 @@ struct MacItemsView: View {
             // hide, so the dot already sits bare.
             if #available(macOS 26.0, *) {
                 ToolbarItem(placement: .primaryAction) {
-                    StatusDot(waiting: waiting, offline: offline)
+                    StatusDot(waiting: waiting, offline: offline, onDeviceOnly: onDeviceOnly)
                 }
                 .sharedBackgroundVisibility(.hidden)
             } else {
                 ToolbarItem(placement: .primaryAction) {
-                    StatusDot(waiting: waiting, offline: offline)
+                    StatusDot(waiting: waiting, offline: offline, onDeviceOnly: onDeviceOnly)
                 }
             }
         }
@@ -163,6 +168,10 @@ struct MacItemsView: View {
                 // reordering the copy held here and hoping the two agree.
                 await loadReference()
             }
+        }
+        // Settings changes this under our feet, and storage is not observable state.
+        .onReceive(NotificationCenter.default.publisher(for: .serverChanged)) { _ in
+            onDeviceOnly = ServerDirectory.isOnDeviceOnly
         }
         .task { await loadReference() }
         .task {
