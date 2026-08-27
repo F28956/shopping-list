@@ -46,6 +46,7 @@ struct MacRootView: View {
 
 struct MacSignInView: View {
     @Environment(Identity.self) private var identity
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         VStack(spacing: 16) {
@@ -60,7 +61,11 @@ struct MacSignInView: View {
             SignInWithAppleButton(.signIn, onRequest: identity.request) { result in
                 Task { await identity.adopt(result) }
             }
-            .signInWithAppleButtonStyle(.automatic)
+            // There is no `.automatic`: the three styles are black, white and
+            // white-outlined, and picking one is the caller's job. A Mac window
+            // follows the system appearance, so the mark has to as well or it is a
+            // black slab in a dark window.
+            .signInWithAppleButtonStyle(scheme == .dark ? .white : .black)
             .frame(width: 240, height: 40)
             .accessibilityIdentifier("sign-in")
 
