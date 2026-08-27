@@ -33,12 +33,16 @@ struct ServerPeopleView: View {
             .navigationTitle("Who may sign in")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Adding on the left, finishing on the right -- the shape Settings >
+                // Passwords uses, and the one a modal list with an add action wants.
+                // These were the other way round, which put `Done` in the slot that
+                // means cancel.
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Done") { dismiss() }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
                     Button("Admit", systemImage: "plus") { admitting = true }
                         .accessibilityIdentifier("admit")
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
                 }
             }
             .task { await load() }

@@ -1028,6 +1028,17 @@ private struct AddItemSheet: View {
                         .onSubmit { Task { await addAndStay() } }
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("item.line")
+
+                    // In the sheet rather than the toolbar, now that the toolbar's
+                    // right-hand slot is `Done`. A confirming action gets one place in
+                    // a bar and this sheet's is taken -- and the button belongs beside
+                    // the field it acts on anyway, where a thumb already is.
+                    //
+                    // The return key does the same thing, and is how most of these get
+                    // added; this is for the people who never look for it.
+                    Button("Add") { Task { await addAndStay() } }
+                        .disabled(line.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .accessibilityIdentifier("item.add")
                 }
 
                 // Only what matches. A permanent list of things this list has bought
@@ -1060,12 +1071,13 @@ private struct AddItemSheet: View {
             .navigationTitle("Add an item")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { line = ""; dismiss() }
-                }
+                // `Done` on the right and nothing on the left, which is the shape for
+                // a sheet that commits as it goes. The left slot means *cancel* --
+                // dismiss and keep nothing -- and this sheet cannot honour that: by
+                // the time somebody leaves it, the items are already on the list.
+                // `Done` sitting there was promising an undo that does not exist.
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { Task { await addAndStay() } }
-                        .disabled(line.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Done") { line = ""; dismiss() }
                 }
             }
             .onAppear { typing = true }

@@ -72,6 +72,20 @@ struct TagOrderSheet: View {
                             + "This is your order for \(list.name); everyone else keeps theirs."
                     )
                 }
+
+                // In the sheet rather than the bar. A navigation bar has one
+                // confirming slot and `Save` has it; `Reset` sat to the right of it,
+                // which is the position that reads as the thing to press. It is the
+                // opposite of saving, and it was the more prominent of the two.
+                Section {
+                    // Back to the shop's own order, which is also what a list nobody
+                    // has touched already does.
+                    Button("Reset to the usual order", role: .destructive) {
+                        dismiss()
+                        Task { await save([]) }
+                    }
+                    .accessibilityIdentifier("order.reset")
+                }
             }
             #if os(iOS)
                 .environment(\.editMode, .constant(.active))
@@ -89,15 +103,6 @@ struct TagOrderSheet: View {
                         Task { await save(chosen) }
                     }
                     .accessibilityIdentifier("order.save")
-                }
-                ToolbarItem(placement: .destructiveAction) {
-                    // Back to the shop's own order, which is also what a list nobody
-                    // has touched already does.
-                    Button("Reset") {
-                        dismiss()
-                        Task { await save([]) }
-                    }
-                    .accessibilityIdentifier("order.reset")
                 }
             }
         }
