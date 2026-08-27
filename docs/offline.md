@@ -200,23 +200,43 @@ step.
   in a transaction. GRDB is SQLite with the SQL written down, which is also the
   server's mental model, so the two halves of a merge rule can be read side by
   side.
-* **watchOS** — the same cache and the same outbox. This document used to call the
-  watch read-only, and it was simply wrong: crossing things off is exactly what a
-  watch is for, and it is the screen most likely to be doing it somewhere with no
-  signal. A tick made there used to be thrown away, and the error replaced the
-  list, so the change and the list were lost together.
+* **watchOS** — **no cache and no outbox, because the phone is its server.**
 
-  It cannot sign in — Google has no watchOS SDK — so the token still comes from
-  the phone, cached for half an hour. **The two stores are separate and have to
-  be**, because they are two devices: an App Group shares a container between an
-  app and its extensions on one device, never across a pair. So each queues its
-  own work and sends its own, and a watch without cellular reaches the server
-  through the phone it is paired to.
+  This is the second answer to the same question, and the first one was right
+  until the ground moved. The watch used to hold its own cache and its own queue,
+  ask the phone for a credential, and talk to the server itself. Then a server
+  stopped being required — see [self-hosting.md](self-hosting.md) — and that
+  arrangement had no answer at all: with none configured there was nothing to
+  hand over and nothing to talk to, so the watch app was dead in what is now the
+  **default** state of a fresh install.
 
-  What it says is one dot rather than a sentence. Green: this came from the
-  server and nothing is waiting to go back. Orange: one of those is not true. A
-  wrist has no line to spare, and the difference between "offline" and "queued"
-  is not one anybody acts on mid-shop.
+  So the phone holds the cache, the queue, and whatever account there is. The
+  watch holds a picture of a list and a way to tick it off, and the two things it
+  needed persistence for are things WatchConnectivity already persists:
+
+  * `updateApplicationContext` carries the snapshot. Latest-wins, delivered while
+    both apps are in the background, and kept across launches — so the watch shows
+    the list instantly with nothing running. That is why there is no database.
+  * `transferUserInfo` carries the ticks back. Queued, in order, retried until the
+    phone takes them, and also kept — so a tick made in a shop with the phone in a
+    locker is not lost. That is why there is no outbox.
+
+  A tick goes by `sendMessage` when the phone is reachable and falls back to the
+  queue when it is not. Sending only the queued way looked right and was not: a
+  tick made with the phone in your hand sat there, because "eventually" is a
+  promise about the worst case and that was the best one.
+
+  **What it costs, said plainly:** a watch out of range of its phone can no longer
+  reach the server on its own. It still shows the last list it was given and still
+  takes ticks. Only a cellular watch genuinely away from its phone loses anything,
+  and the alternative was a second full client — its own cache, queue and merge
+  rules, a third place for them to diverge — that does not work at all in the
+  configuration most people will be in.
+
+  What it says is one dot rather than a sentence. Green: everything done here has
+  reached the phone. Orange: something is still waiting for the phone to come into
+  range. There is no "offline" any more, and its absence is the point — this watch
+  cannot be out of touch with a server it never talks to.
 * **The browser** — online-only, and it says so. The web UI is server-rendered
   HTML with htmx: making it work offline means a service worker and a
   client-side store, which is a second copy of the app rather than a feature of
