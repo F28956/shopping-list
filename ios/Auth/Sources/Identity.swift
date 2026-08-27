@@ -27,15 +27,25 @@ final class Identity {
     private(set) var state: State = .unknown
     private(set) var lastError: String?
 
+    /// Kept so it can be removed again. `@ObservationIgnored` because it is
+    /// bookkeeping: nothing draws it, and a view that redrew when it changed would be
+    /// redrawing for no reason.
+    @ObservationIgnored private var observer: (any NSObjectProtocol)?
+
+    init() {
+        watchForRevocation()
+    }
+
     /// What is remembered between launches.
     ///
-    /// The token is in the keychain; the rest is in `UserDefaults`, because none of it
-    /// grants anything. The Apple user identifier is kept so that a revoked
-    /// authorisation can be noticed — it is a per-app opaque string, not an address.
+    /// The token is in the keychain; the name is in `UserDefaults`, because a display
+    /// name grants nothing. Apple's own user identifier is deliberately not kept:
+    /// nothing reads it now that revocation arrives as a notification rather than an
+    /// answer to a question, and a stored identifier nothing consults is a thing to
+    /// keep in step for no reason.
     private enum Remembered {
         static let token = "session.token"
         static let name = "session.name"
-        static let appleUserID = "session.appleUserID"
     }
 
     /// Whether somebody has signed in on this device and not signed out.
@@ -76,13 +86,6 @@ final class Identity {
         #endif
 
         state = isRemembered ? .signedIn(name: rememberedName) : .signedOut
-
-        // Somebody who removed this app from their Apple ID, or stopped using that
-        // Apple ID, should not stay signed in for the rest of the session's ninety
-        // days. Checked after the state is set rather than before it, because the
-        // answer needs the device to be awake and reachable and the list on screen
-        // does not.
-        await forgetIfRevoked()
     }
 
     /// What to ask Apple for, handed to `SignInWithAppleButton`.
@@ -137,7 +140,6 @@ final class Identity {
 
             Keychain.set(token, for: Remembered.token)
             UserDefaults.standard.set(name, forKey: Remembered.name)
-            UserDefaults.standard.set(credential.user, forKey: Remembered.appleUserID)
 
             state = .signedIn(name: name)
             lastError = nil
@@ -164,7 +166,6 @@ final class Identity {
 
         Keychain.set(nil, for: Remembered.token)
         UserDefaults.standard.removeObject(forKey: Remembered.name)
-        UserDefaults.standard.removeObject(forKey: Remembered.appleUserID)
         state = .signedOut
         lastError = reason
     }
@@ -182,21 +183,33 @@ final class Identity {
         return sessionToken
     }
 
-    /// Signs out if this Apple ID no longer authorises this app.
+    /// Stops listening. Paired with `watchForRevocation`, and only so that a torn-down
+    /// `Identity` does not leave an observer behind.
+    deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    /// Signs out when somebody takes this app off their Apple ID.
     ///
-    /// Only on a definite `.revoked`. `credentialState` also answers `.notFound` for
-    /// an app it has no record of, and a device with no signal returns an error — and
-    /// neither is a reason to throw away a working session.
-    private func forgetIfRevoked() async {
-        guard let user = UserDefaults.standard.string(forKey: Remembered.appleUserID),
-              isRemembered
-        else { return }
-
-        let provider = ASAuthorizationAppleIDProvider()
-        let credentialState = try? await provider.credentialState(forUserID: user)
-
-        if credentialState == .revoked {
-            signOut(because: "This Apple ID no longer allows Shopping list.")
+    /// A notification, not a poll. `credentialState(forUserID:)` looked like the
+    /// obvious thing and was actively harmful: asked at every launch it answered
+    /// `.revoked` for an account that was fine, and the app dutifully signed itself out
+    /// sixteen seconds after signing in. A wrong `.revoked` costs somebody their
+    /// session and anything still queued in the outbox behind it, so the only news
+    /// worth acting on is news that arrives by itself.
+    ///
+    /// The server is the other half, and the authoritative one. It knows about
+    /// admission and about sessions ended elsewhere, and it says so with a 401 — which
+    /// is what the wire already handles.
+    private func watchForRevocation() {
+        observer = NotificationCenter.default.addObserver(
+            forName: ASAuthorizationAppleIDProvider.credentialRevokedNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.signOut(because: "This Apple ID no longer allows Shopping list.")
+            }
         }
     }
 
