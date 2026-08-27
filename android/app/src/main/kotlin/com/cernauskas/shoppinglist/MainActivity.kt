@@ -27,6 +27,7 @@ import com.cernauskas.shoppinglist.ui.ItemsViewModel
 import com.cernauskas.shoppinglist.ui.ListsScreen
 import com.cernauskas.shoppinglist.ui.ListsViewModel
 import com.cernauskas.shoppinglist.ui.ServerAddressScreen
+import com.cernauskas.shoppinglist.ui.ServerPeopleScreen
 import com.cernauskas.shoppinglist.ui.ShoppingTheme
 import kotlinx.coroutines.launch
 
@@ -172,6 +173,19 @@ private fun Shopping(
     onSignedOut: (Identity.Departure) -> Unit,
     onLeaveServer: () -> Unit,
 ) {
+    // Asked once, after the app is already usable. Nothing on the lists screen waits
+    // for it -- a menu item appearing a moment late is better than a screen that waits
+    // for a question about administration before it shows anybody their shopping.
+    var isOwner by remember { mutableStateOf(false) }
+    var managingServer by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) { isOwner = runCatching { api.whoAmI().isOwner }.getOrDefault(false) }
+
+    if (managingServer) {
+        ServerPeopleScreen(api = api, onDone = { managingServer = false })
+        return
+    }
+
     val nav = rememberNavController()
     var open by remember { mutableStateOf<ShoppingList?>(null) }
 
@@ -186,6 +200,8 @@ private fun Shopping(
                 // Deliberately signed out, so nothing to explain on the way back.
                 onSignOut = { onSignedOut(Identity.Departure.Deliberate) },
                 onLeaveServer = onLeaveServer,
+                isOwner = isOwner,
+                onManageServer = { managingServer = true },
             )
         }
 

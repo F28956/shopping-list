@@ -43,6 +43,11 @@ fun ListsScreen(
     onOpen: (ShoppingList) -> Unit,
     onSignOut: () -> Unit,
     onLeaveServer: () -> Unit,
+    /** Whether this person administers the server, which decides whether the screen
+     * that manages it exists. Hiding it is a courtesy: every route behind it is
+     * refused in the service layer to anybody else. */
+    isOwner: Boolean,
+    onManageServer: () -> Unit,
 ) {
     val state by model.state.collectAsState()
     val snackbars = remember { SnackbarHostState() }
@@ -101,6 +106,12 @@ fun ListsScreen(
                             onClick = { open = false; onSignOut() },
                         )
                         HorizontalDivider()
+                        if (isOwner) {
+                            DropdownMenuItem(
+                                text = { Text("Who may sign in") },
+                                onClick = { open = false; onManageServer() },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Change server") },
                             onClick = { open = false; leavingServer = true },

@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -119,6 +121,52 @@ class Api(
         return Listing(page.items, page.total, page.hasMore)
     }
 
+    // Administering the server. Every one of these is refused to anybody who is not an
+    // owner, in `domain::service::admission` rather than here.
+
+    /** What this server says about itself, including whether it admits anybody. */
+    suspend fun serverAbout(): ServerAbout = get("/api/server")
+
+    /** Every address that may sign in. */
+    suspend fun admissions(): List<Admitted> = get("/api/admissions")
+
+    /** Lets an address sign in. Admitting one twice is a double-click, not an error. */
+    suspend fun admit(email: String, note: String?) {
+        val body = buildJsonObject {
+            put("email", email)
+            if (!note.isNullOrBlank()) put("note", note)
+        }
+        send("POST", "/api/admissions", body.toString())
+    }
+
+    /**
+     * Takes an address off the list. Takes effect on that person's very next request,
+     * not whenever their session happens to expire.
+     */
+    suspend fun withdraw(email: String) {
+        send("DELETE", "/api/admissions/${escaped(email)}", null)
+    }
+
+    /**
+     * Makes somebody an owner, or stops them being one.
+     *
+     * The server refuses the last owner being demoted, and refuses promoting somebody
+     * who has never signed in — there is no person yet to make an owner.
+     */
+    suspend fun setOwner(email: String, owner: Boolean) {
+        val path = "/api/admissions/${escaped(email)}/owner"
+        send(if (owner) "POST" else "DELETE", path, null)
+    }
+
+    /** Opens the server to anybody a provider vouches for, or closes it again. */
+    suspend fun setAdmitsAnyone(open: Boolean) {
+        send("PUT", "/api/server", """{"admits_anyone":$open}""")
+    }
+
+    /** An address is a path component here, and addresses contain `+` and `@`. */
+    private fun escaped(email: String): String =
+        java.net.URLEncoder.encode(email, "UTF-8").replace("+", "%20")
+
     suspend fun units(): List<Unit> =
         get<Page<Unit>>("/api/units?order_by=name&size=$pageLimit").items
 
@@ -222,6 +270,8 @@ class Api(
 
     // ---------------------------------------------------------------- sharing
 
+    /** Who this is, so a screen can tell which member is you — and whether they
+     * administer this server. */
     suspend fun whoAmI(): Me = get("/api/me")
 
     suspend fun people(list: ShoppingList): List<Person> = get("/api/lists/${list.id}/members")

@@ -77,7 +77,54 @@ data class Person(
 }
 
 @Serializable
-data class Me(val id: Long)
+data class Me(
+    val id: Long,
+    /**
+     * Whether this person administers *this server* — who may sign in, and who else
+     * administers it.
+     *
+     * A fact about the server rather than about them: the same account on somebody
+     * else's server is not an owner of it. Defaulted so a server older than this app,
+     * where the idea did not exist, still decodes — nobody is an owner there and the
+     * screen it gates simply does not appear.
+     *
+     * It is not a data role. An owner has no more access to anybody's lists than
+     * anybody else.
+     */
+    @SerialName("is_owner") val isOwner: Boolean = false,
+)
+
+/** One address that may sign in to this server. */
+@Serializable
+data class Admitted(
+    val email: String,
+    /**
+     * Who it turned out to be, once they signed in. `null` means nobody has used this
+     * address yet — the difference between "invited" and "here".
+     */
+    @SerialName("user_id") val userId: Long? = null,
+    val note: String? = null,
+) {
+    /**
+     * Whether anybody has used it. The screen says so, because withdrawing an address
+     * somebody is using signs them out and withdrawing one nobody has used does not.
+     */
+    val isInUse: Boolean get() = userId != null
+}
+
+/**
+ * What a server says about itself, over the wire. The same shape as
+ * [ServerDirectory.About], which is read before anybody has signed in.
+ */
+@Serializable
+data class ServerAbout(
+    val name: String,
+    val version: String = "",
+    /** `open`, `closed` or `unclaimed`. */
+    val admission: String = "",
+) {
+    val admitsAnyone: Boolean get() = admission == "open"
+}
 
 @Serializable
 data class Page<T>(
