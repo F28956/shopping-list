@@ -13,13 +13,14 @@ struct HistoryTests {
     private func item(
         _ name: String,
         unit: Int64? = nil,
+        amount: Double = 1,
         tags: [Int64] = []
     ) -> Item {
         Item(
             id: 1,
             uuid: "item-\(name)",
             name: name,
-            amount: 1,
+            amount: amount,
             unitID: unit,
             doneAt: nil,
             tagIDs: tags
@@ -111,6 +112,7 @@ struct HistoryTests {
         let weekly = Cache.Remembered(
             name: "milk",
             unitID: nil,
+            amount: nil,
             tagIDs: [],
             uses: 50,
             lastUsedAt: Int64(now.addingTimeInterval(-86_400).timeIntervalSince1970)
@@ -118,6 +120,7 @@ struct HistoryTests {
         let once = Cache.Remembered(
             name: "milk chocolate",
             unitID: nil,
+            amount: nil,
             tagIDs: [],
             uses: 1,
             lastUsedAt: Int64(now.timeIntervalSince1970)
@@ -132,6 +135,7 @@ struct HistoryTests {
         let remembered = Cache.Remembered(
             name: "bread",
             unitID: nil,
+            amount: nil,
             tagIDs: [],
             uses: 5,
             lastUsedAt: Int64(Date().timeIntervalSince1970)
@@ -142,5 +146,54 @@ struct HistoryTests {
     @Test("an empty history offers nothing rather than crashing the boundary")
     func anEmptyHistory() {
         #expect(QuickAdd.suggest("milk", from: []).isEmpty)
+    }
+
+    @Test("how much of it you buy is remembered too")
+    func remembersHowMuch() {
+        // The half somebody notices: the memory already knew `apples` came in kilos
+        // and then asked how many, every week, for something bought two kilos at a
+        // time every week.
+        let cache = Cache.inMemory()
+        cache.remember(item("apples", unit: 2, amount: 2), on: list, isNew: true)
+
+        #expect(cache.remembered("apples", on: list)?.amount == 2)
+    }
+
+    @Test("a line that states an amount outranks the memory")
+    func aStatedAmountWins() {
+        let cache = Cache.inMemory()
+        cache.remember(item("apples", unit: 2, amount: 2), on: list, isNew: true)
+        let remembered = cache.remembered("apples", on: list)
+
+        let units = [Unit(id: 2, name: "kg")]
+        guard case .new(let row) = QuickAdd.resolve(
+            "1 kg apples",
+            units: units,
+            rows: [],
+            remembered: remembered
+        ) else {
+            Issue.record("expected a new row")
+            return
+        }
+        #expect(row.amount == 1)
+    }
+
+    @Test("a bare name gets how much you usually buy")
+    func aBareNameGetsTheRememberedAmount() {
+        let cache = Cache.inMemory()
+        cache.remember(item("apples", unit: 2, amount: 2), on: list, isNew: true)
+        let remembered = cache.remembered("apples", on: list)
+
+        guard case .new(let row) = QuickAdd.resolve(
+            "apples",
+            units: [Unit(id: 2, name: "kg")],
+            rows: [],
+            remembered: remembered
+        ) else {
+            Issue.record("expected a new row")
+            return
+        }
+        #expect(row.amount == 2, "how much was forgotten")
+        #expect(row.unitID == 2)
     }
 }

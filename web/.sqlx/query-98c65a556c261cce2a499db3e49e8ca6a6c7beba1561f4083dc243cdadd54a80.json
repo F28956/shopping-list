@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            SELECT\n                name         as \"name: item::Name\",\n                display      as \"display: Display\",\n                unit_id      as \"unit_id?: unit::Id\",\n                uses         as \"uses: Uses\",\n                last_used_at as \"last_used_at: LastUsedAt\"\n            FROM item_history\n            WHERE list_id = ?1\n            ORDER BY last_used_at DESC\n            LIMIT ?2\n            ",
+  "query": "\n            SELECT\n                name         as \"name: item::Name\",\n                display      as \"display: Display\",\n                unit_id      as \"unit_id?: unit::Id\",\n                amount       as \"amount?: item::Amount\",\n                uses         as \"uses: Uses\",\n                last_used_at as \"last_used_at: LastUsedAt\"\n            FROM item_history\n            WHERE list_id = ?1 AND name = ?2\n            ",
   "describe": {
     "columns": [
       {
@@ -37,8 +37,19 @@
         }
       },
       {
-        "name": "uses: Uses",
+        "name": "amount?: item::Amount",
         "ordinal": 3,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "item_history",
+            "name": "amount"
+          }
+        }
+      },
+      {
+        "name": "uses: Uses",
+        "ordinal": 4,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -49,7 +60,7 @@
       },
       {
         "name": "last_used_at: LastUsedAt",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -66,9 +77,10 @@
       false,
       false,
       true,
+      true,
       false,
       false
     ]
   },
-  "hash": "793e10f7ccaa91f3624d36e90f35da25a8fb4ed87a574d150ddad25ad7ca5497"
+  "hash": "98c65a556c261cce2a499db3e49e8ca6a6c7beba1561f4083dc243cdadd54a80"
 }

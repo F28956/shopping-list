@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO item_history (list_id, name, display, unit_id, amount)\n            VALUES (?1, ?2, ?3, ?4, ?5)\n            ON CONFLICT(list_id, name) DO UPDATE SET\n                display      = ?3,\n                unit_id      = coalesce(?4, item_history.unit_id),\n                amount       = coalesce(?5, item_history.amount),\n                uses         = item_history.uses + 1,\n                last_used_at = unixepoch()\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "cde83f3c0e1156978ad395266a2a5cbda51b15ae15988ef6f1f5adb4d6d8ee77"
+}

@@ -111,6 +111,7 @@ enum QuickAdd {
         if let remembered {
             input["remembered"] = [
                 "unit_id": remembered.unitID as Any,
+                "amount": remembered.amount as Any,
                 "tag_ids": remembered.tagIDs,
             ]
         }

@@ -257,6 +257,7 @@ pub unsafe extern "C" fn quickadd_resolve(input: *const c_char) -> *mut c_char {
                 .collect();
             let remembered = asked.remembered.map(|r| parsing::add::Remembered {
                 unit_id: r.unit_id,
+                amount: r.amount,
                 tag_ids: r.tag_ids,
             });
 
@@ -308,6 +309,8 @@ struct AskedRow {
 #[derive(serde::Deserialize)]
 struct AskedRemembered {
     unit_id: Option<i64>,
+    #[serde(default)]
+    amount: Option<f64>,
     #[serde(default)]
     tag_ids: Vec<i64>,
 }

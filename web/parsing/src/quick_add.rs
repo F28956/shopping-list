@@ -12,6 +12,13 @@
 pub struct QuickAdd {
     pub name: String,
     pub amount: f64,
+    /// Whether the **line** gave that amount, or it is the default of one.
+    ///
+    /// The number alone cannot say: `1 kg flour` and `flour` both come back as one,
+    /// and only one of them is somebody stating an amount. A caller that wants to fall
+    /// back on what this was last bought in needs to know which it was — see
+    /// [`crate::add::resolve`].
+    pub stated: bool,
     /// The matched unit, in whatever form the caller supplied it, or `None`.
     pub unit: Option<String>,
 }
@@ -44,6 +51,7 @@ pub fn parse(input: &str, known: &[String]) -> QuickAdd {
         .unwrap_or_else(|| QuickAdd {
             name: text.to_string(),
             amount: 1.0,
+            stated: false,
             unit: None,
         })
 }
@@ -63,16 +71,19 @@ fn leading(text: &str, known: &[String]) -> Option<QuickAdd> {
         Some((_, remainder)) if remainder.trim().is_empty() => QuickAdd {
             name: rest.to_string(),
             amount,
+            stated: true,
             unit: None,
         },
         Some((unit, remainder)) => QuickAdd {
             name: remainder.trim().to_string(),
             amount,
+            stated: true,
             unit: Some(unit),
         },
         None => QuickAdd {
             name: rest.to_string(),
             amount,
+            stated: true,
             unit: None,
         },
     })
@@ -88,6 +99,7 @@ fn trailing(text: &str, known: &[String]) -> Option<QuickAdd> {
         return Some(QuickAdd {
             name: name.trim().to_string(),
             amount,
+            stated: true,
             unit: Some(unit),
         });
     }
@@ -103,6 +115,7 @@ fn trailing(text: &str, known: &[String]) -> Option<QuickAdd> {
         return Some(QuickAdd {
             name: head.to_string(),
             amount,
+            stated: true,
             unit: None,
         });
     };
@@ -113,6 +126,7 @@ fn trailing(text: &str, known: &[String]) -> Option<QuickAdd> {
         return Some(QuickAdd {
             name: head.to_string(),
             amount,
+            stated: true,
             unit: None,
         });
     }
@@ -120,6 +134,7 @@ fn trailing(text: &str, known: &[String]) -> Option<QuickAdd> {
     Some(QuickAdd {
         name: name.trim().to_string(),
         amount,
+        stated: true,
         unit: Some(unit),
     })
 }
@@ -288,15 +303,27 @@ mod tests {
     ) {
         let got = parse(input, &units());
 
-        assert_eq!(
-            got,
-            QuickAdd {
-                name: name.to_string(),
-                amount,
-                unit: unit.map(str::to_string),
-            },
-            "parsing {input:?}"
-        );
+        // Field by field rather than whole-struct: these cases are about what the
+        // words mean, and `stated` is a different question with its own test below.
+        assert_eq!(got.name, name, "name, parsing {input:?}");
+        assert_eq!(got.amount, amount, "amount, parsing {input:?}");
+        assert_eq!(got.unit.as_deref(), unit, "unit, parsing {input:?}");
+    }
+
+    /// Whether the line gave an amount, as opposed to being handed the default.
+    ///
+    /// The number cannot say on its own: `1 kg flour` and `flour` are both one, and
+    /// only the first is somebody stating an amount. What hangs on it is whether
+    /// `add::resolve` may fall back to how much you usually buy.
+    #[rstest]
+    #[case("2 kg apples", true)]
+    #[case("apples 2", true)]
+    #[case("1 kg flour", true)]
+    #[case("apples", false)]
+    #[case("fresh bread", false)]
+    #[case("", false)]
+    fn says_whether_the_amount_was_given(#[case] input: &str, #[case] stated: bool) {
+        assert_eq!(parse(input, &units()).stated, stated, "parsing {input:?}");
     }
 
     /// The documented wrong answers, kept as tests so that changing the rule is a

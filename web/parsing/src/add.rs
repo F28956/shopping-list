@@ -37,6 +37,12 @@ pub struct Unit {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Remembered {
     pub unit_id: Option<i64>,
+    /// How much of it was last bought.
+    ///
+    /// `2 kg apples` once, then `apples`, should be two kilos again -- a shopping list
+    /// that forgets how much you buy makes you say it every week. The line still wins
+    /// when it says a number, because that is somebody stating one.
+    pub amount: Option<f64>,
     pub tag_ids: Vec<i64>,
 }
 
@@ -79,6 +85,24 @@ pub fn unit_for(spelled: Option<&str>, remembered: Option<&Remembered>, units: &
         .or_else(|| by_name("unit"))
 }
 
+/// How much a line asks for.
+///
+/// The line first, then the memory, then one. Somebody who wrote a number meant it;
+/// somebody who did not is being handed back what they usually buy -- `2 kg apples`
+/// once, then `apples`, is two kilos again. A list that forgets how much you buy makes
+/// you say it every week.
+///
+/// `stated` is why [`crate::quick_add::QuickAdd`] carries that flag: the number alone
+/// cannot say, because `1 kg flour` and `flour` are both one.
+pub fn amount_for(parsed: &quick_add::QuickAdd, remembered: Option<&Remembered>) -> f64 {
+    if parsed.stated {
+        return parsed.amount;
+    }
+    remembered
+        .and_then(|r| r.amount)
+        .unwrap_or(parsed.amount)
+}
+
 /// The row a line naming `name` in `unit_id` lands on, if the list has one.
 ///
 /// Trimmed and case-folded, because somebody typing the same word twice has not named
@@ -105,12 +129,13 @@ pub fn resolve(
     let names: Vec<String> = units.iter().map(|u| u.name.clone()).collect();
     let parsed = quick_add::parse(line, &names);
     let unit_id = unit_for(parsed.unit.as_deref(), remembered, units);
+    let amount = amount_for(&parsed, remembered);
 
     match alike(rows, &parsed.name, unit_id) {
         Some(row) => Decision::Existing { uuid: row.uuid.clone(), put_back: row.done },
         None => Decision::New {
             name: parsed.name,
-            amount: parsed.amount,
+            amount,
             unit_id,
             tag_ids: remembered.map(|r| r.tag_ids.clone()).unwrap_or_default(),
         },
@@ -140,13 +165,13 @@ mod tests {
 
     #[test]
     fn the_line_outranks_the_memory() {
-        let remembered = Remembered { unit_id: Some(3), tag_ids: vec![] };
+        let remembered = Remembered { unit_id: Some(3), amount: None, tag_ids: vec![] };
         assert_eq!(unit_for(Some("kg"), Some(&remembered), &units()), Some(2));
     }
 
     #[test]
     fn the_memory_outranks_the_fallback() {
-        let remembered = Remembered { unit_id: Some(3), tag_ids: vec![] };
+        let remembered = Remembered { unit_id: Some(3), amount: None, tag_ids: vec![] };
         assert_eq!(unit_for(None, Some(&remembered), &units()), Some(3));
     }
 
@@ -184,7 +209,7 @@ mod tests {
         // With the history, which is the real path: `milk` was last bought in pints,
         // so the bare word resolves to pints and finds the row.
         let rows = vec![row("a", "milk", Some(3), true)];
-        let remembered = Remembered { unit_id: Some(3), tag_ids: vec![] };
+        let remembered = Remembered { unit_id: Some(3), amount: None, tag_ids: vec![] };
         assert_eq!(
             resolve("milk", &units(), &rows, Some(&remembered)),
             Decision::Existing { uuid: "a".into(), put_back: true }
@@ -209,7 +234,7 @@ mod tests {
 
     #[test]
     fn a_new_line_arrives_filed_where_it_was_filed_last_time() {
-        let remembered = Remembered { unit_id: Some(3), tag_ids: vec![7, 9] };
+        let remembered = Remembered { unit_id: Some(3), amount: None, tag_ids: vec![7, 9] };
         assert_eq!(
             resolve("milk", &units(), &[], Some(&remembered)),
             Decision::New {
@@ -232,5 +257,28 @@ mod tests {
                 tag_ids: vec![],
             }
         );
+    }
+
+    #[test]
+    fn how_much_you_usually_buy_comes_back() {
+        let remembered = Remembered { unit_id: Some(2), amount: Some(2.0), tag_ids: vec![] };
+        assert_eq!(
+            resolve("apples", &units(), &[], Some(&remembered)),
+            Decision::New {
+                name: "apples".into(),
+                amount: 2.0,
+                unit_id: Some(2),
+                tag_ids: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn a_number_on_the_line_outranks_what_you_usually_buy() {
+        let remembered = Remembered { unit_id: Some(2), amount: Some(2.0), tag_ids: vec![] };
+        assert!(matches!(
+            resolve("1 kg apples", &units(), &[], Some(&remembered)),
+            Decision::New { amount, .. } if amount == 1.0
+        ));
     }
 }

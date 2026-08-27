@@ -2768,3 +2768,53 @@ async fn an_admitted_address_works_before_anything_bound_it(#[future(awt)] pool:
         .unwrap();
     assert!(!admission::admits_user(&ctx, id).await.unwrap());
 }
+
+/// `2 kg apples` once, then `apples`, is two kilos again.
+///
+/// The memory already held the unit, so `apples` came back in kilos and then asked how
+/// many -- every week, for something bought two kilos at a time every week. This is the
+/// other half of the same idea and the half somebody notices.
+#[rstest]
+#[tokio::test]
+async fn a_remembered_item_returns_with_how_much(
+    #[with(crate::models::fixtures::UNITS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let s = scene(pool).await;
+
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "2 kg apples")
+        .await
+        .unwrap();
+    // Removed, so the next line makes a row rather than finding this one -- what is
+    // under test is the memory, not the merging.
+    items::delete(&s.ctx, &s.mine, first.id).await.unwrap();
+
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "apples")
+        .await
+        .unwrap();
+
+    assert_eq!(again.amount, item::Amount(2.0), "how much was forgotten");
+}
+
+/// A number on the line is somebody stating one, and outranks the memory.
+#[rstest]
+#[tokio::test]
+async fn a_stated_amount_beats_the_remembered_one(
+    #[with(crate::models::fixtures::UNITS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let s = scene(pool).await;
+
+    let first = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "2 kg apples")
+        .await
+        .unwrap();
+    items::delete(&s.ctx, &s.mine, first.id).await.unwrap();
+
+    let again = items::quick_add(&s.ctx, &s.mine, s.list.id, None, "1 kg apples")
+        .await
+        .unwrap();
+
+    assert_eq!(again.amount, item::Amount(1.0));
+}

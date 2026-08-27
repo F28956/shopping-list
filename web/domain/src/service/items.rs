@@ -106,7 +106,7 @@ pub async fn create(
         }
     };
 
-    Entry::record(&ctx.db, list_id, &item.name, unit_id).await?;
+    Entry::record(&ctx.db, list_id, &item.name, unit_id, Some(item.amount)).await?;
     Entry::prune(&ctx.db, list_id).await?;
 
     ctx.changes.announce(list_id);
@@ -216,7 +216,7 @@ pub async fn update(
     // Correcting a name teaches the correction. The typo it replaced stays until it
     // decays out or is forgotten explicitly — nothing here can tell an edit that
     // fixes a spelling from one that changes the item.
-    Entry::record(&ctx.db, item.list_id, &item.name, item.unit_id).await?;
+    Entry::record(&ctx.db, item.list_id, &item.name, item.unit_id, Some(item.amount)).await?;
 
     ctx.changes.announce(item.list_id);
     Ok(item)
@@ -317,7 +317,7 @@ pub async fn quick_add(
     let names: Vec<String> = units.items.iter().map(|u| u.name.0.clone()).collect();
 
     let parsed = quick_add::parse(line, &names);
-    let name = Name(parsed.name);
+    let name = Name(parsed.name.clone());
 
     // What the line said, if it said anything.
     let remembered = Entry::get(&ctx.db, list_id, &name).await?;
@@ -331,10 +331,14 @@ pub async fn quick_add(
         .collect();
     let held = remembered.as_ref().map(|e| parsing::add::Remembered {
         unit_id: e.unit_id.map(|u| u.0),
+        amount: e.amount.map(|a| a.0),
         tag_ids: Vec::new(),
     });
     let unit_id = parsing::add::unit_for(parsed.unit.as_deref(), held.as_ref(), &shared)
         .map(unit::Id);
+    // Both by the shared rule, so a phone deciding this for itself decides it the same
+    // way -- see `parsing::add`.
+    let amount = Amount(parsing::add::amount_for(&parsed, held.as_ref()));
 
     // Through `create` rather than the model, so there is one place that learns.
     let item = create(
@@ -343,7 +347,7 @@ pub async fn quick_add(
         list_id,
         uuid,
         name.clone(),
-        Amount(parsed.amount),
+        amount,
         unit_id,
     )
     .await?;

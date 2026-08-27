@@ -180,6 +180,20 @@ final class Cache: @unchecked Sendable {
             }
         }
 
+        // How much of it you usually buy. The memory already held the unit, so
+        // `apples` came back in kilos and then asked how many -- every week, for
+        // something bought two kilos at a time every week.
+        //
+        // Its own migration rather than a change to `v3-history`: a device that has
+        // already run that one has a history worth keeping.
+        migrator.registerMigration("v4-history-amount") { db in
+            try db.alter(table: "history") { t in
+                // Nullable: a name remembered before this knows its unit and not its
+                // amount, and inventing one for it would be inventing a fact.
+                t.add(column: "amount", .double)
+            }
+        }
+
         try? migrator.migrate(queue)
     }
 
@@ -189,6 +203,9 @@ final class Cache: @unchecked Sendable {
     struct Remembered: Equatable {
         var name: String
         var unitID: Int64?
+        /// How much of it was last bought, if this name has been bought since the
+        /// memory learned to hold a number.
+        var amount: Double?
         var tagIDs: [Int64]
         var uses: Int64
         /// Unix seconds.
@@ -211,6 +228,7 @@ final class Cache: @unchecked Sendable {
                     list.id,
                     item.name.lowercased(),
                     item.unitID,
+                    item.amount,
                     tags,
                     isNew ? 1 : 0,
                     Int64(Date().timeIntervalSince1970),
@@ -258,6 +276,7 @@ final class Cache: @unchecked Sendable {
         return Remembered(
             name: row["name"],
             unitID: row["unit_id"],
+            amount: row["amount"],
             tagIDs: tags.split(separator: ",").compactMap { Int64($0) },
             uses: row["uses"],
             lastUsedAt: row["last_used_at"]
@@ -544,10 +563,11 @@ private enum HistorySQL {
     /// what the last one learned, while an **edit** that clears them is somebody
     /// saying "not there" and is obeyed.
     static let remember = """
-        INSERT INTO history (list_id, name, unit_id, tag_ids, uses, last_used_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO history (list_id, name, unit_id, amount, tag_ids, uses, last_used_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(list_id, name) DO UPDATE SET
             unit_id = COALESCE(excluded.unit_id, history.unit_id),
+            amount = COALESCE(excluded.amount, history.amount),
             tag_ids = CASE WHEN ? THEN history.tag_ids ELSE excluded.tag_ids END,
             uses = history.uses + ?,
             last_used_at = excluded.last_used_at

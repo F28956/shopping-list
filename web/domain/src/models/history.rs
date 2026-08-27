@@ -33,6 +33,9 @@ pub struct Entry {
     /// The spelling last used, for showing back.
     pub display: Display,
     pub unit_id: Option<unit::Id>,
+    /// How much of it was last bought, if this name has been bought since the memory
+    /// learned to hold a number.
+    pub amount: Option<item::Amount>,
     pub uses: Uses,
     pub last_used_at: LastUsedAt,
 }
@@ -59,17 +62,19 @@ impl Entry {
         list_id: list::Id,
         name: &item::Name,
         unit_id: Option<unit::Id>,
+        amount: Option<item::Amount>,
     ) -> Result<()> {
         let key = key(name);
         let display = name.0.trim();
 
         sqlx::query!(
             r#"
-            INSERT INTO item_history (list_id, name, display, unit_id)
-            VALUES (?1, ?2, ?3, ?4)
+            INSERT INTO item_history (list_id, name, display, unit_id, amount)
+            VALUES (?1, ?2, ?3, ?4, ?5)
             ON CONFLICT(list_id, name) DO UPDATE SET
                 display      = ?3,
                 unit_id      = coalesce(?4, item_history.unit_id),
+                amount       = coalesce(?5, item_history.amount),
                 uses         = item_history.uses + 1,
                 last_used_at = unixepoch()
             "#,
@@ -77,6 +82,7 @@ impl Entry {
             key,
             display,
             unit_id,
+            amount,
         )
         .execute(pool)
         .await?;
@@ -176,6 +182,7 @@ impl Entry {
                 name         as "name: item::Name",
                 display      as "display: Display",
                 unit_id      as "unit_id?: unit::Id",
+                amount       as "amount?: item::Amount",
                 uses         as "uses: Uses",
                 last_used_at as "last_used_at: LastUsedAt"
             FROM item_history
@@ -205,6 +212,7 @@ impl Entry {
                 name         as "name: item::Name",
                 display      as "display: Display",
                 unit_id      as "unit_id?: unit::Id",
+                amount       as "amount?: item::Amount",
                 uses         as "uses: Uses",
                 last_used_at as "last_used_at: LastUsedAt"
             FROM item_history
