@@ -134,12 +134,6 @@ fn security_headers() -> Headers {
     )
 }
 
-/// Every client id this application answers to.
-///
-/// One identity provider issues a different client id per platform, so the browser
-/// and the phone present tokens with different audiences. `GOOGLE_CLIENT_ID` is
-/// required — without it the web half cannot sign anybody in — and
-/// `GOOGLE_IOS_CLIENT_ID` is added when the phone app has been set up.
 /// Who may sign in, from `ALLOWED_EMAILS`.
 ///
 /// Required, with no default. This is a personal service: owning the domain does not
@@ -179,13 +173,14 @@ fn lan_address(port: u16) -> Option<String> {
     Some(format!("http://{}:{port}", probe.local_addr().ok()?.ip()))
 }
 
-/// The client ids whose tokens this server will accept as its own.
+/// The Google client ids whose tokens this server will accept as its own.
 ///
 /// One per way in, because Google decides the `aud` claim differently per platform:
 ///
 /// * **Browser** — `GOOGLE_CLIENT_ID`, the web client. Required.
-/// * **iOS** — `GOOGLE_IOS_CLIENT_ID`. The SDK mints tokens addressed to the iOS
-///   client, so without it every request from the phone is a 401.
+/// * **iOS** — `GOOGLE_IOS_CLIENT_ID`, and only for a build that still signs in with
+///   Google. The Apple apps do not: they sign in with Apple and trade the result for
+///   a session, so their audience is a bundle id in `APPLE_BUNDLE_IDS`.
 /// * **Android** — usually *nothing to add*. Credential Manager is given the web
 ///   client id as its `serverClientId`, and the token comes back addressed to that,
 ///   already in this list. The Android OAuth client — registered against the package

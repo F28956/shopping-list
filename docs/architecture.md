@@ -318,17 +318,32 @@ equivalent problem for ordering, but there is no such trick for routes.
 
 ## Clients, and how each proves who it is
 
-Every client talks to the same JSON API and carries `Authorization: Bearer <google id
-token>`. The server validates the signature against Google's JWKS, checks the issuer
-and expiry, and checks the `aud` claim against a list it was configured with. What
-differs per platform is only which id lands in that claim.
+Every client talks to the same JSON API and carries `Authorization: Bearer <token>`.
+Two kinds of token reach it, and the bearer path accepts both.
 
-| Client | Where the token comes from | What `aud` says | Server needs |
-|---|---|---|---|
-| Browser | OIDC code flow, server-side | web client id | `GOOGLE_CLIENT_ID` |
-| iOS / macOS | GoogleSignIn SDK on the device | **iOS** client id | `GOOGLE_IOS_CLIENT_ID` |
-| watchOS | asks the paired phone over WatchConnectivity | iOS client id | nothing more |
-| Android | Credential Manager, given the web client id as `serverClientId` | **web** client id | usually nothing |
+A **provider ID token** is re-verified on every request: signature against that
+provider's JWKS, issuer, expiry, and the `aud` claim against a list the server was
+configured with. That works while the provider keeps the client supplied with a fresh
+one, which Google's SDKs do.
+
+A **session token** is one this server issued: opaque, ninety days of idleness,
+revocable by deleting a row. It exists because Apple's identity token lasts about ten
+minutes and has no silent refresh — as a bearer it would mean signing in six times an
+hour. So the Apple clients trade theirs once at `POST /api/sessions` and hold what
+comes back. The two are told apart by shape, not by trying both: sixty-four lowercase
+hex characters is what the exchange mints and is not a shape any JWT has.
+
+| Client | Where the token comes from | What the server needs |
+|---|---|---|
+| Browser | Google OIDC code flow, server-side | `GOOGLE_CLIENT_ID` |
+| iOS / macOS | Sign in with Apple, traded for a session | `APPLE_BUNDLE_IDS` |
+| watchOS | asks the paired phone over WatchConnectivity, then keeps it | nothing more |
+| Android | Google Credential Manager, given the web client id as `serverClientId` | usually nothing |
+
+Sign in with Apple has no separate client id: the audience of a native app's identity
+token *is* the bundle identifier, which is why `APPLE_BUNDLE_IDS` holds bundle ids and
+not something copied from a console. The phone and the Mac share one, deliberately —
+one app to a person, one entry to configure.
 
 The Android row is the one that surprises. Its OAuth client — registered against the
 package name and the signing certificate's SHA-1 — is what lets Google attest the app;
@@ -336,6 +351,12 @@ it does not name the audience. Expecting it to, and adding it as a required audi
 would be configuring for a claim that never arrives.
 `GOOGLE_ANDROID_CLIENT_ID` exists so that finding otherwise is a line of
 configuration rather than a change to the server.
+
+The watch is worth a line of its own. It has no sign-in and cannot have one, so it asks
+the phone over a link Apple has already authenticated — and then keeps what it is
+given, in its own keychain. Ninety days is long enough that a watch which has been near
+its phone once goes on working in a shop with the phone left at home, which is what its
+cache and its outbox were built for.
 
 Reaching the server from a real device is the other half:
 
@@ -347,11 +368,11 @@ Reaching the server from a real device is the other half:
 
 ## Open
 
-**The credential for MCP.** iOS took the other road: Google's iOS SDK holds the
-credential and refreshes it, so the phone sends an ordinary Google ID token and the
-API simply accepts a second audience — one identity provider issues a different client
-id per platform. That leaves MCP, which has no SDK to lean on and no person present to
-sign in, still wanting a token this application issues and can revoke.
+**The credential for MCP.** `POST /api/sessions` now issues exactly the kind of token
+MCP wants — opaque, long-lived, revocable — but only in exchange for a provider token,
+which means a person at a sheet. MCP has no SDK to lean on and nobody present to tap
+anything, so what is still missing is a way to mint one out of band: a command that
+prints a token, and a way to see and revoke the ones that exist.
 
 **Profile editing.** `users::update_profile` exists and is tested but is not wired.
 Authentication resolves the identity through `User::find_or_create` on every request,
