@@ -47,40 +47,27 @@ struct ListsView: View {
     /// does nothing. One `.sheet(item:)` cannot have that problem.
     private enum Elsewhere: String, Identifiable {
         case settings
-        case whoMaySignIn
 
         var id: String { rawValue }
     }
 
     @State private var elsewhere: Elsewhere?
 
-    /// The menu behind the plus.
-    ///
-    /// Its own property rather than inline: the toolbar closure grew past what the
-    /// Swift type checker will do in reasonable time, and the error it gives for that
-    /// names the whole expression rather than the part at fault.
-    @ViewBuilder
-    private var menuItems: some View {
-        Button("New list", systemImage: "plus") { naming = .create }
-
-        // Joining is somebody else's list on somebody's server. With no server there
-        // is nothing to join and no link that could mean anything, so the option is
-        // absent rather than present and failing.
-        if !onDeviceOnly {
-            Button("Join a list", systemImage: "person.badge.plus") { joining = true }
+    /// The one action this screen has.
+    private var newListButton: some View {
+        Button {
+            naming = .create
+        } label: {
+            Image(systemName: "plus")
+                .font(.title2.weight(.semibold))
+                .frame(width: 56, height: 56)
         }
-
-        Divider()
-
-        if isOwner {
-            Button("Who may sign in", systemImage: "person.2.badge.key") {
-                elsewhere = .whoMaySignIn
-            }
-            .accessibilityIdentifier("manage-server")
-        }
-
-        Button("Settings", systemImage: "gear") { elsewhere = .settings }
-            .accessibilityIdentifier("settings")
+        .background(.tint, in: Circle())
+        .foregroundStyle(.white)
+        .shadow(radius: 4, y: 2)
+        .padding(20)
+        .accessibilityLabel("New list")
+        .accessibilityIdentifier("list.new")
     }
 
     var body: some View {
@@ -115,13 +102,17 @@ struct ListsView: View {
                         Button("Try again") { Task { await load() } }
                     }
                 } else if lists.isEmpty {
+                    // No action here. There is a button in the corner already, and a
+                    // second one is the same thing twice on a screen with nothing else
+                    // on it.
                     ContentUnavailableView {
                         Label("No lists", systemImage: "cart")
                     } description: {
-                        Text("Make one to get started.")
-                    } actions: {
-                        Button("New list") { naming = .create }
-                            .accessibilityIdentifier("list.new.empty")
+                        Text(
+                            onDeviceOnly
+                                ? "Make one with the button below. It stays on this phone."
+                                : "Make one with the button below to get started."
+                        )
                     }
                 } else {
                     SwiftUI.List {
@@ -196,6 +187,10 @@ struct ListsView: View {
             .navigationDestination(for: List.self) { list in
                 ItemsView(api: api, list: list)
             }
+            // Making a list is the one thing this screen is for, so it gets a button
+            // of its own rather than a line in a menu — and it sits where a thumb
+            // already is rather than at the top of a tall phone.
+            .overlay(alignment: .bottomTrailing) { newListButton }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     StatusDot(waiting: queued, offline: offline, onDeviceOnly: onDeviceOnly)
@@ -215,14 +210,19 @@ struct ListsView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu { menuItems } label: { Label("Add", systemImage: "plus") }
-                        .accessibilityIdentifier("list.new")
+                    Button("Settings", systemImage: "gear") { elsewhere = .settings }
+                        .accessibilityIdentifier("settings")
                 }
             }
             .sheet(item: $elsewhere) { screen in
                 switch screen {
-                case .settings: SettingsView(cache: cache)
-                case .whoMaySignIn: ServerPeopleView(api: api)
+                case .settings:
+                    SettingsView(
+                        cache: cache,
+                        api: api,
+                        isOwner: isOwner,
+                        joinAList: { joining = true }
+                    )
                 }
             }
             .sheet(item: $sharing) { list in

@@ -18,6 +18,7 @@ struct ItemsView: View {
     @State private var total: Int64 = 0
     @State private var units: [Unit] = []
     @State private var suggestions = Suggestions()
+    @State private var adding = false
     @State private var line = ""
     @State private var tags: [Tag] = []
     @State private var editing: Editing?
@@ -39,7 +40,6 @@ struct ItemsView: View {
     @State private var refused = false
     /// Guards against a drain and a reload calling each other round in a circle.
     @State private var draining = false
-    @FocusState private var typing: Bool
 
     /// An item and what it is already filed under, fetched before the sheet opens so
     /// the editor never renders a tag section it is about to change under your thumb.
@@ -65,27 +65,6 @@ struct ItemsView: View {
 
     var body: some View {
         SwiftUI.List {
-            if list.mayEdit {
-            Section {
-                HStack {
-                    TextField("Add an item — try 2 kg apples", text: $line)
-                        .focused($typing)
-                        .submitLabel(.done)
-                        .onSubmit { Task { await add() } }
-                        .autocorrectionDisabled()
-                    if !line.isEmpty {
-                        Button("Add") { Task { await add() } }
-                    }
-                }
-            }
-            }
-
-            // Only while the field has focus: a permanent list of things you might
-            // want is clutter on a screen whose job is what you actually need.
-            if typing && !suggestions.offered.isEmpty {
-                Section { suggestionSection }
-            }
-
             // Nothing to say on a device kept to itself: nothing is stale, nothing is
             // waiting for a connection that is coming, and a line apologising for one
             // somebody declined is worse than silence.
@@ -172,13 +151,26 @@ struct ItemsView: View {
             // think "somebody else should be able to see this", and a swipe on a row
             // two screens back is a control nobody finds.
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    sharing = true
-                } label: {
-                    Label("Share", systemImage: "person.badge.plus")
+                // A share link names a server. With no server there is no link to
+                // make, so the button is absent rather than present and failing.
+                if !ServerDirectory.isOnDeviceOnly {
+                    Button {
+                        sharing = true
+                    } label: {
+                        Label("Share", systemImage: "person.badge.plus")
+                    }
+                    .accessibilityIdentifier("share.open")
                 }
-                .accessibilityIdentifier("share.open")
             }
+        }
+        // The one thing this screen is for, in the corner a thumb already is — the
+        // same shape as the lists screen, so the two do not each have their own idea
+        // of how adding works.
+        .overlay(alignment: .bottomTrailing) {
+            if list.mayEdit { addItemButton }
+        }
+        .sheet(isPresented: $adding) {
+            AddItemSheet(line: $line, suggestions: suggestions) { await add() }
         }
         .sheet(isPresented: $sharing) {
             ShareSheet(list: list, api: api) {}
@@ -252,6 +244,23 @@ struct ItemsView: View {
                     .textCase(nil)
             }
         }
+    }
+
+    /// The one action this screen has.
+    private var addItemButton: some View {
+        Button {
+            adding = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.title2.weight(.semibold))
+                .frame(width: 56, height: 56)
+        }
+        .background(.tint, in: Circle())
+        .foregroundStyle(.white)
+        .shadow(radius: 4, y: 2)
+        .padding(20)
+        .accessibilityLabel("Add an item")
+        .accessibilityIdentifier("item.add")
     }
 
     /// The things this list has bought before that match what is being typed.
@@ -409,9 +418,9 @@ struct ItemsView: View {
         guard !typed.isEmpty else { return }
 
         // Cleared before the request rather than after, so the next item can be typed
-        // straight away — the same reason the web form sits outside the swap.
+        // straight away — the same reason the web form sits outside the swap. Putting
+        // the cursor back is the sheet's business now; this only clears what it holds.
         line = ""
-        typing = true
         suggestions.clear()
 
         // The row appears at once, under a uuid minted here and a **negative id**. The
@@ -799,5 +808,88 @@ struct ItemsView: View {
             self.error = error.localizedDescription
         }
         loaded = true
+    }
+}
+
+/// Adding items, one after another.
+///
+/// A sheet rather than a field pinned to the top of the list, so that the screen is
+/// the list until somebody asks to add to it — and so that adding works the same way
+/// here as it does on the lists screen.
+///
+/// It stays open after each item. Somebody writing a shopping list writes ten things,
+/// not one, and a sheet that closed each time would make the tenth cost ten taps more
+/// than the first. What was just added is behind it on the list.
+private struct AddItemSheet: View {
+    @Binding var line: String
+    let suggestions: Suggestions
+    let add: () async -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var typing: Bool
+
+    var body: some View {
+        NavigationStack {
+            SwiftUI.List {
+                Section {
+                    TextField("Add an item — try 2 kg apples", text: $line)
+                        .focused($typing)
+                        // `.return` rather than `.done`: the next thing somebody does
+                        // is type another item, and `done` on the keyboard reads as
+                        // "finished adding".
+                        .submitLabel(.return)
+                        .onSubmit { Task { await addAndStay() } }
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("item.line")
+                }
+
+                // Only what matches. A permanent list of things this list has bought
+                // before is a screen of its own, and not the one somebody asked for.
+                if !suggestions.offered.isEmpty {
+                    Section {
+                        ForEach(suggestions.offered, id: \.self) { suggestion in
+                            Button {
+                                // Fills the field rather than adding outright: what is
+                                // typed may carry a quantity, and only the server knows
+                                // what a line means.
+                                line = suggestion
+                            } label: {
+                                HStack {
+                                    Image(systemName: "clock.arrow.circlepath")
+                                        .foregroundStyle(.secondary)
+                                        .font(.footnote)
+                                    Text(suggestion)
+                                    Spacer()
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } header: {
+                        Text("Bought before")
+                    }
+                }
+            }
+            .navigationTitle("Add an item")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { line = ""; dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") { Task { await addAndStay() } }
+                        .disabled(line.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .onAppear { typing = true }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    /// Adds, and puts the cursor back for the next one.
+    private func addAndStay() async {
+        guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        await add()
+        typing = true
     }
 }

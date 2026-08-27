@@ -8,16 +8,49 @@ import SwiftUI
 /// is for.
 struct SettingsView: View {
     let cache: Cache
+    let api: API
+    /// Whether this person administers the server. Decides whether the screen that
+    /// manages who may sign in exists at all.
+    let isOwner: Bool
+    /// Asks the lists screen to open the join sheet, once this one is out of the way.
+    ///
+    /// Joining is an action rather than a setting, and it lives here only because it
+    /// needs a server — which makes it one of the things that is absent more often
+    /// than it is present, and this is the screen for those.
+    let joinAList: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(Identity.self) private var identity
 
     @State private var choosing = false
     @State private var leaving = false
+    @State private var managingServer = false
 
     var body: some View {
         NavigationStack {
             SwiftUI.List {
+                if ServerDirectory.current != nil {
+                    Section {
+                        Button("Join a list", systemImage: "person.badge.plus") {
+                            dismiss()
+                            joinAList()
+                        }
+                        .accessibilityIdentifier("join-a-list")
+
+                        if isOwner {
+                            // A sheet rather than a push: `ServerPeopleView` brings its
+                            // own navigation stack and its own Done, because it is
+                            // presented from the Mac too.
+                            Button("Who may sign in", systemImage: "person.2.badge.key") {
+                                managingServer = true
+                            }
+                            .accessibilityIdentifier("manage-server")
+                        }
+                    } header: {
+                        Text("Lists")
+                    }
+                }
+
                 Section {
                     if let server = ServerDirectory.current {
                         LabeledContent("Server", value: server.origin)
@@ -51,6 +84,9 @@ struct SettingsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+            .sheet(isPresented: $managingServer) {
+                ServerPeopleView(api: api)
             }
             .sheet(isPresented: $choosing) {
                 ServerAddressView { address, _ in
