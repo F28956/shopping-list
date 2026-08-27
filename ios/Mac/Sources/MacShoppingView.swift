@@ -21,6 +21,9 @@ struct MacShoppingView: View {
     @State private var deleting: List?
     @State private var sharing: List?
     @State private var joining = false
+    /// There is no server. The default -- see `ServerDirectory`. Re-read when settings
+    /// change the answer, because storage is not observable state.
+    @State private var onDeviceOnly = ServerDirectory.isOnDeviceOnly
     /// See `ListsView.offline` on the phone: the same two flags, for the same reason.
     @State private var offline = false
     @State private var fresh = false
@@ -77,8 +80,13 @@ struct MacShoppingView: View {
                             .tag(list.id)
                             .accessibilityIdentifier("list.\(list.name)")
                             .contextMenu {
-                                Button("Share…") { sharing = list }
-                                Divider()
+                                // A share link names a server. With none there is no
+                                // link to make, so the option is absent rather than
+                                // present and failing.
+                                if !onDeviceOnly {
+                                    Button("Share…") { sharing = list }
+                                    Divider()
+                                }
                                 // Renaming and deleting are the owner's, not an
                                 // editor's: an editor was given a list, not the say
                                 // over whether it exists.
@@ -127,20 +135,25 @@ struct MacShoppingView: View {
                 .help("New list")
                 .accessibilityIdentifier("list.new")
             }
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    joining = true
-                } label: {
-                    Label("Join a list", systemImage: "person.badge.plus")
+            // Joining is somebody else's list on somebody's server, and signing out
+            // needs somebody signed in. With no server there is neither, so both are
+            // absent rather than present and refusing.
+            if !onDeviceOnly {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        joining = true
+                    } label: {
+                        Label("Join a list", systemImage: "person.badge.plus")
+                    }
+                    .help("Join a list somebody shared with you")
+                    .accessibilityIdentifier("list.join")
                 }
-                .help("Join a list somebody shared with you")
-                .accessibilityIdentifier("list.join")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button("Sign out") {
-                    // See the phone: cached shopping belongs to whoever signed in.
-                    cache.forgetEverything()
-                    identity.signOut()
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Sign out") {
+                        // See the phone: cached shopping belongs to whoever signed in.
+                        cache.forgetEverything()
+                        identity.signOut()
+                    }
                 }
             }
         }
@@ -192,6 +205,11 @@ struct MacShoppingView: View {
                 .accessibilityIdentifier("delete.cancel")
         } message: { _ in
             Text("Everything on it goes too. This cannot be undone.")
+        }
+        // Settings is the only thing that changes this, and it changes it under our
+        // feet, so the answer is re-read rather than remembered from launch.
+        .onReceive(NotificationCenter.default.publisher(for: .serverChanged)) { _ in
+            onDeviceOnly = ServerDirectory.isOnDeviceOnly
         }
         .task {
             showWhatWeHave()

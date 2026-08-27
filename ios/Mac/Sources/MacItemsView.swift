@@ -371,14 +371,20 @@ struct MacItemsView: View {
         line = ""
         typing = true
         suggestions.clear()
-        // See the phone's `ItemsView.add` for the negative id and why it never leaves.
+        // See the phone's `ItemsView.add` for the negative id and why it never leaves,
+        // and for why the line is read here rather than waited for: with no server
+        // nothing ever comes back to correct it, so `2 kg apples` would stay an item
+        // called "2 kg apples". `QuickAdd` is the server's own parser, compiled in.
+        let parsed = QuickAdd.parse(typed, units: units.map(\.name))
         let uuid = UUID().uuidString.lowercased()
         let local = Item(
             id: -Int64(Date().timeIntervalSince1970 * 1000),
             uuid: uuid,
-            name: typed,
-            amount: 1,
-            unitID: nil,
+            name: parsed.name,
+            amount: parsed.amount,
+            // Case-insensitively: the parser answers with the unit as the line spelled
+            // it, and `2 KG apples` names the same unit as `2 kg apples`.
+            unitID: units.first { $0.name.lowercased() == parsed.unit?.lowercased() }?.id,
             doneAt: nil,
             tagIDs: []
         )
@@ -606,7 +612,25 @@ struct MacItemsView: View {
             cache.remember(units: fetchedUnits)
             cache.remember(tags: fetchedTags, on: list)
             (self.units, self.tags) = (fetchedUnits, fetchedTags)
-        } catch {}
+        } catch {
+            seedReference()
+        }
+    }
+
+    /// Falls back to the reference set that shipped with the app.
+    ///
+    /// Written to the cache as well as used, so the next screen finds it without asking
+    /// — and so that a Mac which later gains a server simply overwrites it with that
+    /// server's answer, ids and all. The ids are the same ids; see `Reference`.
+    private func seedReference() {
+        if units.isEmpty {
+            units = Reference.units
+            cache.remember(units: units)
+        }
+        if tags.isEmpty {
+            tags = Reference.tags
+            cache.remember(tags: tags, on: list)
+        }
     }
 
     /// Puts the list up as it was last seen -- see the phone's copy.
