@@ -2,6 +2,7 @@ package com.cernauskas.shoppinglist.ui
 
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -35,11 +36,14 @@ import kotlinx.coroutines.launch
 fun ServerAddressScreen(
     onAccepted: (ServerAddress, ServerDirectory.About) -> Unit,
     /**
-     * What to do when somebody says they have no server. `null` hides the offer, which
-     * is right when this screen is reached from settings — a device that already has
-     * lists on a server is not choosing for the first time.
+     * Leaving without answering.
+     *
+     * Not optional, and it used to be missing: this screen had no back arrow, no
+     * cancel and no back handler, so somebody who tapped "Use a server" to see what it
+     * said was held here until they produced a working address. A screen somebody
+     * cannot leave is a screen that has taken the phone off them.
      */
-    onDeclined: (() -> Unit)? = null,
+    onCancel: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -73,6 +77,10 @@ fun ServerAddressScreen(
             asking = false
         }
     }
+
+    // The system gesture, as well as the arrow. Somebody who swipes back expects to go
+    // back, and an app that ignores it feels broken rather than firm.
+    BackHandler(enabled = !asking, onBack = onCancel)
 
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
@@ -128,21 +136,6 @@ fun ServerAddressScreen(
             Text("I have a share link")
         }
 
-        onDeclined?.let { decline ->
-            // S1. The app has to be useful before it has a server, and this is where
-            // somebody says they do not want one. It is not a lesser mode: lists made
-            // here work exactly as lists made with no signal do, and attaching a
-            // server later sends them.
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                TextButton(onClick = decline) { Text("Use this device only") }
-                Text(
-                    "Your lists stay on this phone. You can add a server later.",
-                    style = MaterialTheme.typography.labelSmall,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-
         problem?.let {
             Text(
                 it,
@@ -151,6 +144,8 @@ fun ServerAddressScreen(
                 textAlign = TextAlign.Center,
             )
         }
+
+        TextButton(onClick = onCancel, enabled = !asking) { Text("Cancel") }
     }
 }
 

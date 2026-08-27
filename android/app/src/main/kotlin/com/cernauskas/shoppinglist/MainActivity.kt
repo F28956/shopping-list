@@ -214,7 +214,8 @@ private fun Shopping(
                 ServerDirectory.remember(address)
                 choosingServer = false
                 onServerChanged()
-            }
+            },
+            onCancel = { choosingServer = false },
         )
         return
     }
