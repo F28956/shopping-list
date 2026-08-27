@@ -9,6 +9,12 @@ plugins {
 }
 
 android {
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+
     namespace = "com.cernauskas.shoppinglist"
     compileSdk = 36
 
@@ -106,4 +112,5 @@ dependencies {
 
     debugImplementation(libs.androidx.ui.tooling)
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
 }

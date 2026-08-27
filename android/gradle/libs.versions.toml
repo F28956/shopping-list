@@ -17,6 +17,9 @@ room = "2.6.1"
 # the compiler's internals, so the left half must match `kotlin` above exactly.
 ksp = "2.1.0-1.0.29"
 junit = "4.13.2"
+# Android's `Uri` on the JVM, so the address rules are tested against the parser they
+# actually run on rather than a hand-rolled second one.
+robolectric = "4.14.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -41,6 +44,7 @@ androidx-room-runtime = { group = "androidx.room", name = "room-runtime", versio
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
