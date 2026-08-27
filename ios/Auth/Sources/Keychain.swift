@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import os
 
 /// Where the session token lives.
 ///
@@ -44,8 +45,18 @@ enum Keychain {
         var query = base(key)
         query[kSecValueData as String] = data
         query[kSecAttrAccessible as String] = accessibility
-        SecItemAdd(query as CFDictionary, nil)
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status != errSecSuccess {
+            // Logged rather than swallowed, because the symptom of a failed write is
+            // an app that signs itself out on the next launch with nothing to say --
+            // and the cause is usually a build problem (no entitlement, no team)
+            // rather than anything a person did.
+            log.error("could not store \(key, privacy: .public): OSStatus \(status)")
+        }
     }
+
+    private static let log = Logger(subsystem: "shopping-list", category: "keychain")
 
     private static func base(_ key: String) -> [String: Any] {
         [
