@@ -429,16 +429,25 @@ struct ItemsView: View {
         // the add lands, the reload replaces it with the server's row — same uuid, real
         // id.
         //
-        // The name shown until then is the line as typed, near enough. `2 kg apples` is
-        // parsed on the server, so the amount and unit arrive with the reload; guessing
-        // them here would be a second parser to disagree with the first.
+        // The line is read here, and it used to be shown as typed until the server
+        // sent back what it had made of it. That was fine when there was always a
+        // server; on a device with none, `2 kg apples` stayed an item called
+        // "2 kg apples" for ever -- no amount, no unit, and nothing coming to fix it.
+        //
+        // It is not a second parser. `QuickAdd` is the server's own, compiled for the
+        // phone, so what appears in this row is what the server would have said and
+        // the reload has nothing to correct.
+        let parsed = QuickAdd.parse(typed, units: units.map(\.name))
         let uuid = UUID().uuidString.lowercased()
         let local = Item(
             id: -Int64(Date().timeIntervalSince1970 * 1000),
             uuid: uuid,
-            name: typed,
-            amount: 1,
-            unitID: nil,
+            name: parsed.name,
+            amount: parsed.amount,
+            // Matched case-insensitively, because the parser answers with the unit as
+            // the line spelled it -- somebody who typed `2 KG apples` named the same
+            // unit as somebody who typed `kg`.
+            unitID: units.first { $0.name.lowercased() == parsed.unit?.lowercased() }?.id,
             doneAt: nil,
             tagIDs: []
         )
