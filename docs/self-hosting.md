@@ -260,10 +260,9 @@ It also ends the server-rendered web UI. htmx renders lists the server can read;
 browser holding the key is a different application, and `domain` compiling to WASM is
 what makes it the same rules rather than a third implementation.
 
-**The key management — device keys, recovery, revocation, invites carrying a key in
-the URL fragment — is a document of its own and is not written yet.** Recovery is the
-decision that most affects whether ordinary people can use this, and it has no
-comfortable answer.
+**The key management is [encryption.md](encryption.md)** — three key layers, invites
+carrying the list key in the URL fragment, epochs for revocation, and the recovery
+problem, which turns out to be mostly social rather than cryptographic.
 
 ## S10 · What is left in the clear, and how to make it boring
 
