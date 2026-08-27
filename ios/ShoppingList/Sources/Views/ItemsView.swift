@@ -448,20 +448,37 @@ struct ItemsView: View {
     }
 
     /// Opens the editor, once we know what the item is already filed under.
+    ///
+    /// Asking the server is better — it knows about tags added from another device —
+    /// but it must not be a *precondition*. Editing an item is a thing somebody does
+    /// standing in a shop with no signal, and on a device with no server it is a thing
+    /// they would otherwise never be able to do at all: the editor simply refused to
+    /// open, which is the bug this comment exists because of.
+    ///
+    /// So a failure falls back to what the row already says it is filed under. That is
+    /// what the screen is showing anyway, so the editor opens agreeing with the list
+    /// behind it.
     private func beginEditing(_ item: Item) async {
+        let attached: [Tag]
         do {
-            editing = Editing(item: item, attached: try await api.tags(on: item, in: list))
+            attached = try await api.tags(on: item, in: list)
         } catch let problem as APIError {
+            // A refused account is still worth acting on: it is not a connection
+            // problem and asking again will not fix it.
             if case .unauthorized = problem {
                 identity.signOut()
-            } else if case .notAdmitted = problem {
-                identity.signOut(because: problem.localizedDescription)
-            } else {
-                error = problem.localizedDescription
+                return
             }
+            if case .notAdmitted = problem {
+                identity.signOut(because: problem.localizedDescription)
+                return
+            }
+            attached = tags.filter { item.tagIDs.contains($0.id) }
         } catch {
-            self.error = error.localizedDescription
+            attached = tags.filter { item.tagIDs.contains($0.id) }
         }
+
+        editing = Editing(item: item, attached: attached)
     }
 
     /// Saves an edit: the fields, then the tags that changed.

@@ -1,0 +1,278 @@
+{
+  "note": "Generated from web/domain/migrations/*_seed_reference_data.up.sql and the migrations that follow it. Do not edit by hand: change a migration and regenerate, or domain::reference::the_seed_and_the_file_agree will fail.",
+  "units": [
+    {
+      "id": 1,
+      "name": "unit"
+    },
+    {
+      "id": 2,
+      "name": "pair"
+    },
+    {
+      "id": 3,
+      "name": "dozen"
+    },
+    {
+      "id": 4,
+      "name": "pack"
+    },
+    {
+      "id": 5,
+      "name": "box"
+    },
+    {
+      "id": 6,
+      "name": "bag"
+    },
+    {
+      "id": 7,
+      "name": "bottle"
+    },
+    {
+      "id": 8,
+      "name": "can"
+    },
+    {
+      "id": 9,
+      "name": "jar"
+    },
+    {
+      "id": 10,
+      "name": "tin"
+    },
+    {
+      "id": 11,
+      "name": "tube"
+    },
+    {
+      "id": 12,
+      "name": "sachet"
+    },
+    {
+      "id": 13,
+      "name": "roll"
+    },
+    {
+      "id": 14,
+      "name": "bunch"
+    },
+    {
+      "id": 15,
+      "name": "punnet"
+    },
+    {
+      "id": 16,
+      "name": "loaf"
+    },
+    {
+      "id": 17,
+      "name": "slice"
+    },
+    {
+      "id": 18,
+      "name": "g"
+    },
+    {
+      "id": 19,
+      "name": "kg"
+    },
+    {
+      "id": 20,
+      "name": "oz"
+    },
+    {
+      "id": 21,
+      "name": "pound"
+    },
+    {
+      "id": 22,
+      "name": "ml"
+    },
+    {
+      "id": 23,
+      "name": "litre"
+    },
+    {
+      "id": 24,
+      "name": "fl oz"
+    },
+    {
+      "id": 25,
+      "name": "pint"
+    },
+    {
+      "id": 26,
+      "name": "gallon"
+    },
+    {
+      "id": 27,
+      "name": "tsp"
+    },
+    {
+      "id": 28,
+      "name": "tbsp"
+    },
+    {
+      "id": 29,
+      "name": "cup"
+    },
+    {
+      "id": 30,
+      "name": "cm"
+    },
+    {
+      "id": 31,
+      "name": "m"
+    }
+  ],
+  "tags": [
+    {
+      "id": 1,
+      "name": "tesco",
+      "colour": "#00539F",
+      "emoji": "🛒",
+      "sort_order": 900
+    },
+    {
+      "id": 2,
+      "name": "aldi",
+      "colour": "#24A9E1",
+      "emoji": "🛒",
+      "sort_order": 900
+    },
+    {
+      "id": 3,
+      "name": "b&q",
+      "colour": "#FFA500",
+      "emoji": "🛠️",
+      "sort_order": 900
+    },
+    {
+      "id": 4,
+      "name": "boots",
+      "colour": "#005EB8",
+      "emoji": "💊",
+      "sort_order": 900
+    },
+    {
+      "id": 5,
+      "name": "produce",
+      "colour": "#4CAF50",
+      "emoji": "🥬",
+      "sort_order": 10
+    },
+    {
+      "id": 6,
+      "name": "fruits",
+      "colour": "#008000",
+      "emoji": "🍎",
+      "sort_order": 20
+    },
+    {
+      "id": 7,
+      "name": "dairy",
+      "colour": "#FFF3C4",
+      "emoji": "🧀",
+      "sort_order": 40
+    },
+    {
+      "id": 8,
+      "name": "bakery",
+      "colour": "#C68642",
+      "emoji": "🥖",
+      "sort_order": 30
+    },
+    {
+      "id": 9,
+      "name": "meat & fish",
+      "colour": "#B03A2E",
+      "emoji": "🥩",
+      "sort_order": 50
+    },
+    {
+      "id": 10,
+      "name": "frozen",
+      "colour": "#7FDBFF",
+      "emoji": "🧊",
+      "sort_order": 110
+    },
+    {
+      "id": 11,
+      "name": "drinks",
+      "colour": "#8E44AD",
+      "emoji": "🥤",
+      "sort_order": 100
+    },
+    {
+      "id": 12,
+      "name": "pantry",
+      "colour": "#8D6E63",
+      "emoji": "🥫",
+      "sort_order": 60
+    },
+    {
+      "id": 13,
+      "name": "baking",
+      "colour": "#F5CBA7",
+      "emoji": "🧁",
+      "sort_order": 70
+    },
+    {
+      "id": 14,
+      "name": "snacks",
+      "colour": "#E67E22",
+      "emoji": "🍿",
+      "sort_order": 80
+    },
+    {
+      "id": 15,
+      "name": "cleaning",
+      "colour": "#00BCD4",
+      "emoji": "🧽",
+      "sort_order": 130
+    },
+    {
+      "id": 16,
+      "name": "toiletries",
+      "colour": "#EC407A",
+      "emoji": "🪥",
+      "sort_order": 140
+    },
+    {
+      "id": 17,
+      "name": "household",
+      "colour": "#607D8B",
+      "emoji": "🏠",
+      "sort_order": 120
+    },
+    {
+      "id": 18,
+      "name": "diy",
+      "colour": "#795548",
+      "emoji": "🔩",
+      "sort_order": 150
+    },
+    {
+      "id": 19,
+      "name": "party",
+      "colour": "#FF4081",
+      "emoji": "🎉",
+      "sort_order": 160
+    },
+    {
+      "id": 20,
+      "name": "urgent",
+      "colour": "#D32F2F",
+      "emoji": "⚡",
+      "sort_order": 900
+    },
+    {
+      "id": 21,
+      "name": "treat",
+      "colour": "#FFD700",
+      "emoji": "⭐",
+      "sort_order": 90
+    }
+  ]
+}
