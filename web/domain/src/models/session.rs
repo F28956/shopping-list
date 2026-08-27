@@ -91,6 +91,27 @@ impl Session {
         .ok_or(Error::NotFound)
     }
 
+    /// Deletes every session idle past [`IDLE_DAYS`], and says how many went.
+    ///
+    /// [`Self::claim`] already refuses them, so this changes nothing about who can
+    /// sign in — it is about not keeping a row that says somebody had a phone in
+    /// 2026 for the rest of the database's life. A credential nobody can use is
+    /// still a record of a person, and the retention rule that applies to it is the
+    /// one it was issued under.
+    ///
+    /// Called on a schedule rather than on read, unlike [`super::history::Entry::prune`]:
+    /// the moment this table can grow is a sign-in, and pruning every session on
+    /// every sign-in would be a scan to save a handful of rows.
+    pub async fn prune(pool: &sqlx::SqlitePool) -> Result<u64> {
+        let cutoff = OffsetDateTime::now_utc().unix_timestamp() - IDLE_DAYS * 86_400;
+
+        let result = sqlx::query!(r#"DELETE FROM app_sessions WHERE last_used_at <= ?1"#, cutoff)
+            .execute(pool)
+            .await?;
+
+        Ok(result.rows_affected())
+    }
+
     /// Ends one session. Signing out on the phone leaves the Mac signed in.
     ///
     /// Silent about whether there was anything to end: a client that has lost track of
@@ -176,6 +197,45 @@ mod tests {
         .unwrap();
 
         assert!(matches!(Session::claim(&pool, &token).await, Err(Error::NotFound)));
+    }
+
+    /// The point of pruning: a session nobody can use is still a row about a person.
+    #[rstest]
+    #[tokio::test]
+    async fn pruning_takes_the_long_idle_and_leaves_the_rest(
+        #[with(seeds!("fixtures/users.sql"))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) {
+        let fresh = Token("fresh".into());
+        let stale = Token("stale".into());
+        Session::create(&pool, &fresh, user::Id(1), "apple").await.unwrap();
+        Session::create(&pool, &stale, user::Id(1), "apple").await.unwrap();
+
+        let long_ago = OffsetDateTime::now_utc().unix_timestamp() - (IDLE_DAYS + 1) * 86_400;
+        let stale_hash = hash(&stale);
+        sqlx::query!(
+            r#"UPDATE app_sessions SET last_used_at = ?2 WHERE token_hash = ?1"#,
+            stale_hash,
+            long_ago
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(Session::prune(&pool).await.unwrap(), 1);
+        assert!(Session::claim(&pool, &fresh).await.is_ok(), "a live session was swept");
+    }
+
+    /// Nothing to do is not an error, and it is the normal case.
+    #[rstest]
+    #[tokio::test]
+    async fn pruning_an_empty_table_is_quiet(
+        #[with(seeds!("fixtures/users.sql"))]
+        #[future(awt)]
+        pool: SqlitePool,
+    ) {
+        assert_eq!(Session::prune(&pool).await.unwrap(), 0);
     }
 
     /// The idle clock is measured from the last request, so a session in use never

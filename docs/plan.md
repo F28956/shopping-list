@@ -20,9 +20,7 @@ signing in with more than one provider.
 data, TLS, and everything in [encryption.md](encryption.md).
 
 **Neither, and small.** Tags offline. The "what changed" summary after a long time
-away — [offline.md](offline.md)'s step 6, half of which exists. Pruning
-`app_sessions`, which has an idle rule on read and nothing that deletes rows. A
-retention policy for `history`.
+away — [offline.md](offline.md)'s step 6, half of which exists.
 
 One correction owed: [offline.md](offline.md)'s "Deliberately not doing" says offline
 sign-in is impossible because a token expires in an hour. That stopped being true when
@@ -69,12 +67,16 @@ Everything else in the codebase survives.
 
 Cheap, unrelated to each other, and all of them reduce a risk that exists today.
 
-1. **Encrypted backups**, key held off the machine — `age` or `restic`. This is
+1. ~~**Prune `app_sessions`.**~~ **Done.** Expired rows were never deleted; the idle
+   rule only applied on read. One `housekeeping` task in `main`, which is where any
+   future retention goes so that "what does this server delete, and when" has one
+   answer in one place.
+2. **Encrypted backups**, key held off the machine — `age` or `restic`. This is
    [self-hosting.md](self-hosting.md)'s S12 and it covers the copy that actually
-   leaks. Do it first regardless of whether any of the rest happens.
-2. **Prune `app_sessions`.** Expired rows are never deleted; the idle rule only
-   applies on read. Mine to fix.
-3. **A retention rule for `history`**, which grows without bound.
+   leaks.
+
+*A third item was planned here and turned out to exist:* `item_history` is capped at
+`MAX_ENTRIES` and trimmed by `history::Entry::prune` on every write. Nothing to do.
 
 **Off-ramp:** this is worth doing even if the plan stops here.
 

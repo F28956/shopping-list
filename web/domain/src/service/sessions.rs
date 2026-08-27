@@ -65,6 +65,22 @@ pub async fn resolve(ctx: &Ctx, token: &Token) -> Result<Actor> {
         .ok_or(ServiceError::NotAdmitted)
 }
 
+/// Deletes every session too long idle to be used.
+///
+/// Takes no [`Actor`], and is the one function here that does not: it is not
+/// something anybody asks for, it is the process keeping its own house. Nothing it
+/// removes could have authenticated a request anyway — [`Session::claim`] refuses on
+/// the same rule — so there is no access decision to make and nobody to make it for.
+pub async fn sweep(ctx: &Ctx) -> Result<u64> {
+    let gone = Session::prune(&ctx.db).await?;
+
+    if gone > 0 {
+        tracing::info!(sessions = gone, "swept sessions idle past the limit");
+    }
+
+    Ok(gone)
+}
+
 /// Ends this one session. The other devices stay signed in — signing out on a phone
 /// that is being handed on should not sign out the Mac at home.
 pub async fn end(ctx: &Ctx, token: &Token) -> Result<()> {

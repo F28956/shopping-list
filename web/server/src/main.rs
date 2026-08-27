@@ -55,6 +55,8 @@ async fn main() -> anyhow::Result<()> {
     let sessions = web::session_store(&web_ctx).await?;
     let web_state = web::state(web_ctx).await?;
 
+    housekeeping(ctx.clone());
+
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     tracing::info!("listening on {}", listener.local_addr()?);
 
@@ -65,6 +67,37 @@ async fn main() -> anyhow::Result<()> {
     }
     axum::serve(listener, app(api_state, web_state, sessions)).await?;
     Ok(())
+}
+
+/// The retention this process owes, on a timer.
+///
+/// One task rather than one per thing to sweep, because "what does this server delete
+/// and when" is a question with one answer and it should be readable in one place.
+/// Today it is sessions; `item_history` needs nothing, being capped and trimmed on
+/// write by `history::Entry::prune`.
+///
+/// Detached and never awaited. A failed sweep is logged and the next one tries again
+/// — a database that cannot be written to is a problem the request path will report
+/// far more loudly than this could, and stopping the server because a `DELETE` failed
+/// would turn a tidiness problem into an outage.
+fn housekeeping(ctx: Ctx) {
+    /// Long, because nothing here is urgent: a session idle for ninety days can be
+    /// idle for ninety days and six hours. Short enough that a server left running
+    /// for a year does the work more than once.
+    const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+
+    tokio::spawn(async move {
+        loop {
+            // Swept at boot as well as on the timer, so a server that is only ever
+            // started, used and stopped still cleans up. Otherwise a machine
+            // restarted daily would never reach the first interval.
+            if let Err(e) = domain::service::sessions::sweep(&ctx).await {
+                tracing::warn!(error = ?e, "sweeping sessions failed; will try again");
+            }
+
+            tokio::time::sleep(EVERY).await;
+        }
+    });
 }
 
 /// Composes the transports onto one router.

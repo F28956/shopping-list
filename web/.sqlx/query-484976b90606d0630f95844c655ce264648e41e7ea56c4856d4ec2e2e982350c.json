@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM app_sessions WHERE last_used_at <= ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "484976b90606d0630f95844c655ce264648e41e7ea56c4856d4ec2e2e982350c"
+}
