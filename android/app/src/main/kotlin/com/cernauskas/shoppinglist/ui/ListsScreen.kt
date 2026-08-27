@@ -42,13 +42,13 @@ fun ListsScreen(
     model: ListsViewModel,
     onOpen: (ShoppingList) -> Unit,
     onSignOut: () -> Unit,
-    onLeaveServer: () -> Unit,
     /** Whether this person administers the server, which decides whether the screen
      * that manages it exists. Hiding it is a courtesy: every route behind it is
      * refused in the service layer to anybody else. */
     isOwner: Boolean,
     onManageServer: () -> Unit,
-    /** There is no server, because somebody said so on the first screen. */
+    onSettings: () -> Unit,
+    /** There is no server. The default — see `ServerDirectory`. */
     onDeviceOnly: Boolean,
 ) {
     val state by model.state.collectAsState()
@@ -61,8 +61,6 @@ fun ListsScreen(
     var deleting by remember { mutableStateOf<ShoppingList?>(null) }
     var sharing by remember { mutableStateOf<ShoppingList?>(null) }
     var joining by remember { mutableStateOf(false) }
-    /** Asked once, and worth asking: changing servers throws away everything here (C4). */
-    var leavingServer by remember { mutableStateOf(false) }
 
     state.message?.let { message ->
         LaunchedEffect(message) {
@@ -103,15 +101,24 @@ fun ListsScreen(
                         Icon(Icons.Default.MoreVert, contentDescription = "More")
                     }
                     DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Join a list") },
-                            onClick = { open = false; joining = true },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Sign out") },
-                            onClick = { open = false; onSignOut() },
-                        )
-                        HorizontalDivider()
+                        // Joining is somebody else's list on somebody's server. With
+                        // no server there is nothing to join and no link that could
+                        // mean anything, so the option is absent rather than present
+                        // and failing. Signing out is the same: nobody is signed in.
+                        if (!onDeviceOnly) {
+                            DropdownMenuItem(
+                                text = { Text("Join a list") },
+                                onClick = { open = false; joining = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Sign out") },
+                                onClick = { open = false; onSignOut() },
+                            )
+                            // Only when there is something above it to divide. With no
+                            // server the menu is one item, and a rule across the top of
+                            // it separates nothing from nothing.
+                            HorizontalDivider()
+                        }
                         if (isOwner) {
                             DropdownMenuItem(
                                 text = { Text("Who may sign in") },
@@ -119,8 +126,8 @@ fun ListsScreen(
                             )
                         }
                         DropdownMenuItem(
-                            text = { Text("Change server") },
-                            onClick = { open = false; leavingServer = true },
+                            text = { Text("Settings") },
+                            onClick = { open = false; onSettings() },
                         )
                     }
                 },
@@ -164,8 +171,7 @@ fun ListsScreen(
 
             state.lists.isEmpty() -> Empty(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                onNew = { naming = Naming.Create },
-                onJoin = { joining = true },
+                onDeviceOnly = onDeviceOnly,
             )
 
             else -> Column(Modifier.fillMaxSize().padding(padding)) {
@@ -180,6 +186,7 @@ fun ListsScreen(
                             list = list,
                             onOpen = { onOpen(list) },
                             onShare = { sharing = list },
+                            onDeviceOnly = onDeviceOnly,
                             onRename = { naming = Naming.Rename(list) },
                             onDelete = { deleting = list },
                         )
@@ -211,30 +218,6 @@ fun ListsScreen(
                     is Naming.Rename -> model.rename(purpose.list, name)
                 }
                 naming = null
-            },
-        )
-    }
-
-    // C4. Not a precaution: the cache holds rows keyed by ids and uuids the old server
-    // minted, and history and suggestions belong to an account on it. Carrying them
-    // across would show one server's lists under another server's name.
-    if (leavingServer) {
-        AlertDialog(
-            onDismissRequest = { leavingServer = false },
-            title = { Text("Change server?") },
-            text = {
-                Text(
-                    "This signs you out and removes everything stored on this device. " +
-                        "Anything still waiting to be sent will be lost."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { leavingServer = false; onLeaveServer() }) {
-                    Text("Change server")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { leavingServer = false }) { Text("Cancel") }
             },
         )
     }
@@ -278,6 +261,8 @@ private fun ListRow(
     list: ShoppingList,
     onOpen: () -> Unit,
     onShare: () -> Unit,
+    /** There is no server, so there is nothing to share to. */
+    onDeviceOnly: Boolean,
     onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -302,10 +287,14 @@ private fun ListRow(
                     Icon(Icons.Default.MoreVert, contentDescription = "More for ${list.name}")
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Share") },
-                        onClick = { menu = false; onShare() },
-                    )
+                    // Sharing is the mirror of joining: a share link names a server,
+                    // and with no server there is no link to make.
+                    if (!onDeviceOnly) {
+                        DropdownMenuItem(
+                            text = { Text("Share") },
+                            onClick = { menu = false; onShare() },
+                        )
+                    }
                     // Renaming and deleting are the owner's, not an editor's: an
                     // editor was given a list, not the say over whether it exists.
                     if (list.role >= Role.OWNER) {
@@ -326,7 +315,11 @@ private fun ListRow(
 }
 
 @Composable
-private fun Empty(modifier: Modifier, onNew: () -> Unit, onJoin: () -> Unit) {
+private fun Empty(
+    modifier: Modifier,
+    /** There is no server, so there is nothing to join. */
+    onDeviceOnly: Boolean,
+) {
     Column(
         modifier = modifier.padding(32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
@@ -339,12 +332,18 @@ private fun Empty(modifier: Modifier, onNew: () -> Unit, onJoin: () -> Unit) {
         )
         Text("No lists yet", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Make one, or join a list somebody shared with you.",
+            // No buttons. There is a "New list" button in the corner already, and a
+            // second one here is the same action twice on a screen with nothing else
+            // on it. Joining is absent for a different reason -- with no server there
+            // is nothing to join and no link that could mean anything.
+            if (onDeviceOnly) {
+                "Make one with the button below. It stays on this phone."
+            } else {
+                "Make one with the button below, or join a list somebody shared with you."
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-        Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("New list") }
-        TextButton(onClick = onJoin) { Text("Join a list") }
     }
 }

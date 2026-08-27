@@ -17,7 +17,12 @@ struct ShoppingListApp: App {
         WindowGroup {
             RootView()
                 .environment(identity)
-                .task { await identity.restore() }
+                // Only when there is somewhere to sign in to. On a device kept to
+                // itself there is nobody to restore and nothing that would use the
+                // answer.
+                .task {
+                    if !ServerDirectory.isOnDeviceOnly { await identity.restore() }
+                }
                 // The sign-in flow leaves the app and comes back through this URL.
         }
     }

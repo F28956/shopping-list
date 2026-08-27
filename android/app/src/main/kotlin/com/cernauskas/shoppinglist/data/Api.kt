@@ -327,6 +327,15 @@ class Api(
     fun listChanges(): Flow<kotlin.Unit> = events("/api/me/events")
 
     private fun events(path: String): Flow<kotlin.Unit> = callbackFlow {
+        // Nothing to watch with no server, and asking for a token to watch it with
+        // would put a Google sheet in front of somebody who chose to keep this device
+        // to itself. Closed immediately: an empty stream is exactly right, since
+        // nothing on the other end will ever change.
+        if (server().isEmpty()) {
+            close()
+            return@callbackFlow
+        }
+
         val request = Request.Builder()
             .url("${server()}$path")
             .header("Accept", "text/event-stream")
@@ -367,6 +376,18 @@ class Api(
         json.decodeFromString(send("GET", path, null))
 
     private suspend fun send(method: String, path: String, body: String?): String {
+        // Before `token()`, and that is the whole point of it being here rather than
+        // one call deeper: asking for a token is asking the identity provider, which
+        // on Android puts a Google sheet in front of somebody who chose to keep this
+        // device to itself. Nowhere to send anything means nothing to ask anybody.
+        //
+        // A transport failure, which is not a workaround but the design: "no server"
+        // and "no signal" are the same state, and the app has known how to be in one
+        // of them since the offline work.
+        if (server().isEmpty()) {
+            throw ApiError.Transport(IOException("This device is not using a server."))
+        }
+
         return try {
             attempt(method, path, body, token())
         } catch (_: ApiError.Unauthorized) {
@@ -378,14 +399,6 @@ class Api(
 
     private suspend fun attempt(method: String, path: String, body: String?, bearer: String?): String =
         withContext(Dispatchers.IO) {
-            // Nowhere to send anything, because somebody chose to keep this device to
-            // itself. A transport failure before a socket is opened, which is not a
-            // workaround but the design: "no server" and "no signal" are the same
-            // state, and the app has known how to be in one of them since the offline
-            // work.
-            if (server().isEmpty()) {
-                throw ApiError.Transport(IOException("This device is not using a server."))
-            }
 
             val bearer = bearer ?: throw noToken()
 

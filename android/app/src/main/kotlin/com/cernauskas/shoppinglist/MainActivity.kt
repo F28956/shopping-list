@@ -28,6 +28,7 @@ import com.cernauskas.shoppinglist.ui.ListsScreen
 import com.cernauskas.shoppinglist.ui.ListsViewModel
 import com.cernauskas.shoppinglist.ui.ServerAddressScreen
 import com.cernauskas.shoppinglist.ui.ServerPeopleScreen
+import com.cernauskas.shoppinglist.ui.SettingsScreen
 import com.cernauskas.shoppinglist.ui.ShoppingTheme
 import kotlinx.coroutines.launch
 
@@ -49,46 +50,28 @@ class MainActivity : ComponentActivity() {
             ShoppingTheme {
                 var state by remember { mutableStateOf<Identity.State>(Identity.State.Unknown) }
                 val scope = rememberCoroutineScope()
-                /**
-                 * Re-read after the address screen answers, because `ServerDirectory`
-                 * is storage rather than observable state and nothing would otherwise
-                 * tell Compose.
-                 */
-                var addressed by remember { mutableStateOf(!ServerDirectory.needsAnAddress) }
+                // Re-read after settings change the answer, because `ServerDirectory`
+                // is storage and nothing observes storage.
+                var hasServer by remember { mutableStateOf(ServerDirectory.hasServer) }
 
-                LaunchedEffect(Unit) { state = identity.restore() }
-
-                if (!addressed) {
-                    // Before sign-in and never after (C1). A debug build has an address
-                    // from BuildConfig, so this screen does not appear there at all.
-                    ServerAddressScreen(
-                        onAccepted = { address, _ ->
-                            ServerDirectory.remember(address)
-                            addressed = true
-                        },
-                        onDeclined = {
-                            ServerDirectory.onlyThisDevice()
-                            addressed = true
-                        },
-                    )
-                    return@ShoppingTheme
+                // Only when there is somewhere to sign in to. Restoring asks Google,
+                // and Google asks the person -- which is a sign-in sheet in front of
+                // somebody who chose to keep this device to itself.
+                LaunchedEffect(hasServer) {
+                    if (hasServer) state = identity.restore()
                 }
 
-                // S1. No server means nobody to sign in to, so there is no sign-in.
-                // The app runs exactly as it does with no signal -- which is not a
-                // compromise but the point: `Api` fails every call as a transport
-                // error, the cache answers, and the outbox keeps what was written
-                // down until there is somewhere to send it.
-                if (ServerDirectory.isOnDeviceOnly) {
+                // The default, and it opens straight into the lists. A shopping list
+                // should be usable the moment it is installed, not open by asking a
+                // question about hosting -- so there is no first-run screen, nothing
+                // to dismiss, and nothing to sign in to. Somebody who has a server
+                // goes and says so in settings.
+                if (!hasServer) {
                     Shopping(
                         api = api,
                         cache = cache,
                         onSignedOut = {},
-                        onLeaveServer = {
-                            scope.launch { cache.forgetEverything() }
-                            ServerDirectory.forget()
-                            addressed = false
-                        },
+                        onServerChanged = { hasServer = ServerDirectory.hasServer },
                     )
                     return@ShoppingTheme
                 }
@@ -105,6 +88,7 @@ class MainActivity : ComponentActivity() {
                     is Identity.State.SignedIn -> Shopping(
                         api = api,
                         cache = cache,
+                        onServerChanged = { hasServer = ServerDirectory.hasServer },
                         onSignedOut = { why ->
                             identity.signOut()
                             // Only what was asked for. A session that ended because
@@ -121,17 +105,6 @@ class MainActivity : ComponentActivity() {
                             state = Identity.State.SignedOut(
                                 (why as? Identity.Departure.Refused)?.problem
                             )
-                        },
-                        onLeaveServer = {
-                            // The order matters only in that the address goes last: if
-                            // anything above fails, the device is still pointed at a
-                            // server it can be signed into again rather than at nothing
-                            // with a cache full of somebody else's ids.
-                            identity.signOut()
-                            scope.launch { cache.forgetEverything() }
-                            ServerDirectory.forget()
-                            addressed = false
-                            state = Identity.State.SignedOut(null)
                         },
                     )
                 }
@@ -196,18 +169,53 @@ private fun Shopping(
     api: Api,
     cache: Cache,
     onSignedOut: (Identity.Departure) -> Unit,
-    onLeaveServer: () -> Unit,
+    /** Settings changed which server this device uses, if any. */
+    onServerChanged: () -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
+    var settings by remember { mutableStateOf(false) }
     // Asked once, after the app is already usable. Nothing on the lists screen waits
     // for it -- a menu item appearing a moment late is better than a screen that waits
     // for a question about administration before it shows anybody their shopping.
     var isOwner by remember { mutableStateOf(false) }
     var managingServer by remember { mutableStateOf(false) }
+    var choosingServer by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { isOwner = runCatching { api.whoAmI().isOwner }.getOrDefault(false) }
 
     if (managingServer) {
         ServerPeopleScreen(api = api, onDone = { managingServer = false })
+        return
+    }
+
+    if (settings) {
+        SettingsScreen(
+            onDone = { settings = false },
+            onUseServer = { settings = false; choosingServer = true },
+            onLeaveServer = {
+                // The order matters only in that the address goes last: if anything
+                // above fails, the device is still pointed at a server it can be
+                // signed into again rather than at nothing with a cache full of
+                // somebody else's ids.
+                scope.launch { cache.forgetEverything() }
+                ServerDirectory.forget()
+                settings = false
+                onServerChanged()
+            },
+        )
+        return
+    }
+
+    if (choosingServer) {
+        ServerAddressScreen(
+            onAccepted = { address, _ ->
+                // Nothing is thrown away: adding a server is not the destructive half
+                // of changing one, and what is here is about to be sent to it.
+                ServerDirectory.remember(address)
+                choosingServer = false
+                onServerChanged()
+            }
+        )
         return
     }
 
@@ -224,9 +232,9 @@ private fun Shopping(
                 onOpen = { list -> open = list; nav.navigate("items") },
                 // Deliberately signed out, so nothing to explain on the way back.
                 onSignOut = { onSignedOut(Identity.Departure.Deliberate) },
-                onLeaveServer = onLeaveServer,
                 isOwner = isOwner,
                 onManageServer = { managingServer = true },
+                onSettings = { settings = true },
                 onDeviceOnly = ServerDirectory.isOnDeviceOnly,
             )
         }

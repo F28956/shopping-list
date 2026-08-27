@@ -45,7 +45,7 @@ object ServerDirectory {
     val current: ServerAddress?
         get() {
             val stored = prefs.getString(KEY, null) ?: return built
-            if (stored == ON_DEVICE_ONLY) return null
+            if (stored == ON_DEVICE_ONLY || stored.isEmpty()) return null
             return ServerAddress.parse(stored, allowingCleartext = true).getOrNull()
         }
 
@@ -54,6 +54,10 @@ object ServerDirectory {
      * rather than a second key, because it is the same question with another answer.
      */
     private const val ON_DEVICE_ONLY = "local"
+
+    /** Whether anything is stored at all. Only settings asks. */
+    val hasServer: Boolean
+        get() = current != null
 
     /**
      * Records that this device is on its own.
@@ -68,13 +72,6 @@ object ServerDirectory {
     }
 
     /**
-     * Whether this device has no server *and has said so*, as opposed to not having
-     * been asked.
-     */
-    val isOnDeviceOnly: Boolean
-        get() = prefs.getString(KEY, null) == ON_DEVICE_ONLY
-
-    /**
      * What the build was pointed at.
      *
      * Cleartext is allowed here whatever the build says: this came from somebody
@@ -82,14 +79,23 @@ object ServerDirectory {
      * an emulator talking to a server on the same desk.
      */
     private val built: ServerAddress?
-        get() = ServerAddress.parse(BuildConfig.API_BASE_URL, allowingCleartext = true).getOrNull()
+        get() = if (BuildConfig.DEBUG) {
+            ServerAddress.parse(BuildConfig.API_BASE_URL, allowingCleartext = true).getOrNull()
+        } else {
+            // A shipped build starts on its own. The build setting exists so a debug
+            // build can talk to the machine on the desk, not so that everybody who
+            // installs this is pointed at somebody else's server.
+            null
+        }
 
     /**
-     * Whether anybody has to be asked. False on a debug build, which has one, and
-     * false once somebody has said "this device only".
+     * Whether this device is on its own, which is the default.
+     *
+     * There is deliberately no "has not been asked": nothing asks. A shopping list
+     * opens and is usable, and a server is something somebody goes and configures.
      */
-    val needsAnAddress: Boolean
-        get() = current == null && !isOnDeviceOnly
+    val isOnDeviceOnly: Boolean
+        get() = current == null
 
     /**
      * Records an address that has been checked, and says whether it is a *different*
