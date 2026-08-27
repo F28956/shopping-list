@@ -7,7 +7,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.cernauskas.shoppinglist.data.ServerAddress
 import com.cernauskas.shoppinglist.data.ServerDirectory
+import com.cernauskas.shoppinglist.data.serverRefusal
+import kotlinx.coroutines.launch
 
 /**
  * Where a server is configured, and where it stops being one.
@@ -21,6 +24,23 @@ import com.cernauskas.shoppinglist.data.ServerDirectory
 fun SettingsScreen(onDone: () -> Unit, onUseServer: () -> Unit, onLeaveServer: () -> Unit) {
     var leaving by remember { mutableStateOf(false) }
     val server = ServerDirectory.current
+    val scope = rememberCoroutineScope()
+    /** Why the suggested address could not be used, if it could not. */
+    var refusal by remember { mutableStateOf<String?>(null) }
+
+    /**
+     * Adopts the address this build was compiled with.
+     *
+     * Checked first, exactly as a typed one is (C2). It is one tap rather than a URL to
+     * type, not a licence to store an address without asking whether it answers -- a
+     * developer whose server is not running should be told that here rather than by a
+     * screen full of nothing afterwards.
+     */
+    suspend fun use(address: ServerAddress) {
+        ServerDirectory.ask(address)
+            .onSuccess { ServerDirectory.remember(address); onDone() }
+            .onFailure { refusal = it.serverRefusal?.sentence() }
+    }
 
     Scaffold(
         topBar = {
@@ -45,6 +65,27 @@ fun SettingsScreen(onDone: () -> Unit, onUseServer: () -> Unit, onLeaveServer: (
                     onClick = onUseServer,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 ) { Text("Use a server") }
+
+                // Only ever present in a build that was compiled with an address, which
+                // in practice means a development build. It is here so that pointing a
+                // fresh emulator at the machine on the desk is one tap rather than
+                // typing a URL -- and so that nothing has to be adopted silently to
+                // achieve that.
+                ServerDirectory.suggested?.let { suggested ->
+                    TextButton(
+                        onClick = { scope.launch { use(suggested) } },
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    ) { Text("Use ${suggested.origin}") }
+                }
+
+                refusal?.let {
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
             } else {
                 TextButton(
                     onClick = { leaving = true },

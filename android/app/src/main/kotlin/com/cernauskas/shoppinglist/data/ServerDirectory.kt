@@ -44,7 +44,13 @@ object ServerDirectory {
      */
     val current: ServerAddress?
         get() {
-            val stored = prefs.getString(KEY, null) ?: return built
+            // Nothing stored means nothing stored. This used to fall back to the
+            // build setting, which made "the app opens straight into a usable list"
+            // true of a release build and false of every build anybody actually runs:
+            // a fresh debug install went to the machine on the desk and asked somebody
+            // to sign in. The build setting is still offered by settings -- see
+            // [suggested] -- but it is offered rather than assumed.
+            val stored = prefs.getString(KEY, null) ?: return null
             if (stored == ON_DEVICE_ONLY || stored.isEmpty()) return null
             return ServerAddress.parse(stored, allowingCleartext = true).getOrNull()
         }
@@ -78,6 +84,14 @@ object ServerDirectory {
      * compiling the app rather than from a text field, and refusing it would only break
      * an emulator talking to a server on the same desk.
      */
+    /**
+     * Offered and never adopted -- see [current]. It saves whoever is developing this
+     * from typing the address into every fresh emulator, and costs them one tap; it
+     * does not decide what a fresh install does.
+     */
+    val suggested: ServerAddress?
+        get() = built
+
     private val built: ServerAddress?
         get() = if (BuildConfig.DEBUG) {
             ServerAddress.parse(BuildConfig.API_BASE_URL, allowingCleartext = true).getOrNull()

@@ -39,8 +39,15 @@ enum ServerDirectory {
     /// * **`local`** — somebody chose this deliberately. Stored rather than inferred
     ///   from absence so that the two can be told apart if they ever need to be.
     static var choice: Choice {
+        // Nothing stored means nothing stored. This used to fall back to the build
+        // setting, which made "the app opens straight into a usable list" true of a
+        // release build and false of every build anybody actually runs: a fresh debug
+        // install went to the machine on the desk and asked somebody to sign in.
+        //
+        // The build setting is still there and still useful -- `suggested` offers it
+        // in settings, one tap -- but it is offered rather than assumed.
         guard let stored = UserDefaults.standard.string(forKey: key) else {
-            return built.map(Choice.server) ?? .none
+            return .none
         }
 
         if stored == onDeviceOnly || stored.isEmpty { return .none }
@@ -77,11 +84,17 @@ enum ServerDirectory {
         NotificationCenter.default.post(name: .serverChanged, object: nil)
     }
 
-    /// What the build was pointed at, if anything.
+    /// What the build was pointed at, if anything, for settings to offer.
+    ///
+    /// Offered and never adopted — see `choice`. It saves whoever is developing this
+    /// from typing `http://localhost:8080` into every fresh simulator, and costs them
+    /// one tap; it does not decide what a fresh install does.
     ///
     /// Cleartext is allowed here whatever the build says: this value came from somebody
     /// compiling the app rather than from a text field, and refusing it would only break
     /// a simulator talking to a server on the same desk.
+    static var suggested: ServerAddress? { built }
+
     private static var built: ServerAddress? {
         guard
             let raw = Bundle.main.object(forInfoDictionaryKey: "ShoppingListAPIBaseURL")
