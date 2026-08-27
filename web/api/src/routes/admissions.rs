@@ -36,16 +36,43 @@ pub fn server_router() -> Router<AppState> {
 
 #[derive(serde::Serialize)]
 struct About {
-    /// False only in the window between a first boot and somebody claiming it, when
-    /// the client should be asking for the code from the log instead of signing in.
-    claimed: bool,
-    admits_anyone: bool,
+    /// What this software is, so a client can tell it from anything else answering on
+    /// that port.
+    ///
+    /// C2: `GET /healthz` returns `ok`, and so does every other health endpoint on the
+    /// internet — pointing the app at an unrelated service would succeed here and fail
+    /// confusingly at the first API call. A client accepts an address when this
+    /// matches and refuses otherwise.
+    name: &'static str,
+    /// So a client can say "this server is older than this app" rather than reporting
+    /// a route it does not have as a network failure.
+    version: &'static str,
+    /// `open`, `closed`, or `unclaimed`.
+    ///
+    /// It lets a sign-in screen say whether you will need to be let in, which turns
+    /// the most confusing refusal in the product into something the person was warned
+    /// about — and `unclaimed` is what tells a fresh install to ask for the code from
+    /// the log instead of offering a sign-in button that cannot work.
+    admission: &'static str,
 }
 
+/// The name a client checks for. Changing it points every existing install at
+/// something it will refuse.
+const SOFTWARE: &str = "shopping-list";
+
 async fn about(State(state): State<AppState>) -> Result<Json<About>, AppError> {
+    let admission = if !Server::is_claimed(&state.ctx.db).await? {
+        "unclaimed"
+    } else if Server::admits_anyone(&state.ctx.db).await? {
+        "open"
+    } else {
+        "closed"
+    };
+
     Ok(Json(About {
-        claimed: Server::is_claimed(&state.ctx.db).await?,
-        admits_anyone: Server::admits_anyone(&state.ctx.db).await?,
+        name: SOFTWARE,
+        version: env!("CARGO_PKG_VERSION"),
+        admission,
     }))
 }
 

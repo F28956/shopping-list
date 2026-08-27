@@ -1551,7 +1551,11 @@ async fn an_unclaimed_server_says_so_before_anybody_signs_in(#[future(awt)] pool
     let (status, body) = send(&app, unauthenticated).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["claimed"], false);
+    assert_eq!(body["admission"], "unclaimed");
+    // C2: a client accepts an address when the name matches, so that pointing the app
+    // at an unrelated service fails here rather than at the first API call.
+    assert_eq!(body["name"], "shopping-list");
+    assert!(body["version"].as_str().is_some_and(|v| !v.is_empty()));
 }
 
 #[rstest]
@@ -1585,7 +1589,7 @@ async fn the_wrong_code_claims_nothing_over_the_wire(#[future(awt)] pool: Sqlite
     assert_eq!(status, StatusCode::FORBIDDEN);
 
     let (_, body) = send(&app, req("GET", "/api/server", &me(), None)).await;
-    assert_eq!(body["claimed"], false, "a wrong code claimed the server anyway");
+    assert_eq!(body["admission"], "unclaimed", "a wrong code claimed the server anyway");
 }
 
 #[rstest]
@@ -1682,6 +1686,11 @@ async fn an_owner_can_open_the_server(#[future(awt)] pool: SqlitePool) {
 
     let (status, _) = send(&app, req("GET", "/api/me", &third(), None)).await;
     assert_eq!(status, StatusCode::OK, "the server was opened and still refused somebody");
+
+    // And it says so, so a sign-in screen can stop promising a refusal that will not
+    // come.
+    let (_, about) = send(&app, req("GET", "/api/server", &me(), None)).await;
+    assert_eq!(about["admission"], "open");
 }
 
 // ---------------------------------------------------------------------------
