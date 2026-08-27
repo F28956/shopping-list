@@ -18,6 +18,13 @@ tower-http = { version = "0.7.0", features = ["trace", "catch-panic", "set-heade
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tower-sessions = "0.15.0"
+# TLS in the process, so that reaching a working first run does not require a second
+# daemon and a second configuration language -- docs/tls.md T1. Off is still the
+# default, because behind a proxy that terminates TLS this is the wrong end to do it.
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12"] }
+hyper = "1.11.0"
+hyper-util = { version = "0.1.20", features = ["server-auto", "tokio"] }
 tower = "0.5"
 
 [dev-dependencies]

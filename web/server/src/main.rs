@@ -25,6 +25,8 @@ use domain::service::Ctx;
 use domain::service::admission::Admission;
 use web::sessions::SqliteSessions;
 
+mod tls;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -77,16 +79,24 @@ async fn main() -> anyhow::Result<()> {
 
     housekeeping(ctx.clone());
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
-    tracing::info!("listening on {}", listener.local_addr()?);
+    let tls = tls::Settings::from_env()?;
+    tls.announce();
+
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", tls.port)).await?;
+    let scheme = if tls.mode.serves_tls() { "https" } else { "http" };
+    tracing::info!("listening on {} ({scheme})", listener.local_addr()?);
 
     // Said out loud because `localhost` is the first thing to get wrong once a real
     // phone is involved: on the handset it means the handset.
-    if let Some(address) = lan_address(8080) {
+    if let Some(address) = lan_address(scheme, tls.port) {
         tracing::info!("reachable from this network at {address}");
     }
-    axum::serve(listener, app(api_state, web_state, sessions)).await?;
-    Ok(())
+
+    if let Some(port) = tls.redirect_port {
+        redirect_listener(port, tls.port);
+    }
+
+    tls::serve(&tls.mode, listener, app(api_state, web_state, sessions, &tls)).await
 }
 
 /// The code that claims an unclaimed server, printed where its operator is looking.
@@ -163,14 +173,88 @@ fn housekeeping(ctx: Ctx) {
 /// * `CatchPanicLayer` wraps both, so a panic in one transport is a 500 on the
 ///   request that caused it rather than an outage for the others. That is why
 ///   `panic = "abort"` is deliberately absent from the release profile.
-fn app(api_state: ApiState, web_state: web::AppState, sessions: SqliteSessions) -> Router {
+fn app(
+    api_state: ApiState,
+    web_state: web::AppState,
+    sessions: SqliteSessions,
+    tls: &tls::Settings,
+) -> Router {
+    // T11. A supervisor wants a status code and a person wants to know whether the
+    // certificate is the thing that is wrong, and the second is free.
+    let health = format!("ok\ntls: {}\n", tls.mode.name());
+
     Router::new()
-        .route("/healthz", get(|| async { "ok" }))
+        .route("/healthz", get(move || async move { health }))
         .nest("/api", api::router().with_state(api_state))
         .merge(web::router(web_state, sessions))
         .layer(CatchPanicLayer::new())
         .layer(TraceLayer::new_for_http())
-        .layer(security_headers())
+        .layer(security_headers(hsts(&tls.mode)))
+}
+
+/// The plain-HTTP listener, which serves no application (T9).
+///
+/// It answers everything with a redirect to the `https://` origin, preserving method
+/// and body — a person who typed the address without a scheme lands on the real
+/// server, and that is all it is for. No route, no session layer, no state.
+///
+/// Failing to bind is a warning and not a failure: the redirect is a courtesy, and a
+/// process that cannot have port 80 should still serve the application.
+fn redirect_listener(port: u16, tls_port: u16) {
+    use axum::http::{StatusCode, Uri};
+    use axum::response::{IntoResponse, Redirect};
+
+    tokio::spawn(async move {
+        let to_https = move |uri: Uri, headers: axum::http::HeaderMap| async move {
+            let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) else {
+                return StatusCode::BAD_REQUEST.into_response();
+            };
+
+            // The port the browser used is not the port TLS is on, so the one it was
+            // told about is dropped and the real one added back.
+            let name = host.split(':').next().unwrap_or(host);
+            let authority = if tls_port == 443 {
+                name.to_string()
+            } else {
+                format!("{name}:{tls_port}")
+            };
+
+            let path = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
+
+            // 308 rather than 301: it preserves the method and the body, so a POST
+            // that arrived on the wrong scheme is not silently turned into a GET.
+            Redirect::permanent(&format!("https://{authority}{path}")).into_response()
+        };
+
+        let app = Router::new().fallback(to_https);
+
+        match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+            Ok(listener) => {
+                tracing::info!("redirecting http on port {port} to https");
+                if let Err(e) = axum::serve(listener, app).await {
+                    tracing::warn!(error = %e, "the redirect listener stopped");
+                }
+            }
+            Err(e) => tracing::warn!(
+                error = %e,
+                "could not bind port {port} for http redirects; carrying on without them"
+            ),
+        }
+    });
+}
+
+/// T10. Two years, and only when this process is the one holding the certificate.
+///
+/// Absent under `off`, which is not a detail: an HSTS header served over cleartext
+/// development is how you lock yourself out of your own laptop, and one sent from
+/// behind a terminating proxy is a promise made on somebody else's behalf.
+///
+/// Not `preload`, and no `includeSubDomains`: both are promises a person makes for a
+/// whole domain they may share with other things, and the first is close to
+/// irreversible in shipped browsers.
+fn hsts(mode: &tls::Mode) -> Option<HeaderValue> {
+    mode.serves_tls()
+        .then(|| HeaderValue::from_static("max-age=63072000"))
 }
 
 /// The headers a browser needs to be told, since it assumes the worst otherwise.
@@ -181,9 +265,12 @@ fn app(api_state: ApiState, web_state: web::AppState, sessions: SqliteSessions) 
 /// both say `self` and nothing else. A CSP that has to allow `unsafe-inline` is
 /// mostly decoration.
 type Header = SetResponseHeaderLayer<HeaderValue>;
-type Headers = Stack<Header, Stack<Header, Stack<Header, Header>>>;
+/// The HSTS layer takes an `Option`, which `tower-http` reads as "set it, or do not" —
+/// so a conditional header still has a static type and no boxing.
+type Maybe = SetResponseHeaderLayer<Option<HeaderValue>>;
+type Headers = Stack<Maybe, Stack<Header, Stack<Header, Stack<Header, Header>>>>;
 
-fn security_headers() -> Headers {
+fn security_headers(hsts: Option<HeaderValue>) -> Headers {
     const CSP: &str = "default-src 'self'; \
                        script-src 'self'; \
                        style-src 'self'; \
@@ -193,6 +280,8 @@ fn security_headers() -> Headers {
                        frame-ancestors 'none'";
 
     Stack::new(
+        SetResponseHeaderLayer::overriding(header::STRICT_TRANSPORT_SECURITY, hsts),
+        Stack::new(
         SetResponseHeaderLayer::overriding(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(CSP),
@@ -213,6 +302,7 @@ fn security_headers() -> Headers {
                     HeaderValue::from_static("DENY"),
                 ),
             ),
+        ),
         ),
     )
 }
@@ -246,10 +336,10 @@ fn admission() -> anyhow::Result<Option<Admission>> {
 ///
 /// `None` when there is no route out, which is a laptop with the Wi-Fi off rather
 /// than an error worth stopping for.
-fn lan_address(port: u16) -> Option<String> {
+fn lan_address(scheme: &str, port: u16) -> Option<String> {
     let probe = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     probe.connect("8.8.8.8:80").ok()?;
-    Some(format!("http://{}:{port}", probe.local_addr().ok()?.ip()))
+    Some(format!("{scheme}://{}:{port}", probe.local_addr().ok()?.ip()))
 }
 
 /// The Google client ids whose tokens this server will accept as its own.
@@ -527,7 +617,7 @@ mod security_tests {
         let app = Router::new()
             .route("/healthz", get(|| async { "ok" }))
             .nest("/api", api::router().with_state(api_state))
-            .layer(security_headers());
+            .layer(security_headers(None));
 
         for uri in ["/healthz", "/api/notes?order_by=id"] {
             let res = app
@@ -551,7 +641,7 @@ mod security_tests {
         let _ = pool;
         let app = Router::new()
             .route("/healthz", get(|| async { "ok" }))
-            .layer(security_headers());
+            .layer(security_headers(None));
 
         let res = app
             .oneshot(
@@ -614,5 +704,132 @@ mod security_tests {
         );
 
         unsafe { std::env::remove_var("SESSION_INSECURE") };
+    }
+
+    // -----------------------------------------------------------------------
+    // TLS
+    // -----------------------------------------------------------------------
+
+    fn settings_from(vars: &[(&str, &str)]) -> anyhow::Result<tls::Settings> {
+        let vars: std::collections::HashMap<_, _> = vars.iter().copied().collect();
+        tls::Settings::read(|name| vars.get(name).map(|v| v.to_string()))
+    }
+
+    /// A laptop talking to its own simulators must keep working with no configuration
+    /// at all, which is why `off` is the default.
+    #[test]
+    fn nothing_configured_serves_cleartext_on_the_usual_port() {
+        let settings = settings_from(&[]).unwrap();
+
+        assert_eq!(settings.mode, tls::Mode::Off);
+        assert_eq!(settings.port, 8080);
+        // Nothing to redirect *to*: on a cleartext server the plain listener is the
+        // server, and opening a second one that redirected to itself would be a loop.
+        assert_eq!(settings.redirect_port, None);
+    }
+
+    #[test]
+    fn turning_tls_on_opens_the_redirect_listener_by_default() {
+        let settings = settings_from(&[
+            ("TLS_MODE", "files"),
+            ("TLS_CERT", "/tls/cert.pem"),
+            ("TLS_KEY", "/tls/key.pem"),
+        ])
+        .unwrap();
+
+        assert!(settings.mode.serves_tls());
+        assert_eq!(settings.redirect_port, Some(80));
+
+        let silenced = settings_from(&[
+            ("TLS_MODE", "files"),
+            ("TLS_CERT", "/tls/cert.pem"),
+            ("TLS_KEY", "/tls/key.pem"),
+            ("HTTP_REDIRECT_PORT", "off"),
+        ])
+        .unwrap();
+        assert_eq!(silenced.redirect_port, None);
+    }
+
+    /// Refused at startup rather than at the first handshake, which happens when
+    /// somebody is watching a browser rather than a log.
+    #[rstest]
+    #[case::unknown_mode(&[("TLS_MODE", "yes")])]
+    #[case::files_without_paths(&[("TLS_MODE", "files")])]
+    #[case::files_without_a_key(&[("TLS_MODE", "files"), ("TLS_CERT", "/tls/cert.pem")])]
+    #[case::acme_without_names(&[("TLS_MODE", "acme")])]
+    #[case::acme_with_empty_names(&[("TLS_MODE", "acme"), ("TLS_DOMAINS", " , ")])]
+    #[case::a_port_that_is_not_a_number(&[("PORT", "https")])]
+    fn configuration_that_cannot_work_is_refused(#[case] vars: &[(&str, &str)]) {
+        assert!(settings_from(vars).is_err(), "{vars:?} was accepted");
+    }
+
+    /// A public CA will not certify an address, and its refusal arrives minutes later
+    /// saying something about an authorization object.
+    #[test]
+    fn an_address_is_not_a_name_a_certificate_can_be_had_for() {
+        let refused = settings_from(&[("TLS_MODE", "acme"), ("TLS_DOMAINS", "192.168.1.10")]);
+
+        assert!(refused.is_err());
+        assert!(
+            format!("{:?}", refused.unwrap_err()).contains("address and not a name"),
+            "the refusal did not say why"
+        );
+    }
+
+    #[test]
+    fn acme_reads_its_names_and_defaults_to_the_real_certificate_authority() {
+        let settings = settings_from(&[
+            ("TLS_MODE", "acme"),
+            ("TLS_DOMAINS", " List.Example.com , shop.example.com "),
+            ("ACME_CONTACT", "me@example.com"),
+        ])
+        .unwrap();
+
+        let tls::Mode::Acme { domains, contact, staging, .. } = settings.mode else {
+            panic!("not acme");
+        };
+
+        assert_eq!(domains, ["list.example.com", "shop.example.com"]);
+        // A bare address is what a person types, and `mailto:` is what ACME wants.
+        assert_eq!(contact.as_deref(), Some("mailto:me@example.com"));
+        // Production by default, against the grain: a staging certificate produces a
+        // server that starts cleanly and is refused by every client.
+        assert!(!staging);
+    }
+
+    /// T10. Both directions, because an HSTS header served over cleartext development
+    /// is how you lock yourself out of your own laptop.
+    #[rstest]
+    #[tokio::test]
+    async fn hsts_is_sent_only_when_this_process_holds_the_certificate(
+        #[future(awt)] pool: SqlitePool,
+    ) {
+        let _ = pool;
+
+        for (mode, expected) in [
+            (tls::Mode::Off, None),
+            (
+                tls::Mode::Files { cert: "c".into(), key: "k".into() },
+                Some("max-age=63072000"),
+            ),
+        ] {
+            let app = Router::new()
+                .route("/healthz", get(|| async { "ok" }))
+                .layer(security_headers(hsts(&mode)));
+
+            let res = app
+                .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+
+            assert_eq!(
+                res.headers()
+                    .get(header::STRICT_TRANSPORT_SECURITY)
+                    .map(|v| v.to_str().unwrap()),
+                expected,
+                "wrong HSTS under TLS_MODE={}",
+                mode.name()
+            );
+        }
     }
 }

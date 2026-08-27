@@ -1,6 +1,13 @@
 # Serving HTTPS, and keeping the certificate fresh
 
-A design, not an implementation. Nothing here is built yet.
+**Partly built.** `TLS_MODE` is `off`, `files` or `acme`; the first two work, and
+`acme` is refused at startup rather than pretended at. T2, T7, T9, T10 and T12 are
+done; T3, T8 and T11's certificate detail arrive with `acme`.
+
+Both arrangements are supported and neither is assumed — T1's default stands, but the
+operator guide leads with the reverse proxy, which is the configuration most people
+running a home server are already in. In-process TLS is what somebody with a bare box
+and one binary reaches for, and it is one variable away.
 
 The server speaks cleartext HTTP on `0.0.0.0:8080` and nothing else. Every request
 carries `Authorization: Bearer <google id token>` — a credential that is worth exactly
