@@ -52,6 +52,15 @@ actor API {
     private let server: @Sendable () -> URL
 
     private var baseURL: URL { server() }
+
+    /// Whether there is anywhere to send anything.
+    ///
+    /// False on a device somebody chose to keep to itself. Every call then fails as a
+    /// transport error before a socket is opened — which is not a workaround but the
+    /// design: "no server" and "no signal" are the same state, and the app has known
+    /// how to be in one of them since the offline work. The cache answers, the outbox
+    /// fills, and attaching a server later drains it.
+    private var reachable: Bool { ServerDirectory.current != nil }
     private let session: URLSession
     private let token: () async -> String?
     /// Whether somebody is signed in on this device, whether or not there is a token to
@@ -493,6 +502,8 @@ actor API {
         _ body: [String: Any]?,
         _ encoded: Data? = nil
     ) async throws -> Data {
+        guard reachable else { throw APIError.transport(NoServer()) }
+
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw APIError.badInput("Bad address: \(path)")
         }
@@ -579,4 +590,13 @@ actor API {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
+}
+
+/// There is no server, because somebody said so.
+///
+/// Its own error type rather than a string, so that the sentence a screen shows is
+/// decided by the screen. What matters here is only that it arrives as a transport
+/// failure, which the app already treats as "show the cache and keep the queue".
+struct NoServer: LocalizedError {
+    var errorDescription: String? { "This device is not using a server." }
 }

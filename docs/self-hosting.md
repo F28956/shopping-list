@@ -83,7 +83,30 @@ where they would have to key off `uuid`, and a list adopted by a server later ne
 its operations replayed rather than its rows rewritten. That is the same replay
 `POST /api/sync` already performs, pointed at a list the server has never seen.
 
-**Not built, and the largest single item in this document.**
+**Built on iOS.** The shape it took is worth recording, because it turned out to be
+smaller than expected and for a reason.
+
+*No server is the same state as no signal.* The app has known how to be in that one
+since the offline work: `API` fails every call as a transport error, the cache
+answers, the outbox keeps what was written down, and attaching a server later drains
+it. So "use this device only" is not a second mode with its own rules — it is the
+existing one, entered on purpose rather than by walking into a basement.
+
+Three things had to be added. A seventh sync operation, `make_list`, so a list has
+somewhere to go when one is finally attached. A negative id minted locally, the same
+trick items already use for rows made offline, swapped for the server's when it
+answers — the `uuid` never changes, and it is the only name that ever goes on the
+wire. And `remember(lists:)` had to stop deleting what the server did not mention,
+which would have taken somebody's shopping away for the crime of being written down
+offline.
+
+What took the most care was none of that: it was the copy. A device kept to itself
+must not say "Offline. Showing what was last loaded" about the only copy there has
+ever been, must not offer to sign out somebody who never signed in, and must not show
+an orange dot nagging about a connection somebody deliberately declined. Four places
+said something false, and each is now branched on a single honest question.
+
+**Still to do on Android.**
 
 ## S2 · The address is asked for, never compiled in
 

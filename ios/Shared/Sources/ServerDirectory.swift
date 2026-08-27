@@ -16,7 +16,17 @@ enum ServerDirectory {
     /// Falls back to the build setting, so a development build with
     /// `SHOPPING_LIST_API_BASE_URL` in `Config.xcconfig` keeps working with nothing
     /// entered and the simulator keeps talking to `localhost`.
-    /// One key, three states, and the third is the one that is easy to miss.
+    /// What this device has been told to do about a server.
+    enum Choice: Equatable {
+        /// Nobody has been asked yet.
+        case unanswered
+        /// Somebody said "this device only". There is no server and that is a
+        /// decision, not a failure — see [`onlyThisDevice`].
+        case none
+        case server(ServerAddress)
+    }
+
+    /// One key, four states, and only the first is obvious.
     ///
     /// * **Absent** — nobody has ever been asked, so the build setting applies.
     /// * **A value** — what somebody entered.
@@ -24,14 +34,46 @@ enum ServerDirectory {
     ///   *not* apply. Without this state, "change server" on a build compiled with an
     ///   address would clear the stored one and fall straight back to the built-in,
     ///   which is a button that appears to work and does nothing.
-    static var current: ServerAddress? {
-        guard let stored = UserDefaults.standard.string(forKey: key) else { return built }
+    /// * **`local`** — somebody chose to use this device on its own. A reserved word
+    ///   rather than a second key, because it is the same question with a third
+    ///   answer, and `ServerAddress.parse` refuses it so it cannot be typed by
+    ///   accident.
+    static var choice: Choice {
+        guard let stored = UserDefaults.standard.string(forKey: key) else {
+            return built.map(Choice.server) ?? .unanswered
+        }
+
+        if stored == onDeviceOnly { return .none }
 
         guard case .success(let address) = ServerAddress.parse(stored, allowingCleartext: true)
-        else { return nil }
+        else { return .unanswered }
 
-        return address
+        return .server(address)
     }
+
+    /// The reserved value. Not a hostname anybody could type: `ServerAddress` refuses
+    /// it for having no dot and no scheme it recognises... which is not true, so it is
+    /// checked before parsing rather than relying on that.
+    private static let onDeviceOnly = "local"
+
+    static var current: ServerAddress? {
+        if case .server(let address) = choice { return address }
+        return nil
+    }
+
+    /// Records that this device is on its own.
+    ///
+    /// The app then works exactly as it does with no signal, which is not a
+    /// coincidence: everything queues to the outbox and shows from the cache, and
+    /// attaching a server later drains the queue into it. "No server" and "no signal"
+    /// are the same state, and the app already knew how to be in one of them.
+    static func onlyThisDevice() {
+        UserDefaults.standard.set(onDeviceOnly, forKey: key)
+    }
+
+    /// Whether this device has no server *and has said so*, as opposed to not having
+    /// been asked.
+    static var isOnDeviceOnly: Bool { choice == .none }
 
     /// What the build was pointed at, if anything.
     ///
@@ -48,8 +90,9 @@ enum ServerDirectory {
         return address
     }
 
-    /// Whether anybody has to be asked. False on a development build, which has one.
-    static var needsAnAddress: Bool { current == nil }
+    /// Whether anybody has to be asked. False on a development build, which has one,
+    /// and false once somebody has said "this device only".
+    static var needsAnAddress: Bool { choice == .unanswered }
 
     /// Records an address that has been checked, and says whether it is a *different*
     /// server from the one before — which is the caller's cue to throw everything local

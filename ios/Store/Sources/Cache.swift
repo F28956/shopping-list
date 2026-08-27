@@ -175,7 +175,11 @@ final class Cache: @unchecked Sendable {
         // says there are no lists, and a read landing in that moment is the very bug
         // this table exists to prevent.
         write { db in
-            try db.execute(sql: "DELETE FROM lists")
+            // Lists this device made and has not managed to send keep their rows. The
+            // server has never heard of them, so it cannot mention them, and deleting
+            // everything it did not mention would take somebody's shopping away for
+            // the crime of having been written down offline.
+            try db.execute(sql: "DELETE FROM lists WHERE id >= 0")
             for (at, list) in lists.enumerated() {
                 try db.execute(
                     sql: """
@@ -189,6 +193,73 @@ final class Cache: @unchecked Sendable {
     }
 
     // MARK: - Items
+
+    /// Makes a list here, with no server involved.
+    ///
+    /// The id is negative and minted locally, which is the same trick items already
+    /// use for rows created offline: it is a key for this device's own tables and
+    /// never goes on the wire, where the `uuid` is the only name. When the server
+    /// finally hears about it, [`adopt`] swaps the one for the other.
+    ///
+    /// Counting down from the lowest already used, so two lists made in the same
+    /// second cannot collide.
+    func makeListHere(named name: String, ownedBy ownerID: Int64) -> List {
+        let list = List(
+            id: nextLocalListID(),
+            uuid: UUID().uuidString.lowercased(),
+            name: name,
+            ownerID: ownerID,
+            role: .owner
+        )
+
+        write { db in
+            let position = try Int.fetchOne(db, sql: "SELECT count(*) FROM lists") ?? 0
+            try db.execute(
+                sql: """
+                INSERT INTO lists (id, uuid, name, owner_id, role, position)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [list.id, list.uuid, list.name, list.ownerID, list.role.rawValue, position]
+            )
+        }
+
+        return list
+    }
+
+    private func nextLocalListID() -> Int64 {
+        let lowest = readOne { db in
+            try Int64.fetchOne(db, sql: "SELECT min(id) FROM lists")
+        } ?? 0
+
+        return min(lowest, 0) - 1
+    }
+
+    /// Whether this list exists only here.
+    static func isLocal(_ list: List) -> Bool { list.id < 0 }
+
+    /// Gives a locally-made list the id the server gave it.
+    ///
+    /// Everything keyed by the old id moves with it: the items on it, the tag order
+    /// remembered for it, and anything still queued against it. Missing one of those
+    /// would leave rows pointing at a list id that no longer exists, which reads on
+    /// screen as a list that lost its items the moment it was first synced.
+    ///
+    /// The `uuid` does not change and never has — it is what the server was told, and
+    /// what every queued operation names. Only this device's own numbering moves.
+    func adopt(_ local: List, as real: List) {
+        guard Self.isLocal(local), !Self.isLocal(real) else { return }
+
+        write { db in
+            for statement in [
+                "UPDATE lists SET id = ?2, owner_id = ?3 WHERE id = ?1",
+                "UPDATE items SET list_id = ?2 WHERE list_id = ?1",
+                "UPDATE reference SET list_id = ?2 WHERE list_id = ?1",
+                "UPDATE operations SET list_id = ?2 WHERE list_id = ?1",
+            ] {
+                try db.execute(sql: statement, arguments: [local.id, real.id, real.ownerID])
+            }
+        }
+    }
 
     func items(on list: List) -> [Item] {
         read { db in
@@ -315,6 +386,14 @@ final class Cache: @unchecked Sendable {
                 )
             }
         }
+    }
+
+    /// One value rather than rows. `read` answers with a collection because almost
+    /// everything here does; this is for the handful of questions that have a single
+    /// answer, and `nil` where the database could not be reached at all.
+    private func readOne<T>(_ work: (Database) throws -> T?) -> T? {
+        guard let queue else { return nil }
+        return (try? queue.read(work)) ?? nil
     }
 
     private func read<T>(_ work: (Database) throws -> [T]) -> [T] {

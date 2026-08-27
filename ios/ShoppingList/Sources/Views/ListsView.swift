@@ -39,6 +39,9 @@ struct ListsView: View {
     /// Whether this person administers this server, which decides whether the screen
     /// that manages it exists. Hiding it is a courtesy: every route behind it is
     /// refused in the service layer to anybody else.
+    /// There is no server, because somebody said so on the first screen. Read once:
+    /// it only changes by leaving this screen entirely.
+    private let onDeviceOnly = ServerDirectory.isOnDeviceOnly
     @State private var isOwner = false
     @State private var managingServer = false
 
@@ -52,6 +55,17 @@ struct ListsView: View {
         cache.forgetEverything()
         identity.signOut()
         ServerDirectory.forget()
+    }
+
+    /// What an empty screen says.
+    ///
+    /// Three different emptinesses and they are not the same news. On a device kept to
+    /// itself there is nothing wrong at all — nobody has written a list yet — and
+    /// saying "can't reach the server" there would be reporting a failure that did not
+    /// happen and could not.
+    private var emptyTitle: String {
+        if onDeviceOnly { return "No lists yet" }
+        return offline ? "Can't reach the server" : "Couldn't load your lists"
     }
 
     /// The menu behind the plus.
@@ -73,7 +87,11 @@ struct ListsView: View {
             .accessibilityIdentifier("manage-server")
         }
 
-        Button("Change server", systemImage: "server.rack", role: .destructive) {
+        Button(
+            onDeviceOnly ? "Use a server" : "Change server",
+            systemImage: "server.rack",
+            role: onDeviceOnly ? nil : .destructive
+        ) {
             changingServer = true
         }
         .accessibilityIdentifier("change-server")
@@ -92,14 +110,18 @@ struct ListsView: View {
                     // server can set it. Losing signal afterwards does not unsay it.
                     ContentUnavailableView {
                         Label(
-                            offline ? "Can't reach the server" : "Couldn't load your lists",
-                            systemImage: offline ? "icloud.slash" : "exclamationmark.triangle"
+                            emptyTitle,
+                            systemImage: onDeviceOnly
+                                ? "checklist"
+                                : (offline ? "icloud.slash" : "exclamationmark.triangle")
                         )
                     } description: {
                         Text(
-                            offline
-                                ? "Your lists will appear as soon as there is a connection."
-                                : "Whether you have any is not known yet."
+                            onDeviceOnly
+                                ? "Make one with the button above. It stays on this phone."
+                                : (offline
+                                    ? "Your lists will appear as soon as there is a connection."
+                                    : "Whether you have any is not known yet.")
                         )
                     } actions: {
                         Button("Try again") { Task { await load() } }
@@ -115,7 +137,7 @@ struct ListsView: View {
                     }
                 } else {
                     SwiftUI.List {
-                        if offline {
+                        if offline && !onDeviceOnly {
                             OfflineNote()
                         }
 
@@ -181,14 +203,20 @@ struct ListsView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    StatusDot(waiting: queued, offline: offline)
+                    StatusDot(waiting: queued, offline: offline, onDeviceOnly: onDeviceOnly)
                 }
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Sign out") {
-                        // What is cached belongs to whoever is signing out. The next
-                        // person to use this device is a different person.
-                        cache.forgetEverything()
-                        identity.signOut()
+                    // Nobody is signed in on a device kept to itself, so there is
+                    // nobody to sign out. Offering it would be a button that throws
+                    // away somebody's only copy of their shopping and calls it
+                    // leaving.
+                    if !onDeviceOnly {
+                        Button("Sign out") {
+                            // What is cached belongs to whoever is signing out. The
+                            // next person to use this device is a different person.
+                            cache.forgetEverything()
+                            identity.signOut()
+                        }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -227,7 +255,7 @@ struct ListsView: View {
                 ListNameSheet(purpose: purpose) { name in
                     switch purpose {
                     case .create:
-                        await attempt { try await api.createList(named: name) }
+                        await makeList(named: name)
                     case .rename(let list):
                         await attempt { try await api.rename(list, to: name) }
                     }
@@ -344,12 +372,56 @@ struct ListsView: View {
     /// against, so nothing here needs to know which screen it came from. Failures are
     /// the outbox's business -- see ``Outbox/drain(through:)`` -- and what is left
     /// stays queued for the next successful load.
+    /// Makes a list, wherever it can.
+    ///
+    /// The server first, because a list made online should arrive with an id and no
+    /// queue behind it. A transport failure is not an error here and never shows one:
+    /// no signal and no server are the same state, and writing the list down locally
+    /// is what the person asked for either way. It is queued, and the queue is what
+    /// carries it to a server if one ever appears.
+    ///
+    /// This is S1 — the app is useful before it has anywhere to send anything.
+    private func makeList(named name: String) async {
+        do {
+            _ = try await api.createList(named: name)
+            await load()
+        } catch APIError.transport {
+            let made = cache.makeListHere(named: name, ownedBy: mine)
+            cache.outbox.makeList(made)
+            queued = cache.outbox.waiting
+            lists = cache.lists()
+            offline = true
+        } catch {
+            self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// This person's id, for a list made with nobody to ask.
+    ///
+    /// Zero where there is no server and so no account. It is only ever compared with
+    /// itself on this device — the server decides ownership from who sent the
+    /// operation, not from what the device claimed.
+    private var mine: Int64 { 0 }
+
     private func sendQueued() async {
         guard !draining, cache.outbox.waiting > 0 else { return }
         draining = true
-        _ = await cache.outbox.drain(through: api)
+        let drained = await cache.outbox.drain(through: api)
         draining = false
         queued = cache.outbox.waiting
+
+        // Lists made here have just been given the server's own ids. Done before the
+        // reload below, so the screen never shows the same list twice — once under
+        // this device's numbering and once under the server's.
+        for adopted in drained.adopted {
+            if let local = cache.lists().first(where: { $0.uuid == adopted.uuid }) {
+                cache.adopt(local, as: adopted.real)
+            }
+        }
+
+        if !drained.adopted.isEmpty {
+            lists = cache.lists()
+        }
     }
 
     private func load() async {

@@ -17,8 +17,15 @@ struct StatusDot: View {
     var waiting: Int
     /// Whether the last look at the server failed.
     var offline: Bool
+    /// There is no server, because somebody said so.
+    ///
+    /// Green, not orange. Nothing is waiting and nothing has failed — a device kept to
+    /// itself is exactly as in step as it will ever be, and an orange dot nagging
+    /// about a connection somebody deliberately declined is the app arguing with a
+    /// decision it was handed.
+    var onDeviceOnly: Bool = false
 
-    private var inStep: Bool { waiting == 0 && !offline }
+    private var inStep: Bool { onDeviceOnly || (waiting == 0 && !offline) }
 
     var body: some View {
         Circle()
@@ -30,6 +37,7 @@ struct StatusDot: View {
     /// Spoken in full, because what makes a dot right at a glance is exactly what makes
     /// it useless to somebody reading by ear.
     private var said: String {
+        if onDeviceOnly { return "On this device only" }
         switch (offline, waiting) {
         case (false, 0): return "Up to date"
         case (true, 0): return "Offline. Showing what was last loaded."

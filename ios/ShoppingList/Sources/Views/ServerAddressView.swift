@@ -13,6 +13,11 @@ struct ServerAddressView: View {
     /// everything local away.
     let accepted: (ServerAddress, ServerDirectory.About) -> Void
 
+    /// What to do when somebody says they have no server. `nil` hides the offer, which
+    /// is right when this screen is reached from settings — a device that already has
+    /// lists on a server is not choosing for the first time.
+    var declined: (() -> Void)?
+
     @State private var suggestion: ServerAddress?
 
     @State private var typed = ""
@@ -67,6 +72,22 @@ struct ServerAddressView: View {
             Button("I have a share link", systemImage: "link") { readTheClipboard() }
                 .font(.footnote)
                 .accessibilityIdentifier("paste-share-link")
+
+            if let declined {
+                // S1. The app has to be useful before it has a server, and this is
+                // where somebody says they do not want one. It is not a lesser mode:
+                // lists made here work exactly as lists made with no signal do, and
+                // attaching a server later sends them.
+                VStack(spacing: 4) {
+                    Button("Use this device only", action: declined)
+                        .accessibilityIdentifier("no-server")
+                    Text("Your lists stay on this phone. You can add a server later.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top, 8)
+            }
 
             if let problem {
                 Text(problem)

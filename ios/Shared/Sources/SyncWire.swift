@@ -59,6 +59,10 @@ struct AppliedOperation: Decodable {
     var id: String
     var outcome: String
     var item: Item?
+    /// The list a `make_list` produced. Absent on every other operation — a device
+    /// that made a list offline knows what it called it and not what the server does,
+    /// and this is where it finds out.
+    var list: List?
     var why: String?
 
     var landed: Bool { outcome == "applied" || outcome == "already_applied" }

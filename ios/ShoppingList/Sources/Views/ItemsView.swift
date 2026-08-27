@@ -86,7 +86,10 @@ struct ItemsView: View {
                 Section { suggestionSection }
             }
 
-            if offline || waiting > 0 || refused {
+            // Nothing to say on a device kept to itself: nothing is stale, nothing is
+            // waiting for a connection that is coming, and a line apologising for one
+            // somebody declined is worse than silence.
+            if (offline || waiting > 0 || refused) && !ServerDirectory.isOnDeviceOnly {
                 Section { OfflineNote(offline: offline, waiting: waiting, refused: refused) }
             }
 
@@ -95,9 +98,13 @@ struct ItemsView: View {
             }
 
             // "Nothing on this list yet" is a claim, and with nothing cached and a
-            // load that failed it is a claim nobody has checked. `fresh` is what
-            // earns it, and only the server can set that.
-            if items.isEmpty && loaded && !fresh {
+            // load that failed it is a claim nobody has checked. `fresh` is what earns
+            // it, and only the server can set that.
+            //
+            // Except on a device kept to itself, where there is no server to have
+            // checked with and this device is the only thing that could know. There,
+            // empty means empty.
+            if items.isEmpty && loaded && !fresh && !ServerDirectory.isOnDeviceOnly {
                 Section {
                     Text(
                         offline
@@ -146,7 +153,11 @@ struct ItemsView: View {
                 HStack(spacing: 6) {
                     Text(list.name)
                         .font(.headline)
-                    StatusDot(waiting: waiting, offline: offline)
+                    StatusDot(
+                        waiting: waiting,
+                        offline: offline,
+                        onDeviceOnly: ServerDirectory.isOnDeviceOnly
+                    )
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {

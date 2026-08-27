@@ -23,6 +23,9 @@ struct QueuedOperation: Identifiable, Equatable {
     var at: Date
 
     enum Kind {
+        /// Make the list itself. Queued when a list is written down with nowhere to
+        /// send it — no signal, or no server at all.
+        static let makeList = "make_list"
         static let add = "add"
         static let setDone = "set_done"
         static let update = "update"
@@ -77,6 +80,13 @@ struct QueuedOperation: Identifiable, Equatable {
     }
 }
 
+/// A list this device made offline, and the row the server made for it.
+struct Adopted: Equatable {
+    /// The name that never changed, and the only one both ends agree on.
+    var uuid: String
+    var real: List
+}
+
 /// What happened when the queue was last drained.
 ///
 /// `sent` reached the server. `waiting` is still here — either because there was no
@@ -87,6 +97,10 @@ struct Drained: Equatable {
     var sent: Int = 0
     var waiting: Int = 0
     var lost: [String] = []
+    /// Lists this device made offline, and the rows the server made for them, paired
+    /// by the `uuid` that never changed. The caller swaps this device's own numbering
+    /// for the server's — see `Cache.adopt`.
+    var adopted: [Adopted] = []
     /// Something was refused. The one state of the three that interrupts.
     var refused: Bool = false
 }
@@ -113,6 +127,14 @@ final class Outbox: @unchecked Sendable {
     // Every one of these is called after the screen has already changed. They are the
     // promise that the change will reach the server eventually, and the only place it
     // exists until it does.
+
+    /// Says a list exists, under the name this device has been calling it by.
+    ///
+    /// Names no item, which is why `itemUUID` is empty — the wire drops it, and the
+    /// list's own `uuid` is the only name this operation needs.
+    func makeList(_ list: List) {
+        queue(Kind.makeList, "", list.id, list, ["name": list.name])
+    }
 
     /// Puts something on the list, under a name this device mints now.
     func add(uuid: String, localID: Int64, line: String, on list: List) {
@@ -246,9 +268,16 @@ final class Outbox: @unchecked Sendable {
         var sent = 0
         var lost: [String] = []
         var refused = false
+        var adopted: [Adopted] = []
 
         for answer in answers {
             if answer.landed {
+                // A list this device made has just been given its real id. Collected
+                // rather than applied here, because the cache is the caller's and this
+                // type deliberately knows nothing about it.
+                if let made = answer.list, let queued = queued.first(where: { $0.id == answer.id }) {
+                    adopted.append(Adopted(uuid: queued.listUUID, real: made))
+                }
                 forget(answer.id)
                 sent += 1
             } else if answer.keepForLater {
@@ -259,7 +288,7 @@ final class Outbox: @unchecked Sendable {
             }
         }
 
-        return Drained(sent: sent, waiting: waiting, lost: lost, refused: refused)
+        return Drained(sent: sent, waiting: waiting, lost: lost, adopted: adopted, refused: refused)
     }
 
     private func forget(_ id: String) {
