@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 struct SignInView: View {
@@ -11,19 +12,15 @@ struct SignInView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            if identity.isConfigured {
-                Button("Sign in with Google") {
-                    Task { await signIn() }
-                }
-                .buttonStyle(.borderedProminent)
-            } else {
-                // Said plainly rather than failing at the tap: a fresh clone has no
-                // client id, because the file holding it is not committed.
-                Text("This build has no Google client id yet.\nSee ios/README.md.")
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
+            // Apple's own button rather than one styled to look like it: the mark,
+            // the wording and the corner radius are the part people recognise before
+            // they read anything, and it is what the guidelines ask for besides.
+            SignInWithAppleButton(.signIn, onRequest: identity.request) { result in
+                Task { await identity.adopt(result) }
             }
+            .signInWithAppleButtonStyle(.black)
+            .frame(maxWidth: 280, maxHeight: 48)
+            .accessibilityIdentifier("sign-in")
 
             if let error = identity.lastError {
                 Text(error)
@@ -35,20 +32,4 @@ struct SignInView: View {
         .padding(32)
     }
 
-    @MainActor
-    private func signIn() async {
-        guard let root = UIApplication.shared.rootViewController else { return }
-        await identity.signIn(presenting: root)
-    }
-}
-
-extension UIApplication {
-    /// The controller to present the sign-in sheet from.
-    var rootViewController: UIViewController? {
-        connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first { $0.isKeyWindow }?
-            .rootViewController
-    }
 }

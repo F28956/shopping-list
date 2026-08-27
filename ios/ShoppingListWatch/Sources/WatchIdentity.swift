@@ -4,9 +4,15 @@ import os
 
 /// The watch's credential, which is really the phone's.
 ///
-/// There is no sign-in here and there cannot be: Google's SDK has no watchOS build,
-/// and a watch has no browser to run the flow in. This asks the phone each time and
-/// caches the answer only for as long as it is plausibly good.
+/// There is no sign-in here and there cannot be: watchOS has no Sign in with Apple
+/// sheet and a watch has no browser to run a flow in. So it asks the phone, over a
+/// link Apple has already authenticated, and keeps what it is given.
+///
+/// Kept in the keychain rather than in memory, and kept until it stops working rather
+/// than for a guessed few minutes. What the phone hands over is a session token this
+/// server issued, good for ninety days of use — so a watch that has been near its
+/// phone once goes on working in a shop with no signal and a phone left at home,
+/// which is the whole reason the watch has a cache and an outbox at all.
 @MainActor
 @Observable
 final class WatchIdentity: NSObject, WCSessionDelegate {
@@ -19,11 +25,12 @@ final class WatchIdentity: NSObject, WCSessionDelegate {
 
     private(set) var state: State = .unknown
 
-    private var cached: String?
-    /// Google ID tokens last about an hour. Well inside that, so a token is never
-    /// handed to a request that is about to be refused for being stale.
-    private var cachedUntil: Date = .distantPast
-    private static let cacheFor: TimeInterval = 30 * 60
+    private static let stored = "session.token"
+
+    private var cached: String? {
+        get { WatchKeychain.string(for: Self.stored) }
+        set { WatchKeychain.set(newValue, for: Self.stored) }
+    }
 
     override init() {
         super.init()
@@ -38,9 +45,17 @@ final class WatchIdentity: NSObject, WCSessionDelegate {
         error: Error?
     ) {}
 
-    /// A token to put in a request, or nil if the phone could not supply one.
+    /// A token to put in a request, or nil if there is none and the phone could not
+    /// supply one.
+    ///
+    /// The stored one is used without asking. Nothing here can tell whether it is
+    /// still good, and the server can — so the check is a 401, which `refused()`
+    /// handles, rather than a clock this side guessing at one.
     func token() async -> String? {
-        if let cached, cachedUntil > Date() { return cached }
+        if let cached {
+            state = .ready
+            return cached
+        }
 
         guard let fresh = await ask() else {
             state = .unavailable
@@ -48,18 +63,19 @@ final class WatchIdentity: NSObject, WCSessionDelegate {
         }
 
         cached = fresh
-        cachedUntil = Date().addingTimeInterval(Self.cacheFor)
         state = .ready
         return fresh
     }
 
-    /// Drops the cached token, so the next request fetches a new one.
+    /// Throws the token away, because the server said no.
     ///
-    /// Called when the server refuses one: the cache window is a guess about expiry,
-    /// and a 401 is the server telling us the guess was wrong.
+    /// A 401 is the only reliable news that a session has ended — revoked on the
+    /// phone, or idle past ninety days. The next request asks the phone for a new one,
+    /// and gets nowhere until the phone is in range, which is the honest state to be
+    /// in: without a credential there is nothing this watch can send.
     func refused() {
         cached = nil
-        cachedUntil = .distantPast
+        state = .unknown
     }
 
     private func ask() async -> String? {

@@ -17,39 +17,46 @@ The `.xcodeproj` is generated and not committed: a `.pbxproj` reviews badly and
 conflicts worse. `project.yml` is the thing to edit.
 
 It builds and runs against a simulator with no further setup — you will reach the
-sign-in screen and no further, because signing in needs the two values below.
+sign-in screen and no further, because signing in needs the two things below.
+
+## How signing in works
+
+**Sign in with Apple**, and then not Apple again.
+
+Apple's identity token lasts about ten minutes and cannot be refreshed silently, so it
+is a bootstrap rather than a credential: the app trades it once, at
+`POST /api/sessions`, for an opaque token this server issued. That one lives in the
+keychain, lasts ninety days of idleness, and needs no network to produce — which is
+what lets a phone that has been offline for a fortnight still open its lists.
+
+Android and the browser keep signing in with Google. The server accepts both and
+matches one person's two identities by their verified address, so the same human with
+an Android phone and a Mac has one account and one set of lists.
 
 ## The two things only you can do
 
-### 1. An iOS client id
+### 1. A team, and a device on it
 
-Google issues a different client id per platform, so the phone cannot use the web
-one. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials)
-for the same project:
+Sign in with Apple is an entitlement, and an entitlement means a real signature.
 
-- **Create credentials → OAuth client ID → iOS**
-- Bundle ID: `com.cernauskas.shoppinglist` (match `PRODUCT_BUNDLE_IDENTIFIER` in
-  `project.yml` if you change it)
+- Put your ten-character Team ID (developer.apple.com → Membership) in
+  `ios/Config.xcconfig` as `DEVELOPMENT_TEAM`.
+- Enable **Sign in with Apple** for the `com.cernauskas.shoppinglist` App ID on
+  developer.apple.com → Identifiers. Xcode will offer to do this for you the first
+  time you build with automatic signing.
+- Building for a Mac or a handset registers that device against the account; the
+  simulator needs none of this, and neither does the watch app.
 
-That gives you a client id and its *reversed* form. Put both in `ios/Config.xcconfig`
-and regenerate:
-
-```
-GOOGLE_IOS_CLIENT_ID = 000000000000-xxxx.apps.googleusercontent.com
-GOOGLE_IOS_REVERSED_CLIENT_ID = com.googleusercontent.apps.000000000000-xxxx
-```
-
-None of those are secrets: an iOS client id ships inside every copy of the app, and
-Google's iOS clients have no client secret at all — which is why the flow uses PKCE.
-
-Then tell the server to accept tokens from it, in `web/.env`:
+Then tell the server which apps to accept tokens from, in `web/.env`:
 
 ```
-GOOGLE_IOS_CLIENT_ID="000000000000-xxxx.apps.googleusercontent.com"
+APPLE_BUNDLE_IDS="com.cernauskas.shoppinglist"
 ```
 
-Without that last step the server rejects everything the phone sends: a Google token
-names the client it was minted for, and the API only accepts audiences it knows.
+Without that last step the server rejects everything the Apple apps send. A native
+Sign in with Apple token has no separate client id: its audience *is* the bundle
+identifier, which is why this is a bundle id and not something from a console. Leave
+it unset and the server still starts — it simply does not accept Apple tokens.
 
 ### 2. Reaching the server from a phone
 
@@ -74,14 +81,18 @@ wrong one.
 
 ### How it signs in
 
-It does not. Google's SDK has no watchOS build, and a watch has no browser to run the
-flow in, so the watch asks the paired phone for a current ID token over
-WatchConnectivity and calls the API itself. Asked rather than pushed: a Google ID
-token lasts about an hour, and one pushed when the phone felt like it is stale exactly
-when the watch needs it.
+It does not. watchOS has no Sign in with Apple sheet and a watch has no browser to run
+a flow in, so the watch asks the paired phone for a token over WatchConnectivity — a
+link Apple has already authenticated — and calls the API itself.
 
-The consequence is visible and deliberate: with the phone unreachable or signed out,
-the watch says "Open Shopping on your phone" rather than pretending to work.
+It then *keeps* it, in its own keychain. What the phone hands over is a session token
+good for ninety days of use, so a watch that has been near its phone once goes on
+working in a shop with no signal and the phone left at home. It throws the token away
+only when the server refuses it, which is the one reliable news that a session has
+ended.
+
+The consequence is visible and deliberate: a watch that has never been near a signed-in
+phone says "Open Shopping on your phone" rather than pretending to work.
 
 ### Building and running it
 
@@ -115,13 +126,13 @@ Sign in on the paired phone first, or the watch has nothing to ask.
 view, a context menu and an add field pinned under the list — none of which a
 stretched phone layout gives you. Everything below the views is shared byte for byte:
 `Shared/Sources` (models, API client, grouping, draft rules) and `Auth/Sources`
-(the Google identity, whose only platform difference is that the sign-in sheet hangs
-off an `NSWindow` instead of a `UIViewController`).
+(the identity, which since Sign in with Apple moved onto SwiftUI's own button has no
+platform difference left at all).
 
-It carries **the same bundle id as the phone app**, deliberately. Google's iOS OAuth
-client type covers macOS and is registered against `com.cernauskas.shoppinglist`; a
-separate identifier would need a separate client, for the same person and the same
-account.
+It carries **the same bundle id as the phone app**, deliberately. A Sign in with Apple
+token's audience is the bundle identifier, so one id means one entry in
+`APPLE_BUNDLE_IDS` and one App ID to keep the entitlement on — and it is one app to a
+person either way.
 
 ```sh
 xcodegen generate

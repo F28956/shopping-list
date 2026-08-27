@@ -1,4 +1,4 @@
-import GoogleSignIn
+import AuthenticationServices
 import SwiftUI
 
 @main
@@ -11,7 +11,6 @@ struct ShoppingListMacApp: App {
                 .environment(identity)
                 .frame(minWidth: 620, minHeight: 420)
                 .task { await identity.restore() }
-                .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
         }
         // A list is a document-shaped thing: one window, resizable, remembered.
         .defaultSize(width: 820, height: 560)
@@ -55,16 +54,15 @@ struct MacSignInView: View {
             Text("The same lists as the phone, with a keyboard.")
                 .foregroundStyle(.secondary)
 
-            if identity.isConfigured {
-                Button("Sign in with Google") { Task { await signIn() } }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-            } else {
-                Text("This build has no Google client id yet.\nSee ios/README.md.")
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
+            // Apple's own button rather than one styled to look like it: the mark,
+            // the wording and the corner radius are the part people recognise before
+            // they read anything, and it is what the guidelines ask for besides.
+            SignInWithAppleButton(.signIn, onRequest: identity.request) { result in
+                Task { await identity.adopt(result) }
             }
+            .signInWithAppleButtonStyle(.automatic)
+            .frame(width: 240, height: 40)
+            .accessibilityIdentifier("sign-in")
 
             if let error = identity.lastError {
                 Text(error)
@@ -75,12 +73,4 @@ struct MacSignInView: View {
         .padding(40)
     }
 
-    @MainActor
-    private func signIn() async {
-        // The sheet hangs off a window here rather than a view controller. Whichever
-        // is in front will do: there is only ever one.
-        guard let window = NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first
-        else { return }
-        await identity.signIn(presenting: window)
-    }
 }

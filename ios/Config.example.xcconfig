@@ -1,14 +1,13 @@
 // Copy to Config.xcconfig and fill in. That copy is gitignored.
 //
-// None of these are secrets. An iOS OAuth client id is embedded in every copy of the
-// app and is public by design - it identifies the app, it does not authorise it.
-// Google's iOS clients have no client secret at all, which is why the flow uses PKCE.
+// Neither of these is a secret. A team identifier is stamped into every signed build
+// and is visible in the app bundle; it identifies who signed the app, it does not
+// authorise anything.
 
-// From the Google Cloud console: Credentials -> OAuth client ID -> iOS.
-GOOGLE_IOS_CLIENT_ID =
-// The same value with its parts reversed, which the console shows you. It is the URL
-// scheme Google redirects back to, so sign-in cannot return without it.
-GOOGLE_IOS_REVERSED_CLIENT_ID =
+// The ten characters from developer.apple.com -> Membership. Sign in with Apple
+// checks the entitlement against a provisioning profile, so a build with the wrong
+// team here fails at the button rather than at the build.
+DEVELOPMENT_TEAM = ABCDE12345
 
 // Where the server is. `localhost` on a phone is the phone; the simulator shares the
 // Mac's network, so localhost is right there and wrong on a handset.

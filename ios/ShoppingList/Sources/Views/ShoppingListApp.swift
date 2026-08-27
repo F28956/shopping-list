@@ -1,4 +1,3 @@
-import GoogleSignIn
 import SwiftUI
 
 @main
@@ -20,7 +19,6 @@ struct ShoppingListApp: App {
                 .environment(identity)
                 .task { await identity.restore() }
                 // The sign-in flow leaves the app and comes back through this URL.
-                .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
         }
     }
 }

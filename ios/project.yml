@@ -10,6 +10,14 @@ configFiles:
   Debug: Config.xcconfig
   Release: Config.xcconfig
 
+# Every target signs with the same team, set once here rather than per target.
+# The value is in Config.xcconfig, which is not committed -- a different developer
+# account means a different ten characters and nothing else.
+settings:
+  base:
+    DEVELOPMENT_TEAM: $(DEVELOPMENT_TEAM)
+    CODE_SIGN_STYLE: Automatic
+
 options:
   bundleIdPrefix: com.cernauskas
   deploymentTarget:
@@ -19,9 +27,6 @@ options:
   createIntermediateGroups: true
 
 packages:
-  GoogleSignIn:
-    url: https://github.com/google/GoogleSignIn-iOS
-    from: "7.1.0"
   # SQLite with the SQL written down, for the local copy of what the server holds.
   # SwiftData was the other candidate and is built in; see docs/offline.md for why
   # this won. Not a dependency of the watch app, which is online-only by design.
@@ -40,10 +45,6 @@ targets:
       - path: UI/Sources
       - path: Store/Sources
     dependencies:
-      - package: GoogleSignIn
-        product: GoogleSignIn
-      - package: GoogleSignIn
-        product: GoogleSignInSwift
       - package: GRDB
         product: GRDB
       # Embedded, which is what puts the watch app on the watch: watchOS installs it
@@ -57,14 +58,11 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        # Where the app looks for the server and which Google client it is. Both are
-        # read at runtime from the bundle so that pointing the app at a different
-        # server is a build setting rather than a code change.
+        # Where the app looks for the server, read at runtime from the bundle so
+        # that pointing it somewhere else is a build setting rather than a code
+        # change. There is no client id beside it any more: Sign in with Apple
+        # identifies a native app by its bundle identifier and its entitlement.
         ShoppingListAPIBaseURL: $(SHOPPING_LIST_API_BASE_URL)
-        GIDClientID: $(GOOGLE_IOS_CLIENT_ID)
-        CFBundleURLTypes:
-          - CFBundleURLSchemes:
-              - $(GOOGLE_IOS_REVERSED_CLIENT_ID)
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cernauskas.shoppinglist
@@ -72,12 +70,11 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
-        # SHOPPING_LIST_API_BASE_URL, GOOGLE_IOS_CLIENT_ID and
-        # GOOGLE_IOS_REVERSED_CLIENT_ID deliberately have no default here. A target
-        # setting outranks the project-level xcconfig, so defining them would
-        # silently override Config.xcconfig with no sign the file was ignored.
-        # They come from Config.xcconfig alone; the app copes with them being
-        # absent (Config.apiBaseURL falls back, Identity.isConfigured reports false).
+        # SHOPPING_LIST_API_BASE_URL and DEVELOPMENT_TEAM deliberately have no
+        # default here. A target setting outranks the project-level xcconfig, so
+        # defining them would silently override Config.xcconfig with no sign the
+        # file was ignored. They come from Config.xcconfig alone.
+        CODE_SIGN_ENTITLEMENTS: ShoppingList/ShoppingList.entitlements
 
   # A single watchOS app target -- the old app-plus-extension pair has not been
   # needed since watchOS 9, and the deployment target below is well past that.
@@ -131,10 +128,6 @@ targets:
       - path: UI/Sources
       - path: Store/Sources
     dependencies:
-      - package: GoogleSignIn
-        product: GoogleSignIn
-      - package: GoogleSignIn
-        product: GoogleSignInSwift
       - package: GRDB
         product: GRDB
     info:
@@ -142,28 +135,29 @@ targets:
       properties:
         CFBundleDisplayName: Shopping
         ShoppingListAPIBaseURL: $(SHOPPING_LIST_API_BASE_URL)
-        GIDClientID: $(GOOGLE_IOS_CLIENT_ID)
-        CFBundleURLTypes:
-          - CFBundleURLSchemes:
-              - $(GOOGLE_IOS_REVERSED_CLIENT_ID)
     settings:
       base:
-        # The same identifier as the phone app, deliberately. Google's iOS OAuth
-        # client covers macOS, and it is registered against this bundle id -- a
-        # separate one would need a separate client, for the same person and the
-        # same account.
+        # The same identifier as the phone app, deliberately. A Sign in with Apple
+        # token's audience is the bundle id, so sharing one means the server accepts
+        # both apps' tokens with a single entry in APPLE_BUNDLE_IDS -- and it is one
+        # app to a person either way.
         PRODUCT_BUNDLE_IDENTIFIER: com.cernauskas.shoppinglist
+        CODE_SIGN_ENTITLEMENTS: Mac/ShoppingListMac.entitlements
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
         # Not sandboxed. This is a personal app run from a local build against a
         # server on localhost; sandboxing it would mean an entitlements file and a
         # keychain group to hold a token that is already the phone's.
+        #
+        # Signed for real all the same: Sign in with Apple checks the entitlement
+        # against a provisioning profile, so an ad-hoc signature would fail at the
+        # button rather than at the build.
         ENABLE_HARDENED_RUNTIME: "NO"
 
   # Drives the Mac app the way a person does. Against `-uiTesting`, which swaps the
   # wire for an in-memory world and the sign-in for a signed-in person -- a UI test
-  # cannot complete a Google flow, and should not need a server or a network to say
+  # cannot complete a Sign in with Apple flow, and should not need a server or a network to say
   # what the app does.
   MacUITests:
     type: bundle.ui-testing
