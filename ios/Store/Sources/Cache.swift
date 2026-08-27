@@ -171,6 +171,8 @@ final class Cache: @unchecked Sendable {
     }
 
     func remember(lists: [List]) {
+        defer { announce() }
+
         // One transaction, because delete-then-insert has a moment where the cache
         // says there are no lists, and a read landing in that moment is the very bug
         // this table exists to prevent.
@@ -283,6 +285,8 @@ final class Cache: @unchecked Sendable {
     }
 
     func remember(items: [Item], on list: List) {
+        defer { announce() }
+
         write { db in
             try db.execute(sql: "DELETE FROM items WHERE list_id = ?", arguments: [list.id])
             for (at, item) in items.enumerated() {
@@ -405,4 +409,20 @@ final class Cache: @unchecked Sendable {
         guard let queue else { return }
         try? queue.write(work)
     }
+
+    /// Says the cache changed, because it is a database and nothing observes a
+    /// database.
+    ///
+    /// One announcement rather than a call at each of the places that write, because
+    /// the places that write are the places somebody adds a fourth of without knowing
+    /// that anything downstream cared. What listens today is the watch link -- the
+    /// phone is the watch's server, so a change here is news the wrist is waiting for.
+    private func announce() {
+        NotificationCenter.default.post(name: .cacheChanged, object: nil)
+    }
+}
+
+extension Notification.Name {
+    /// The lists or items this device holds have changed.
+    static let cacheChanged = Notification.Name("shoppinglist.cacheChanged")
 }

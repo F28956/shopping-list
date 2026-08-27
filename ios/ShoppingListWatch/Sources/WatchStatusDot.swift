@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Whether this watch is in step with the server, as one dot.
+/// Whether this watch is in step with its phone, as one dot.
 ///
 /// A wrist has no room for a sentence. The phones can afford "Offline. 2 changes
 /// waiting to be sent." because they have a line to spare; here that line costs a row,
@@ -8,25 +8,23 @@ import SwiftUI
 ///
 /// Two colours, and the reading is deliberately coarse:
 ///
-/// * **Green** — what is on screen came from the server and nothing is waiting to go
-///   back. Everything you can see is true and everything you have done has landed.
-/// * **Orange** — one of those is not true: either something you did is still queued,
-///   or the last look at the server failed and this list is from memory.
+/// * **Green** — everything you have done here has reached the phone.
+/// * **Orange** — something you did is still waiting for the phone to come into range.
 ///
-/// Folding both into one colour is the point. The difference between them is not
-/// something anybody acts on mid-shop — either way the answer is "carry on, it will
-/// sort itself out" — and a third colour would be a legend to learn for no decision.
+/// There is no "offline" any more, and its absence is the point. This watch does not
+/// talk to a server, so it cannot be out of touch with one; the only question it can
+/// answer is whether the phone has heard, and that is what the dot says.
 struct WatchStatusDot: View {
-    /// Changes made here that have not reached the server.
+    /// Ticks made here that have not reached the phone.
     var waiting: Int
-    /// Whether the last look at the server failed.
-    var offline: Bool
-
-    private var inStep: Bool { waiting == 0 && !offline }
+    /// Whether there is a server anywhere in this arrangement, which changes what
+    /// "reached the phone" means — with no server the phone is the end of the journey,
+    /// so nothing is in transit to anywhere else.
+    var onDeviceOnly: Bool
 
     var body: some View {
         Circle()
-            .fill(inStep ? Color.green : Color.orange)
+            .fill(waiting == 0 ? Color.green : Color.orange)
             .frame(width: 8, height: 8)
             .accessibilityLabel(said)
     }
@@ -34,10 +32,9 @@ struct WatchStatusDot: View {
     /// Spoken in full, because the thing that makes a dot right on a wrist is exactly
     /// what makes it useless to somebody reading by ear.
     private var said: String {
-        switch (offline, waiting) {
-        case (false, 0): return "Up to date"
-        case (true, 0): return "Offline. Showing what was last loaded."
-        case (_, let n): return "^[\(n) change](inflect: true) waiting to be sent"
+        if waiting == 0 {
+            return onDeviceOnly ? "On your phone" : "Up to date"
         }
+        return "^[\(waiting) change](inflect: true) waiting for your phone"
     }
 }

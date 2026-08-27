@@ -3,14 +3,15 @@ import SwiftUI
 @main
 struct ShoppingListApp: App {
     @State private var identity = Identity()
-    /// Held for the life of the app, because it is a WCSession delegate: dropped, the
-    /// watch's requests would arrive at nobody.
-    @State private var watch: PhoneLink
 
     init() {
-        let identity = Identity()
-        _identity = State(initialValue: identity)
-        _watch = State(initialValue: PhoneLink(token: { await identity.token() }))
+        _identity = State(initialValue: Identity())
+
+        // The phone is the watch's server -- see `WatchLink`. Started here rather than
+        // held as state: it is a singleton because `WCSession` has one delegate, and a
+        // second one would silently take over from the first.
+        PhoneLink.shared.apply = { tick in await WatchTicks.apply(tick) }
+        PhoneLink.shared.start()
     }
 
     var body: some Scene {

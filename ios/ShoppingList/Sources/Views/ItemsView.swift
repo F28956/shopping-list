@@ -121,6 +121,20 @@ struct ItemsView: View {
                 try await api.suggestions(matching: wanted, on: list)
             }
         }
+        // Something changed the cache from outside this screen -- in practice a tick
+        // that arrived from the watch, which lands in the cache with no view involved.
+        // Without this the phone sat there showing the row un-ticked while its own
+        // database said otherwise, which looked exactly like the watch having failed.
+        //
+        // Safe against the writes this screen makes itself: re-reading is idempotent
+        // and does not write back, so `show` -> cache -> here -> `items` settles in one
+        // pass with nothing to announce.
+        .onReceive(NotificationCenter.default.publisher(for: .cacheChanged)) { _ in
+            let remembered = cache.items(on: list)
+            guard !remembered.isEmpty || items.isEmpty else { return }
+            items = remembered
+            refreshUnsent()
+        }
         .navigationTitle(list.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

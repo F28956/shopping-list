@@ -146,8 +146,14 @@ final class Outbox: @unchecked Sendable {
         queue(Kind.add, uuid, localID, list, ["line": line])
     }
 
-    func setDone(_ item: Item, on list: List, done: Bool) {
-        queue(Kind.setDone, item.uuid, item.id, list, ["done": done])
+    /// Crosses something off, or puts it back.
+    ///
+    /// `at` is when it *happened*, which is not always now: a tick made on a watch
+    /// reaches the phone whenever the two are next in range, and the server's ordering
+    /// rules run on when somebody decided rather than on when the news arrived. See
+    /// `docs/offline.md`.
+    func setDone(_ item: Item, on list: List, done: Bool, at: Date = Date()) {
+        queue(Kind.setDone, item.uuid, item.id, list, ["done": done], at: at)
     }
 
     /// Corrects what somebody typed, carrying what the row looked like at the time.
@@ -208,7 +214,8 @@ final class Outbox: @unchecked Sendable {
         _ itemUUID: String,
         _ itemID: Int64,
         _ list: List,
-        _ fields: [String: Any]
+        _ fields: [String: Any],
+        at: Date = Date()
     ) {
         let payload = (try? JSONSerialization.data(withJSONObject: fields))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
@@ -222,7 +229,7 @@ final class Outbox: @unchecked Sendable {
                 """,
                 arguments: [
                     UUID().uuidString.lowercased(), kind, list.id, list.uuid,
-                    itemID, itemUUID, payload, Date(),
+                    itemID, itemUUID, payload, at,
                 ]
             )
         }
