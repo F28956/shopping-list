@@ -144,14 +144,20 @@ struct MacItemsView: View {
             // wants pressing. Asked for where it exists, and simply not asked for
             // where it does not -- on 14 and 15 a toolbar item has no background to
             // hide, so the dot already sits bare.
-            if #available(macOS 26.0, *) {
-                ToolbarItem(placement: .primaryAction) {
-                    StatusDot(waiting: waiting, offline: offline, onDeviceOnly: onDeviceOnly)
-                }
-                .sharedBackgroundVisibility(.hidden)
-            } else {
-                ToolbarItem(placement: .primaryAction) {
-                    StatusDot(waiting: waiting, offline: offline, onDeviceOnly: onDeviceOnly)
+            // Absent entirely with no server -- there is no question for a dot to
+            // answer, see `StatusDot`. The whole item goes rather than its contents,
+            // for the same reason the background is hidden below: an empty item is
+            // still a shape.
+            if !onDeviceOnly {
+                if #available(macOS 26.0, *) {
+                    ToolbarItem(placement: .primaryAction) {
+                        StatusDot(waiting: waiting, offline: offline)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .primaryAction) {
+                        StatusDot(waiting: waiting, offline: offline)
+                    }
                 }
             }
         }
@@ -632,13 +638,18 @@ struct MacItemsView: View {
     /// — and so that a Mac which later gains a server simply overwrites it with that
     /// server's answer, ids and all. The ids are the same ids; see `Reference`.
     private func seedReference() {
+        // The cache first, and only then the bundle -- see the phone's copy for the
+        // bug this shape exists to prevent: seeding over a stored order silently
+        // undoes the aisle order somebody arranged.
         if units.isEmpty {
-            units = Reference.units
-            cache.remember(units: units)
+            let remembered = cache.units()
+            units = remembered.isEmpty ? Reference.units : remembered
+            if remembered.isEmpty { cache.remember(units: units) }
         }
         if tags.isEmpty {
-            tags = Reference.tags
-            cache.remember(tags: tags, on: list)
+            let remembered = cache.tags(on: list)
+            tags = remembered.isEmpty ? Reference.tags : remembered
+            if remembered.isEmpty { cache.remember(tags: tags, on: list) }
         }
     }
 

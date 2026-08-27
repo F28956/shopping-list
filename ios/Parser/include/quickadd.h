@@ -16,4 +16,8 @@ char *quickadd_parse(const char *line, const char *units_json);
 /// Hands back what `quickadd_parse` returned. NULL is ignored.
 void quickadd_free(char *answer);
 
+/// Ranks remembered names against something part-typed. Takes and returns JSON; see
+/// the Rust side for the shape. The answer is yours, and goes back to `quickadd_free`.
+char *quickadd_suggest(const char *input);
+
 #endif

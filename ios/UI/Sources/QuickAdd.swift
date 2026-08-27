@@ -42,4 +42,44 @@ enum QuickAdd {
         /// The unit the line named, in the form it was named in, or `nil`.
         var unit: String?
     }
+
+    /// The remembered names worth offering for something part-typed, best first.
+    ///
+    /// The store is the device's own — it is that person's shopping and there is
+    /// nowhere else for it to live — but the **policy is not**. Which of "milk" and
+    /// "milk chocolate" comes first when you have typed `mil` is a judgement about
+    /// how often and how recently each was bought, and a judgement made twice is a
+    /// judgement that will differ. This is the server's `fuzzy` and its
+    /// `history_rank`, compiled in.
+    static func suggest(
+        _ query: String,
+        from remembered: [Cache.Remembered],
+        now: Date = Date()
+    ) -> [String] {
+        let candidates = remembered.map {
+            ["name": $0.name, "uses": $0.uses, "last_used_at": $0.lastUsedAt] as [String: Any]
+        }
+        let input: [String: Any] = [
+            "query": query,
+            // Passed rather than read across the boundary: the Rust side has no clock,
+            // which is what lets a test say what "recently" means.
+            "now": Int64(now.timeIntervalSince1970),
+            "candidates": candidates,
+        ]
+
+        guard let json = try? JSONSerialization.data(withJSONObject: input),
+              let text = String(data: json, encoding: .utf8)
+        else { return [] }
+
+        guard let answer = quickadd_suggest(text) else { return [] }
+        defer { quickadd_free(answer) }
+
+        let data = Data(String(cString: answer).utf8)
+        let decoded = try? JSONDecoder().decode(Suggested.self, from: data)
+        return decoded?.names ?? []
+    }
+
+    private struct Suggested: Decodable {
+        var names: [String]
+    }
 }

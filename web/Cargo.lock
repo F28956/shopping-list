@@ -2296,6 +2296,7 @@ version = "0.1.0"
 dependencies = [
  "jni 0.21.1",
  "parsing",
+ "serde",
  "serde_json",
 ]
 

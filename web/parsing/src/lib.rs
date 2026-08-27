@@ -11,4 +11,5 @@
 //! caller had to change.
 
 pub mod fuzzy;
+pub mod history_rank;
 pub mod quick_add;

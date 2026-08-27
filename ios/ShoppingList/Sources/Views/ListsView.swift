@@ -192,8 +192,13 @@ struct ListsView: View {
             // already is rather than at the top of a tall phone.
             .overlay(alignment: .bottomTrailing) { newListButton }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    StatusDot(waiting: queued, offline: offline, onDeviceOnly: onDeviceOnly)
+                // The item and not just its contents: a toolbar item draws its own
+                // background on iOS 26, so an empty dot would leave a chip with
+                // nothing in it.
+                if !onDeviceOnly {
+                    ToolbarItem(placement: .topBarLeading) {
+                        StatusDot(waiting: queued, offline: offline)
+                    }
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     // Nobody is signed in on a device kept to itself, so there is

@@ -130,3 +130,73 @@ pub mod android {
         }
     }
 }
+
+/// Ranks remembered names for something part-typed.
+///
+/// The clients used to have no answer here at all: suggestions came from the server,
+/// so a device with none offered nothing, and the history that makes `milk` arrive in
+/// pints under dairy simply did not exist. The store is the device's own -- it is that
+/// person's shopping and there is nowhere else for it to live -- but **the policy is
+/// not**: which of "milk" and "milk chocolate" comes first when you have typed `mil`
+/// is a judgement, and a judgement made twice is a judgement that will differ.
+///
+/// `input` is the query and the candidates together:
+///
+/// ```json
+/// {"query": "mil", "now": 1756300000,
+///  "candidates": [{"name": "milk", "uses": 12, "last_used_at": 1756200000}]}
+/// ```
+///
+/// The answer is the names that matched, best first: `{"names": ["milk"]}`.
+/// Matching is `fuzzy` and ordering is `history_rank`, both the server's own.
+///
+/// # Safety
+///
+/// As [`quickadd_parse`]: nul-terminated UTF-8 in, a string for [`quickadd_free`] out.
+/// Never returns null; input it cannot read answers with no names rather than
+/// pretending the history is empty in some more interesting way.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn quickadd_suggest(input: *const c_char) -> *mut c_char {
+    let parsed: Option<Query> = unsafe { borrow(input) }.and_then(|raw| serde_json::from_str(raw).ok());
+
+    let names = match parsed {
+        None => Vec::new(),
+        Some(query) => {
+            let matched: Vec<parsing::history_rank::Candidate<String>> = query
+                .candidates
+                .into_iter()
+                // Scored, then discarded: `rank` decides the order and a fuzzy score
+                // is only about whether it belongs in the running at all. Sorting by
+                // it instead would put a close spelling above something bought weekly.
+                .filter(|c| parsing::fuzzy::score(&query.query, &c.name).is_some())
+                .map(|c| parsing::history_rank::Candidate {
+                    value: c.name,
+                    uses: c.uses,
+                    last_used_at: c.last_used_at,
+                })
+                .collect();
+
+            parsing::history_rank::rank(matched, query.now)
+        }
+    };
+
+    CString::new(serde_json::json!({ "names": names }).to_string())
+        .unwrap()
+        .into_raw()
+}
+
+#[derive(serde::Deserialize)]
+struct Query {
+    query: String,
+    /// Unix seconds. Passed in rather than read here: this crate has no clock, and a
+    /// caller that wants deterministic answers in a test should be able to have them.
+    now: i64,
+    candidates: Vec<Remembered>,
+}
+
+#[derive(serde::Deserialize)]
+struct Remembered {
+    name: String,
+    uses: i64,
+    last_used_at: i64,
+}

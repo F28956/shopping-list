@@ -74,8 +74,8 @@ mod tests {
     }
 
     #[rstest]
-    #[tokio::test]
-    async fn more_uses_wins_when_ages_match() {
+    #[test]
+    fn more_uses_wins_when_ages_match() {
         let ranked = rank(
             vec![candidate("rare", 1, 7.0), candidate("staple", 40, 7.0)],
             NOW,
@@ -85,8 +85,8 @@ mod tests {
     }
 
     #[rstest]
-    #[tokio::test]
-    async fn recent_wins_when_counts_match() {
+    #[test]
+    fn recent_wins_when_counts_match() {
         let ranked = rank(
             vec![candidate("stale", 5, 120.0), candidate("fresh", 5, 1.0)],
             NOW,
@@ -97,8 +97,8 @@ mod tests {
 
     /// The case the whole formula exists for: a weekly staple beats a one-week burst.
     #[rstest]
-    #[tokio::test]
-    async fn a_long_habit_beats_a_short_burst() {
+    #[test]
+    fn a_long_habit_beats_a_short_burst() {
         let ranked = rank(
             vec![
                 // bought five times in the last few days and then never again
@@ -114,8 +114,8 @@ mod tests {
 
     /// And the other direction: an abandoned staple sinks below current shopping.
     #[rstest]
-    #[tokio::test]
-    async fn an_abandoned_staple_sinks() {
+    #[test]
+    fn an_abandoned_staple_sinks() {
         let ranked = rank(
             vec![
                 // bought weekly for a year, but not for six months
@@ -130,8 +130,8 @@ mod tests {
     }
 
     #[rstest]
-    #[tokio::test]
-    async fn a_use_is_worth_half_after_one_half_life() {
+    #[test]
+    fn a_use_is_worth_half_after_one_half_life() {
         let fresh = candidate("a", 8, 0.0);
         let aged = candidate("b", 8, HALF_LIFE_DAYS);
 
@@ -145,8 +145,8 @@ mod tests {
 
     /// A clock skew must not park a row at the top forever.
     #[rstest]
-    #[tokio::test]
-    async fn a_future_timestamp_scores_as_now() {
+    #[test]
+    fn a_future_timestamp_scores_as_now() {
         let future = Candidate {
             value: "tomorrow".to_string(),
             uses: 1,
@@ -160,8 +160,8 @@ mod tests {
     /// Stability matters: a suggestion list that reshuffles between renders moves the
     /// thing the person was reaching for.
     #[rstest]
-    #[tokio::test]
-    async fn equal_candidates_keep_a_stable_order() {
+    #[test]
+    fn equal_candidates_keep_a_stable_order() {
         let a = rank(
             vec![candidate("pears", 3, 5.0), candidate("apples", 3, 5.0)],
             NOW,
@@ -176,8 +176,8 @@ mod tests {
     }
 
     #[rstest]
-    #[tokio::test]
-    async fn nothing_ranks_to_nothing() {
+    #[test]
+    fn nothing_ranks_to_nothing() {
         assert!(rank(Vec::<Candidate<String>>::new(), NOW).is_empty());
     }
 }

@@ -151,8 +151,119 @@ final class Cache: @unchecked Sendable {
             }
         }
 
+        // What this person buys, and what they file it under.
+        //
+        // The server keeps one of these per person per list and uses it for two
+        // things: autocomplete, and filling in what a re-typed line does not say --
+        // `milk` arrives in pints, under dairy, having typed four letters. On a device
+        // with no server neither happened, because neither had anywhere to live.
+        // Re-adding something you had just removed brought it back bare.
+        //
+        // **Not disposable, unlike the rest of the cache.** A server can hand back the
+        // lists; nothing can hand back a history the device built on its own. It shares
+        // the file with the outbox for that reason, and is migrated rather than dropped.
+        migrator.registerMigration("v3-history") { db in
+            try db.create(table: "history") { t in
+                t.column("list_id", .integer).notNull()
+                // Stored lowercased and matched that way: somebody typing `Milk` today
+                // and `milk` tomorrow means the same habit.
+                //
+                // Keyed by the pair, because the same name on two lists is two habits:
+                // milk in pints at home, milk in litres for the office.
+                t.column("name", .text).notNull()
+                t.column("unit_id", .integer)
+                t.column("tag_ids", .text).notNull().defaults(to: "")
+                t.column("uses", .integer).notNull().defaults(to: 0)
+                // Unix seconds, which is what the shared ranking policy wants.
+                t.column("last_used_at", .integer).notNull().defaults(to: 0)
+                t.primaryKey(["list_id", "name"])
+            }
+        }
+
         try? migrator.migrate(queue)
     }
+
+    // MARK: - What this person buys
+
+    /// One remembered line: what it was called, and what it turned out to be.
+    struct Remembered: Equatable {
+        var name: String
+        var unitID: Int64?
+        var tagIDs: [Int64]
+        var uses: Int64
+        /// Unix seconds.
+        var lastUsedAt: Int64
+    }
+
+    /// Records that this was bought, and what it was.
+    ///
+    /// Called after an add and after an edit, which is where the server records it too:
+    /// what somebody corrected an item *to* is a better memory than what they first
+    /// typed. The count only rises on an add -- editing one row twice is one intention,
+    /// not two.
+    func remember(_ item: Item, on list: List, isNew: Bool) {
+        let tags = item.tagIDs.map(String.init).joined(separator: ",")
+        let keepOldTags = tags.isEmpty && isNew
+        write { db in
+            try db.execute(
+                sql: HistorySQL.remember,
+                arguments: [
+                    list.id,
+                    item.name.lowercased(),
+                    item.unitID,
+                    tags,
+                    isNew ? 1 : 0,
+                    Int64(Date().timeIntervalSince1970),
+                    keepOldTags,
+                    isNew ? 1 : 0,
+                ]
+            )
+        }
+    }
+
+    /// What this list's history knows about a name, if anything.
+    func remembered(_ name: String, on list: List) -> Remembered? {
+        read { db in
+            try Row.fetchAll(
+                db,
+                sql: "SELECT * FROM history WHERE list_id = ? AND name = ?",
+                arguments: [list.id, name.lowercased()]
+            ).map(Self.remembered)
+        }.first
+    }
+
+    /// Everything this list's history holds, for the ranker to sort.
+    func history(on list: List) -> [Remembered] {
+        read { db in
+            try Row.fetchAll(
+                db,
+                sql: "SELECT * FROM history WHERE list_id = ?",
+                arguments: [list.id]
+            ).map(Self.remembered)
+        }
+    }
+
+    /// Forgets one remembered line -- the way back from a typo, as the server has.
+    func forget(_ name: String, on list: List) {
+        write { db in
+            try db.execute(
+                sql: "DELETE FROM history WHERE list_id = ? AND name = ?",
+                arguments: [list.id, name.lowercased()]
+            )
+        }
+    }
+
+    private static func remembered(_ row: Row) -> Remembered {
+        let tags: String = row["tag_ids"]
+        return Remembered(
+            name: row["name"],
+            unitID: row["unit_id"],
+            tagIDs: tags.split(separator: ",").compactMap { Int64($0) },
+            uses: row["uses"],
+            lastUsedAt: row["last_used_at"]
+        )
+    }
+
 
     // MARK: - Lists
 
@@ -425,4 +536,20 @@ final class Cache: @unchecked Sendable {
 extension Notification.Name {
     /// The lists or items this device holds have changed.
     static let cacheChanged = Notification.Name("shoppinglist.cacheChanged")
+}
+
+/// The one statement worth naming, because it carries a rule rather than a shape.
+private enum HistorySQL {
+    /// Upsert, with one conditional: an **add** that mentions no aisle must not erase
+    /// what the last one learned, while an **edit** that clears them is somebody
+    /// saying "not there" and is obeyed.
+    static let remember = """
+        INSERT INTO history (list_id, name, unit_id, tag_ids, uses, last_used_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(list_id, name) DO UPDATE SET
+            unit_id = COALESCE(excluded.unit_id, history.unit_id),
+            tag_ids = CASE WHEN ? THEN history.tag_ids ELSE excluded.tag_ids END,
+            uses = history.uses + ?,
+            last_used_at = excluded.last_used_at
+        """
 }

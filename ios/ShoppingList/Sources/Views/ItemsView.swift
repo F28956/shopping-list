@@ -118,7 +118,22 @@ struct ItemsView: View {
         }
         .onChange(of: line) { _, typed in
             suggestions.update(typed: typed) { wanted in
-                try await api.suggestions(matching: wanted, on: list)
+                // The server's history when there is a server, and this device's own
+                // when there is not. Autocomplete used to be the server's alone, so a
+                // device with none offered nothing at all -- and the history that makes
+                // a re-typed `milk` arrive in pints under dairy had nowhere to live.
+                //
+                // Falling back on a failure as well as on absence: a history that
+                // vanishes in a shop with no signal is a history that is missing
+                // exactly when somebody is typing into a phone one-handed.
+                guard !ServerDirectory.isOnDeviceOnly else {
+                    return QuickAdd.suggest(wanted, from: cache.history(on: list))
+                }
+                do {
+                    return try await api.suggestions(matching: wanted, on: list)
+                } catch {
+                    return QuickAdd.suggest(wanted, from: cache.history(on: list))
+                }
             }
         }
         // Something changed the cache from outside this screen -- in practice a tick
@@ -451,20 +466,32 @@ struct ItemsView: View {
         // phone, so what appears in this row is what the server would have said and
         // the reload has nothing to correct.
         let parsed = QuickAdd.parse(typed, units: units.map(\.name))
+
+        // What this list already knows about that name. The server does the same two
+        // things with its own history and they are the difference between a history
+        // that only autocompletes and one that pays back: `milk` arrives in pints,
+        // under dairy, having typed four letters. Without it a re-added item came back
+        // bare -- somebody who removed milk and typed it again lost its aisle.
+        let remembered = cache.remembered(parsed.name, on: list)
+
         let uuid = UUID().uuidString.lowercased()
         let local = Item(
             id: -Int64(Date().timeIntervalSince1970 * 1000),
             uuid: uuid,
             name: parsed.name,
             amount: parsed.amount,
+            // The line first, then the memory. Somebody who spelled a unit out meant
+            // it; somebody who did not is being offered what they used last time.
+            //
             // Matched case-insensitively, because the parser answers with the unit as
-            // the line spelled it -- somebody who typed `2 KG apples` named the same
-            // unit as somebody who typed `kg`.
-            unitID: units.first { $0.name.lowercased() == parsed.unit?.lowercased() }?.id,
+            // the line spelled it -- `2 KG apples` names the same unit as `2 kg`.
+            unitID: units.first { $0.name.lowercased() == parsed.unit?.lowercased() }?.id
+                ?? remembered?.unitID,
             doneAt: nil,
-            tagIDs: []
+            tagIDs: remembered?.tagIDs ?? []
         )
         cache.outbox.add(uuid: uuid, localID: local.id, line: typed, on: list)
+        cache.remember(local, on: list, isNew: true)
         show { $0 + [local] }
         await drain()
     }
@@ -544,6 +571,23 @@ struct ItemsView: View {
         for tag in target.attached where !edit.tagIDs.contains(tag.id) {
             cache.outbox.tag(target.item, on: list, tagID: tag.id, attached: false)
         }
+
+        // What somebody corrected an item *to* is a better memory than what they first
+        // typed, which is why the server records history here as well as on an add.
+        // The count does not rise: editing one row twice is one intention.
+        cache.remember(
+            Item(
+                id: target.item.id,
+                uuid: target.item.uuid,
+                name: edit.name,
+                amount: edit.amount,
+                unitID: edit.unitID,
+                doneAt: target.item.doneAt,
+                tagIDs: Array(edit.tagIDs)
+            ),
+            on: list,
+            isNew: false
+        )
 
         show { rows in
             rows.map {
@@ -862,13 +906,23 @@ struct ItemsView: View {
     /// with that server's answer, ids and all. The ids are the same ids; see
     /// `Reference`.
     private func seedReference() {
+        // The cache first, and only then the bundle. Checking the *view's* state was
+        // the bug: this runs from its own `.task`, which races the one that fills that
+        // state from the cache, so it usually found it empty and wrote the shipped
+        // order over the top. On a device with no server that quietly undid the aisle
+        // order somebody had arranged, every time they opened a list.
+        //
+        // The bundled set is a first run and nothing else. Once anything is stored --
+        // a server's answer, or a walk somebody chose -- that is the authority.
         if units.isEmpty {
-            units = Reference.units
-            cache.remember(units: units)
+            let remembered = cache.units()
+            units = remembered.isEmpty ? Reference.units : remembered
+            if remembered.isEmpty { cache.remember(units: units) }
         }
         if tags.isEmpty {
-            tags = Reference.tags
-            cache.remember(tags: tags, on: list)
+            let remembered = cache.tags(on: list)
+            tags = remembered.isEmpty ? Reference.tags : remembered
+            if remembered.isEmpty { cache.remember(tags: tags, on: list) }
         }
     }
 
