@@ -8,9 +8,12 @@
 //! request. Deciding which side wins is a real decision, and until it is made this
 //! stays read-only rather than pretending.
 //!
-//! `users::close_account` is likewise not wired: it cascades away every list, item
-//! and note the person owns, and an irreversible DELETE deserves a confirmation flow
-//! designed on purpose rather than a route added in passing.
+//! `DELETE /api/me` closes an account, and is deliberately blunt about it: the
+//! confirmation belongs in the app, in front of the person, and a second round trip
+//! here would only be a confirmation that a script could also send. What this end
+//! guarantees instead is that it cannot leave anybody worse off than they asked for —
+//! a shared list changes hands rather than vanishing, and the last owner of the server
+//! is refused. See `users::close_account`.
 
 use std::convert::Infallible;
 use std::time::Duration;
@@ -18,6 +21,7 @@ use std::time::Duration;
 use axum::{
     Json, Router,
     extract::State,
+    http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
     routing::get,
 };
@@ -31,7 +35,7 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/", get(me))
+        .route("/", get(me).delete(close))
         .route("/events", get(events))
 }
 
@@ -39,6 +43,19 @@ pub fn router() -> Router<AppState> {
 ///
 /// There is no `/api/users/{id}`: nothing here needs one person to look another up,
 /// and an endpoint that could would be the first thing to leak an address.
+/// Closes the signed-in person's account.
+///
+/// Required by more than good manners: guideline 5.1.1(v) requires any app that
+/// supports making an account to support deleting one, in the app rather than through
+/// a link, and Article 17 is the most frequently exercised right there is.
+///
+/// `409` where the person is the last owner of the server — they have to promote
+/// somebody first, or there would be nobody who could let anybody back in.
+async fn close(State(state): State<AppState>, user: CurrentUser) -> Result<StatusCode, AppError> {
+    users::close_account(&state.ctx, &user.actor()).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// The person, and the one thing about them that is not on the person.
 ///
 /// `is_owner` is a fact about this *server*, not about them — the same account on

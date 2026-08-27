@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT user_id as \"user_id: user::Id\" FROM list_members\n             WHERE list_id = ?1\n             ORDER BY added_at, user_id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "user_id: user::Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "list_members",
+            "name": "user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "07440c732972d591abda9f08127ff9d826f54c22abf4ea31b1f018f088096e4b"
+}

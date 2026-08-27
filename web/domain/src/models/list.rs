@@ -95,7 +95,12 @@ pub enum Role {
     /// The list too: rename it, delete it, and decide who else is on it.
     ///
     /// Held by exactly one person — `lists.owner_id` — and never granted by an
-    /// invitation. There is no transfer: an owner who wants out deletes the list.
+    /// invitation.
+    ///
+    /// There is no transfer as a thing a person does: an owner who wants out deletes
+    /// the list. The one exception is closing an account, where deleting it would
+    /// take somebody else's shopping with it — see [`Self::hand_over`] and
+    /// `service::users::close_account`.
     Owner,
 }
 
@@ -310,6 +315,74 @@ impl List {
     /// opposite of [`super::unit`], where a referenced row is held back, and the
     /// difference is deliberate: an item without its list is meaningless, whereas a
     /// unit outlives any one item.
+    /// Gives a list to one of its members, who stops being a member by becoming its
+    /// owner — `lists.owner_id` is the single source of truth, so a membership row
+    /// alongside it would be a second answer to the same question.
+    ///
+    /// Not something anybody may ask for. It exists because closing an account would
+    /// otherwise cascade a shared list away, and somebody who did nothing would open
+    /// the app to find their shopping gone.
+    pub async fn hand_over(
+        pool: &sqlx::SqlitePool,
+        id: Id,
+        new_owner: user::Id,
+    ) -> Result<()> {
+        let mut tx = pool.begin().await?;
+
+        sqlx::query!(
+            r#"UPDATE lists SET owner_id = ?2, updated_at = unixepoch() WHERE id = ?1"#,
+            id,
+            new_owner
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query!(
+            r#"DELETE FROM list_members WHERE list_id = ?1 AND user_id = ?2"#,
+            id,
+            new_owner
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// The lists this person owns, as ids.
+    ///
+    /// Not `visible_to`, which is paged and includes lists they were merely added to.
+    /// The one caller is closing an account, which has to see all of them and cares
+    /// only about the ones that would cascade.
+    pub async fn owned_by(pool: &sqlx::SqlitePool, owner_id: user::Id) -> Result<Vec<Id>> {
+        Ok(
+            sqlx::query_scalar!(
+                r#"SELECT id as "id: Id" FROM lists WHERE owner_id = ?1 ORDER BY id"#,
+                owner_id
+            )
+            .fetch_all(pool)
+            .await?,
+        )
+    }
+
+    /// Everyone sharing this list, longest-standing first, with the owner excluded as
+    /// always. Used to decide who a list goes to when its owner leaves.
+    pub async fn members_by_standing(
+        pool: &sqlx::SqlitePool,
+        id: Id,
+    ) -> Result<Vec<user::Id>> {
+        Ok(sqlx::query_scalar!(
+            r#"
+            SELECT user_id as "user_id: user::Id" FROM list_members
+             WHERE list_id = ?1
+             ORDER BY added_at, user_id
+            "#,
+            id
+        )
+        .fetch_all(pool)
+        .await?)
+    }
+
     pub async fn delete(pool: &sqlx::SqlitePool, id: Id) -> Result<()> {
         let result = sqlx::query!(r#"DELETE FROM lists WHERE id = ?1"#, id)
             .execute(pool)

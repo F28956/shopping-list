@@ -148,18 +148,7 @@ async fn claim(
     let (provider, claims) = match &state.auth {
         AuthMode::Providers(providers) => verify(&token, providers).await?,
         #[cfg(any(test, feature = "test-support"))]
-        AuthMode::TrustTheToken => (
-            "google",
-            // An address, unlike the other test branch, because claiming admits the
-            // owner by theirs and an owner with no address is an owner who cannot
-            // sign in.
-            crate::auth::Claims {
-                sub: token.clone(),
-                email: Some(format!("{token}@example.com")),
-                email_verified: Some(serde_json::Value::Bool(true)),
-                name: None,
-            },
-        ),
+        AuthMode::TrustTheToken => ("google", crate::auth::Claims::for_test(&token)),
     };
 
     let (sub, name, email) = claims.into();

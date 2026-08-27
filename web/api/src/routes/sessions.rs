@@ -43,15 +43,7 @@ async fn open(
     let (provider, claims) = match &state.auth {
         AuthMode::Providers(providers) => verify(&token, providers).await?,
         #[cfg(any(test, feature = "test-support"))]
-        AuthMode::TrustTheToken => (
-            "google",
-            crate::auth::Claims {
-                sub: token.clone(),
-                email: None,
-                email_verified: None,
-                name: None,
-            },
-        ),
+        AuthMode::TrustTheToken => ("google", crate::auth::Claims::for_test(&token)),
     };
 
     let (sub, name, email) = claims.into();

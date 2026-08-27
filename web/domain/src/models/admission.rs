@@ -123,6 +123,20 @@ impl Admitted {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Forgets every address bound to this person.
+    ///
+    /// Called when an account is closed. The column is `ON DELETE SET NULL`, so
+    /// without this the row would survive the user and go on holding their address —
+    /// which is exactly the thing somebody asking to be erased asked to have removed.
+    /// An owner can admit them again if they come back.
+    pub async fn forget_user(pool: &sqlx::SqlitePool, user_id: user::Id) -> Result<()> {
+        sqlx::query!(r#"DELETE FROM admitted_emails WHERE user_id = ?1"#, user_id)
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
+
     /// Whether this address is admitted, ignoring whether anybody has used it.
     ///
     /// The check for somebody arriving for the first time. Everyone who has been here

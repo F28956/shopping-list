@@ -90,11 +90,15 @@ The server becomes a thing you can hand to a person who is not you.
    only the emphasis is open.
 2. **The address at runtime** — [configuration.md](configuration.md) C1–C7. The
    single change that makes one binary serve everybody.
-3. **Admission and ownership as data** — A1–A7, including the claim code that closes
-   the bootstrap window and the last-owner rule.
-4. **Account deletion** — S3, wired with a confirmation flow designed on purpose.
+3. ~~**Admission and ownership as data**~~ **Done.** A1–A7: rows read on every
+   request, `ALLOWED_EMAILS` demoted to a seed, a claim code printed at boot, and the
+   last-owner rule in the service layer with tests from three directions.
+4. ~~**Account deletion**~~ **Done.** `DELETE /api/me`. A shared list changes hands
+   rather than cascading away, because the person left behind did nothing; the
+   address is forgotten too, since somebody asking to be erased asked for that;
+   and the last owner of the server is refused, which is A5 arrived at a third way.
 
-**Off-ramp, and a good one.** At the end of P1 a friend can run their own server and
+**Only TLS left.** At the end of P1 a friend can run their own server and
 install the app from a build you hand them. No store, no encryption, no rewrite. If
 the plan stops here it has delivered the thing that started this conversation.
 

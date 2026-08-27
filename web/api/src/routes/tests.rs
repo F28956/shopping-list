@@ -1248,15 +1248,14 @@ async fn me_needs_a_token(#[future(awt)] pool: SqlitePool) {
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }
 
-/// Read-only on purpose — see the note on the module.
+/// The profile is still read-only — see the note on the module. Closing the account
+/// is not, and has its own tests further down.
 #[rstest]
-#[case::edit("PUT")]
-#[case::close_the_account("DELETE")]
 #[tokio::test]
-async fn me_is_not_writable(#[future(awt)] pool: SqlitePool, #[case] method: &str) {
+async fn the_profile_is_not_writable(#[future(awt)] pool: SqlitePool) {
     let app = app(pool);
 
-    let (status, _) = send(&app, req(method, "/api/me", &me(), Some(json!({})))).await;
+    let (status, _) = send(&app, req("PUT", "/api/me", &me(), Some(json!({})))).await;
 
     assert_eq!(
         status,
@@ -1683,4 +1682,100 @@ async fn an_owner_can_open_the_server(#[future(awt)] pool: SqlitePool) {
 
     let (status, _) = send(&app, req("GET", "/api/me", &third(), None)).await;
     assert_eq!(status, StatusCode::OK, "the server was opened and still refused somebody");
+}
+
+// ---------------------------------------------------------------------------
+// Closing an account
+// ---------------------------------------------------------------------------
+
+/// The ordinary case: everything of theirs goes, and the token stops working.
+#[rstest]
+#[tokio::test]
+async fn closing_an_account_takes_it_all(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+
+    let (status, _) = send(&app, req("DELETE", "/api/me", &me(), None)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Signing in again is a new person, who has nothing.
+    let (status, listed) = send(&app, req("GET", "/api/lists", &me(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed["items"].as_array().unwrap().len(), 0, "{listed}");
+
+    let (status, _) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &me(), None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// A shared list changes hands rather than vanishing.
+///
+/// The person left behind did nothing, and cascading would have them open the app to
+/// find their shopping gone.
+#[rstest]
+#[tokio::test]
+async fn a_shared_list_survives_its_owner_leaving(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+
+    // Share it, the way sharing actually happens.
+    let (status, invite) = send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{list_id}/members/invites"),
+            &me(),
+            Some(json!({"role": "editor"})),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {invite}");
+    let token = invite["token"].as_str().expect("no token").to_string();
+
+    let (status, joined) = send(&app, req("POST", &format!("/api/invites/{token}"), &them(), None)).await;
+    assert!(status.is_success(), "{status} {joined}");
+
+    send(&app, req("DELETE", "/api/me", &me(), None)).await;
+
+    let (status, list) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &them(), None)).await;
+    assert_eq!(status, StatusCode::OK, "the list went with its owner: {list}");
+    assert_eq!(list["role"], "owner", "it survived but nobody owns it");
+}
+
+/// A5 from a third direction. Closing the last owner's account would leave a server
+/// nobody can administer, and the way back involves a shell on the host.
+#[rstest]
+#[tokio::test]
+async fn the_last_owner_cannot_close_their_account(#[future(awt)] pool: SqlitePool) {
+    let app = a_claimed_server(&pool).await;
+
+    let (status, _) = send(&app, req("DELETE", "/api/me", &me(), None)).await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, body) = send(&app, req("GET", "/api/me", &me(), None)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// Closing an account forgets the address too, or a person who asked to be erased is
+/// still listed on somebody's admission screen.
+#[rstest]
+#[tokio::test]
+async fn closing_an_account_forgets_the_address(#[future(awt)] pool: SqlitePool) {
+    let app = a_claimed_server(&pool).await;
+
+    let guest = "google-oauth2|someone-else@example.com";
+    send(
+        &app,
+        req("POST", "/api/admissions", &me(), Some(json!({"email": guest}))),
+    )
+    .await;
+    // Signing in binds the address to them.
+    send(&app, req("GET", "/api/me", &them(), None)).await;
+
+    send(&app, req("DELETE", "/api/me", &them(), None)).await;
+
+    let (_, listed) = send(&app, req("GET", "/api/admissions", &me(), None)).await;
+    assert!(
+        !listed.as_array().unwrap().iter().any(|r| r["email"] == guest),
+        "the address outlived the account: {listed}"
+    );
 }

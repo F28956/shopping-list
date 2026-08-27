@@ -25,6 +25,22 @@ pub struct Claims {
 }
 
 impl Claims {
+    /// The claims a test bearer token stands for: the token is the subject, and the
+    /// address follows from it.
+    ///
+    /// An address rather than `None`, because every real provider sends one and
+    /// admission has nothing to check without it — a test suite whose identities are
+    /// all address-less could not exercise who may sign in at all.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test(token: &str) -> Self {
+        Self {
+            sub: token.to_string(),
+            email: Some(format!("{token}@example.com")),
+            email_verified: Some(serde_json::Value::Bool(true)),
+            name: None,
+        }
+    }
+
     /// The address, if the provider says it verified it.
     fn verified_email(&self) -> Option<&str> {
         let vouched = match &self.email_verified {
@@ -84,15 +100,7 @@ impl FromRequestParts<AppState> for CurrentUser {
         let (provider, claims) = match &state.auth {
             AuthMode::Providers(providers) => verify(token, providers).await?,
             #[cfg(any(test, feature = "test-support"))]
-            AuthMode::TrustTheToken => (
-                "google",
-                Claims {
-                    sub: token.to_string(),
-                    email: None,
-                    email_verified: None,
-                    name: None,
-                },
-            ),
+            AuthMode::TrustTheToken => ("google", Claims::for_test(token)),
         };
 
         let (sub, name, email) = claims.into();
