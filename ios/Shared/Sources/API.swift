@@ -45,7 +45,13 @@ enum APIError: LocalizedError {
 /// Every call carries a bearer token and nothing else: the API never reads cookies,
 /// which is what lets it share an origin with the web UI safely.
 actor API {
-    private let baseURL: URL
+    /// Asked per request rather than held, because on the watch the answer arrives
+    /// after the app has started: the address comes from the paired phone alongside
+    /// the token (C5), and an `API` built at launch would otherwise be pointed at
+    /// nothing for the whole first run.
+    private let server: @Sendable () -> URL
+
+    private var baseURL: URL { server() }
     private let session: URLSession
     private let token: () async -> String?
     /// Whether somebody is signed in on this device, whether or not there is a token to
@@ -58,12 +64,24 @@ actor API {
     /// is.
     private let remembered: () -> Bool
 
+    /// A fixed address. What the phone and the Mac use, where the answer is known
+    /// before anything is built.
     init(
         baseURL: URL,
         token: @escaping () async -> String?,
         remembered: @escaping () -> Bool = { false }
     ) {
-        self.baseURL = baseURL
+        self.init(server: { baseURL }, token: token, remembered: remembered)
+    }
+
+    /// An address that may not be known yet — the watch, which learns it from its
+    /// phone.
+    init(
+        server: @escaping @Sendable () -> URL,
+        token: @escaping () async -> String?,
+        remembered: @escaping () -> Bool = { false }
+    ) {
+        self.server = server
         self.token = token
         self.remembered = remembered
 

@@ -13,10 +13,7 @@ struct ServerAddressView: View {
     /// everything local away.
     let accepted: (ServerAddress, ServerDirectory.About) -> Void
 
-    /// Offered rather than assumed, when a share link named its own origin (C7). A
-    /// link is a bearer credential from an untrusted sender, and pointing an app at a
-    /// host because a message said so is not something to do without showing the host.
-    var suggestion: ServerAddress?
+    @State private var suggestion: ServerAddress?
 
     @State private var typed = ""
     @State private var asking = false
@@ -31,7 +28,7 @@ struct ServerAddressView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            if let suggestion, typed.isEmpty {
+            if let suggestion {
                 // Shown, not silently adopted. The host is the thing being trusted, so
                 // it is the thing on screen.
                 Button {
@@ -40,7 +37,7 @@ struct ServerAddressView: View {
                 } label: {
                     VStack(spacing: 2) {
                         Text("Use \(suggestion.origin)")
-                        Text("from the link you opened").font(.caption)
+                        Text("from the link you copied").font(.caption)
                     }
                 }
                 .buttonStyle(.bordered)
@@ -64,6 +61,13 @@ struct ServerAddressView: View {
             .buttonStyle(.borderedProminent)
             .disabled(asking || typed.trimmingCharacters(in: .whitespaces).isEmpty)
 
+            // C7. Reading the pasteboard is an explicit tap rather than something
+            // that happens on appear: a silent read shows the system's paste banner
+            // and rummages through somebody's clipboard uninvited.
+            Button("I have a share link", systemImage: "link") { readTheClipboard() }
+                .font(.footnote)
+                .accessibilityIdentifier("paste-share-link")
+
             if let problem {
                 Text(problem)
                     .font(.footnote)
@@ -72,7 +76,29 @@ struct ServerAddressView: View {
             }
         }
         .padding(32)
-        .onAppear { editing = suggestion == nil }
+        .onAppear { editing = true }
+    }
+
+    /// Takes the origin out of a share link somebody copied.
+    ///
+    /// This is how C7 has to work, and the reason is worth writing down: a share link
+    /// **cannot** open this app directly. Universal links match an associated domain
+    /// baked into the app at build time, and every self-hoster's domain is different —
+    /// so there is no domain to associate. The clipboard is the only route a link has.
+    @MainActor
+    private func readTheClipboard() {
+        guard let pasted = UIPasteboard.general.string else {
+            problem = "There is no link on the clipboard."
+            return
+        }
+
+        guard let found = server(in: pasted) else {
+            problem = "That does not look like a share link."
+            return
+        }
+
+        problem = nil
+        suggestion = found
     }
 
     /// Parses, then asks. Both can fail and they fail differently, so the sentence on

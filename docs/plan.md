@@ -100,9 +100,10 @@ The server becomes a thing you can hand to a person who is not you.
    says when the server changed — which is the cue for C4. `Config.apiBaseURL` reads
    it, so nothing is pointed anywhere by a build setting any more.
 
-   What is left: the address screen and the settings screen (C1), actually clearing
-   the cache and signing out on a change (C4), pushing the address to the watch (C5),
-   the join link offering its own origin (C7) — then all of it again on Android.
+   ~~The screens.~~ **Done on iOS**: the address is asked for before sign-in (C1),
+   changing it clears the device (C4), the watch is told in the same message as its
+   token (C5), and a copied share link offers its origin (C7). What is left is all of
+   it again on Android.
 3. ~~**Admission and ownership as data**~~ **Done.** A1–A7: rows read on every
    request, `ALLOWED_EMAILS` demoted to a seed, a claim code printed at boot, and the
    last-owner rule in the service layer with tests from three directions.

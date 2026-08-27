@@ -50,11 +50,14 @@ final class PhoneLink: NSObject, WCSessionDelegate {
         Task {
             // An empty reply rather than none: the watch is waiting, and a reply that
             // never comes leaves it spinning until WatchConnectivity times out.
-            guard let token = await token() else {
+            guard let token = await token(), let server = ServerDirectory.current else {
                 replyHandler([:])
                 return
             }
-            replyHandler([WatchLink.tokenRequest: token])
+            replyHandler([
+                WatchLink.tokenRequest: token,
+                WatchLink.serverAddress: server.origin,
+            ])
         }
     }
 }

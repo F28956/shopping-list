@@ -131,12 +131,20 @@ they are on, and is the kind of thing store review asks about.
 and a share link is the ordinary way a second person arrives — often on a phone with
 no app on it yet. That link names its own origin.
 
-So: opening a join link on an unconfigured app offers that link's origin as the
-server, with the address shown and confirmed rather than assumed. It turns the worst
-first-run experience in the product — "somebody sent me a list and the app is asking
-me for a URL" — into one tap. Confirmed, not silent: a link is a bearer credential
-from an untrusted sender, and pointing an app at a host because a message said so is
-not something to do without showing the host.
+So: a join link offers its origin as the server, with the address shown and confirmed
+rather than assumed. It turns the worst first-run experience in the product —
+"somebody sent me a list and the app is asking me for a URL" — into one tap.
+Confirmed, not silent: a link is a bearer credential from an untrusted sender, and
+pointing an app at a host because a message said so is not something to do without
+showing the host.
+
+**Built, and by a different route than this said.** "Opening a join link" is not
+available to a self-hosted app: a universal link matches an *associated domain* baked
+into the app at build time, and every self-hoster's domain is different — so there is
+no domain to associate and a link can never open this app. The clipboard is the only
+route it has, behind an explicit "I have a share link" rather than a silent read on
+appear. iOS then asks its own paste permission, which is the person consenting to
+exactly this and is worth keeping rather than designing around.
 
 ## What the screens say when it fails
 
