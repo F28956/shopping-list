@@ -1,22 +1,22 @@
 import SwiftUI
 
-/// The first screen of a fresh install: which server.
+/// Which server, asked in settings by somebody who has one.
 ///
-/// C1 puts it before sign-in and never after. Signing in produces a token for a
-/// particular audience and then sends it somewhere; there is no sensible order in
-/// which the app authenticates first and discovers the destination second. The most
-/// common refusal a new person meets — not being admitted — is also an answer only a
-/// server can give.
+/// Not a first-run screen. The app opens standalone and is usable immediately, which
+/// is what somebody installing a shopping list expects; a server is a thing a minority
+/// of people configure once.
+///
+/// C1 still holds where it matters: the address comes before *sign-in*, because
+/// signing in produces a token for a particular audience and then sends it somewhere,
+/// and there is no sensible order in which the app authenticates first and discovers
+/// the destination second. What changed is that signing in is no longer something a
+/// fresh install does at all.
 struct ServerAddressView: View {
     /// What to do once an address has been accepted. The caller decides, because on a
     /// fresh install this leads to signing in and from settings it leads to throwing
     /// everything local away.
     let accepted: (ServerAddress, ServerDirectory.About) -> Void
 
-    /// What to do when somebody says they have no server. `nil` hides the offer, which
-    /// is right when this screen is reached from settings — a device that already has
-    /// lists on a server is not choosing for the first time.
-    var declined: (() -> Void)?
 
     @State private var suggestion: ServerAddress?
 
@@ -72,22 +72,6 @@ struct ServerAddressView: View {
             Button("I have a share link", systemImage: "link") { readTheClipboard() }
                 .font(.footnote)
                 .accessibilityIdentifier("paste-share-link")
-
-            if let declined {
-                // S1. The app has to be useful before it has a server, and this is
-                // where somebody says they do not want one. It is not a lesser mode:
-                // lists made here work exactly as lists made with no signal do, and
-                // attaching a server later sends them.
-                VStack(spacing: 4) {
-                    Button("Use this device only", action: declined)
-                        .accessibilityIdentifier("no-server")
-                    Text("Your lists stay on this phone. You can add a server later.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(.top, 8)
-            }
 
             if let problem {
                 Text(problem)

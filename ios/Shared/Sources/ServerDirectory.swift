@@ -18,35 +18,35 @@ enum ServerDirectory {
     /// entered and the simulator keeps talking to `localhost`.
     /// What this device has been told to do about a server.
     enum Choice: Equatable {
-        /// Nobody has been asked yet.
-        case unanswered
-        /// Somebody said "this device only". There is no server and that is a
-        /// decision, not a failure — see [`onlyThisDevice`].
+        /// No server, which is the default and not a failure. See [`choice`].
         case none
         case server(ServerAddress)
     }
 
-    /// One key, four states, and only the first is obvious.
+    /// One key, and what its absence means.
     ///
-    /// * **Absent** — nobody has ever been asked, so the build setting applies.
+    /// * **Absent** — nobody has said anything, and the answer is *this device on its
+    ///   own*. A shopping list should open and be usable, not open and ask a question
+    ///   about hosting; somebody who has a server goes and says so in settings. The
+    ///   development build is the exception, and only because a debug build exists to
+    ///   talk to the server on the same desk.
     /// * **A value** — what somebody entered.
-    /// * **Empty** — somebody deliberately cleared it, and the build setting must
-    ///   *not* apply. Without this state, "change server" on a build compiled with an
-    ///   address would clear the stored one and fall straight back to the built-in,
-    ///   which is a button that appears to work and does nothing.
-    /// * **`local`** — somebody chose to use this device on its own. A reserved word
-    ///   rather than a second key, because it is the same question with a third
-    ///   answer, and `ServerAddress.parse` refuses it so it cannot be typed by
-    ///   accident.
+    /// * **Empty** — the same as absent. It is what `forget` leaves behind, and it is
+    ///   distinguishable from absent only in that the build setting no longer applies:
+    ///   without it, "change server" on a build compiled with an address would clear
+    ///   the stored one and fall straight back to the built-in, which is a button that
+    ///   appears to work and does nothing.
+    /// * **`local`** — somebody chose this deliberately. Stored rather than inferred
+    ///   from absence so that the two can be told apart if they ever need to be.
     static var choice: Choice {
         guard let stored = UserDefaults.standard.string(forKey: key) else {
-            return built.map(Choice.server) ?? .unanswered
+            return built.map(Choice.server) ?? .none
         }
 
-        if stored == onDeviceOnly { return .none }
+        if stored == onDeviceOnly || stored.isEmpty { return .none }
 
         guard case .success(let address) = ServerAddress.parse(stored, allowingCleartext: true)
-        else { return .unanswered }
+        else { return .none }
 
         return .server(address)
     }
@@ -69,11 +69,13 @@ enum ServerDirectory {
     /// are the same state, and the app already knew how to be in one of them.
     static func onlyThisDevice() {
         UserDefaults.standard.set(onDeviceOnly, forKey: key)
+        announce()
     }
 
-    /// Whether this device has no server *and has said so*, as opposed to not having
-    /// been asked.
-    static var isOnDeviceOnly: Bool { choice == .none }
+    /// Says the answer changed, because it is storage and nothing observes storage.
+    private static func announce() {
+        NotificationCenter.default.post(name: .serverChanged, object: nil)
+    }
 
     /// What the build was pointed at, if anything.
     ///
@@ -90,9 +92,11 @@ enum ServerDirectory {
         return address
     }
 
-    /// Whether anybody has to be asked. False on a development build, which has one,
-    /// and false once somebody has said "this device only".
-    static var needsAnAddress: Bool { choice == .unanswered }
+    /// Whether this device is on its own, which is the default.
+    ///
+    /// There is deliberately no "has not been asked": nothing asks. A shopping list
+    /// opens and is usable, and a server is something somebody goes and configures.
+    static var isOnDeviceOnly: Bool { choice == .none }
 
     /// Records an address that has been checked, and says whether it is a *different*
     /// server from the one before — which is the caller's cue to throw everything local
@@ -101,6 +105,7 @@ enum ServerDirectory {
     static func remember(_ address: ServerAddress) -> Bool {
         let changed = current != address
         UserDefaults.standard.set(address.origin, forKey: key)
+        announce()
         return changed
     }
 
@@ -111,9 +116,10 @@ enum ServerDirectory {
     /// suggestions belong to an account on it. Carrying them across would show one
     /// server's lists under another server's name.
     static func forget() {
-        // Emptied rather than removed: removing it would mean "never asked", and a
-        // build with a compiled-in address would answer with that one — see `current`.
+        // Emptied rather than removed: removing it would let a build compiled with an
+        // address answer with that one — see `choice`.
         UserDefaults.standard.set("", forKey: key)
+        announce()
     }
 
     // MARK: - Asking
@@ -202,4 +208,14 @@ enum ServerDirectory {
             .secureConnectionFailed,
         ].contains(code)
     }
+}
+
+extension Notification.Name {
+    /// Which server this device uses has changed.
+    ///
+    /// `ServerDirectory` is `UserDefaults`, and nothing observes `UserDefaults`. The
+    /// screens that branch on it are told rather than left to notice, which is the
+    /// difference between the app changing when somebody changes it and the app
+    /// changing next time it is launched.
+    static let serverChanged = Notification.Name("shoppinglist.serverChanged")
 }

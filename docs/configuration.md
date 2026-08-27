@@ -40,13 +40,22 @@ always the person holding a shell.
 
 # Part one · The server address
 
-## C1 · The address is asked for before sign-in, never after
+## C1 · The address is asked for before sign-in, and a fresh install does not sign in
 
 Signing in produces a token for a particular audience and then sends it somewhere.
 There is no sensible order in which the app authenticates first and discovers the
 destination second — and the most common refusal a new person meets, `NotAdmitted`,
-is an answer that only a server can give. So the first screen of a fresh install asks
-for an address, and the sign-in button does not exist until there is one.
+is an answer that only a server can give. So wherever an address is entered, it is
+entered before the sign-in button exists.
+
+**Revised, and the first half of this was wrong.** It used to say the first screen of
+a fresh install asks for an address. It does not: the app opens standalone and is
+usable immediately, with no screen to answer and no sheet to dismiss. A shopping list
+that opens by asking a question about hosting is a shopping list most people close.
+
+A server is configured in settings, by the minority who run one, once. Everything that
+needs a server is absent until there is one — joining a list, sharing a list, and
+signing in — rather than present and failing.
 
 ## C2 · An address is validated by asking it, not by matching it
 

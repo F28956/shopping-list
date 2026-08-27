@@ -33,9 +33,6 @@ struct ListsView: View {
     @State private var deleting: List?
     @State private var sharing: List?
     @State private var joining = false
-    /// Asked once, and worth asking: changing servers throws away everything on this
-    /// device (C4).
-    @State private var changingServer = false
     /// Whether this person administers this server, which decides whether the screen
     /// that manages it exists. Hiding it is a courtesy: every route behind it is
     /// refused in the service layer to anybody else.
@@ -43,30 +40,19 @@ struct ListsView: View {
     /// it only changes by leaving this screen entirely.
     private let onDeviceOnly = ServerDirectory.isOnDeviceOnly
     @State private var isOwner = false
-    @State private var managingServer = false
-
-    /// Forgets the server and everything that came from it.
+    /// The two screens behind the menu, as one piece of state.
     ///
-    /// The order matters only in that the address goes last: if anything above throws,
-    /// the device is still pointed at a server it can be signed into again, rather than
-    /// at nothing with a cache full of somebody else's ids.
-    private func leaveThisServer() {
-        // `forgetEverything` takes the outbox with it — see `Cache`.
-        cache.forgetEverything()
-        identity.signOut()
-        ServerDirectory.forget()
+    /// Two `.sheet(isPresented:)` modifiers on the same view is a long-standing
+    /// SwiftUI trap: only one of them is honoured, silently, and the other button
+    /// does nothing. One `.sheet(item:)` cannot have that problem.
+    private enum Elsewhere: String, Identifiable {
+        case settings
+        case whoMaySignIn
+
+        var id: String { rawValue }
     }
 
-    /// What an empty screen says.
-    ///
-    /// Three different emptinesses and they are not the same news. On a device kept to
-    /// itself there is nothing wrong at all — nobody has written a list yet — and
-    /// saying "can't reach the server" there would be reporting a failure that did not
-    /// happen and could not.
-    private var emptyTitle: String {
-        if onDeviceOnly { return "No lists yet" }
-        return offline ? "Can't reach the server" : "Couldn't load your lists"
-    }
+    @State private var elsewhere: Elsewhere?
 
     /// The menu behind the plus.
     ///
@@ -76,25 +62,25 @@ struct ListsView: View {
     @ViewBuilder
     private var menuItems: some View {
         Button("New list", systemImage: "plus") { naming = .create }
-        Button("Join a list", systemImage: "person.badge.plus") { joining = true }
+
+        // Joining is somebody else's list on somebody's server. With no server there
+        // is nothing to join and no link that could mean anything, so the option is
+        // absent rather than present and failing.
+        if !onDeviceOnly {
+            Button("Join a list", systemImage: "person.badge.plus") { joining = true }
+        }
 
         Divider()
 
         if isOwner {
             Button("Who may sign in", systemImage: "person.2.badge.key") {
-                managingServer = true
+                elsewhere = .whoMaySignIn
             }
             .accessibilityIdentifier("manage-server")
         }
 
-        Button(
-            onDeviceOnly ? "Use a server" : "Change server",
-            systemImage: "server.rack",
-            role: onDeviceOnly ? nil : .destructive
-        ) {
-            changingServer = true
-        }
-        .accessibilityIdentifier("change-server")
+        Button("Settings", systemImage: "gear") { elsewhere = .settings }
+            .accessibilityIdentifier("settings")
     }
 
     var body: some View {
@@ -102,26 +88,28 @@ struct ListsView: View {
             Group {
                 if !loaded {
                     ProgressView()
-                } else if lists.isEmpty && !fresh {
+                } else if lists.isEmpty && !fresh && !onDeviceOnly {
                     // Before the empty state, and the order is the point: this app
                     // used to say "No lists" whenever a load failed and there was
                     // nothing cached -- an emptiness it had never verified. `fresh`
                     // is the only thing that earns the empty state, and only the
                     // server can set it. Losing signal afterwards does not unsay it.
+                    //
+                    // Except with no server, where nothing can ever set `fresh` and
+                    // this device is the only thing that could know. There, empty
+                    // means empty, and the ordinary empty state below is the right
+                    // one -- it already offers to make a list, which is the only
+                    // thing to do about it.
                     ContentUnavailableView {
                         Label(
-                            emptyTitle,
-                            systemImage: onDeviceOnly
-                                ? "checklist"
-                                : (offline ? "icloud.slash" : "exclamationmark.triangle")
+                            offline ? "Can't reach the server" : "Couldn't load your lists",
+                            systemImage: offline ? "icloud.slash" : "exclamationmark.triangle"
                         )
                     } description: {
                         Text(
-                            onDeviceOnly
-                                ? "Make one with the button above. It stays on this phone."
-                                : (offline
-                                    ? "Your lists will appear as soon as there is a connection."
-                                    : "Whether you have any is not known yet.")
+                            offline
+                                ? "Your lists will appear as soon as there is a connection."
+                                : "Whether you have any is not known yet."
                         )
                     } actions: {
                         Button("Try again") { Task { await load() } }
@@ -148,8 +136,13 @@ struct ListsView: View {
                             // Renaming and deleting are the owner's. An editor was
                             // given a list, not the say over whether it exists.
                             .contextMenu {
-                                Button("Share…", systemImage: "person.badge.plus") {
-                                    sharing = list
+                                // Sharing is the mirror of joining: a share link names
+                                // a server, and with no server there is no link to
+                                // make. Absent rather than present and failing.
+                                if !onDeviceOnly {
+                                    Button("Share…", systemImage: "person.badge.plus") {
+                                        sharing = list
+                                    }
                                 }
                                 if list.role >= .owner {
                                     Button("Rename…", systemImage: "pencil") {
@@ -162,12 +155,14 @@ struct ListsView: View {
                                 }
                             }
                             .swipeActions(edge: .leading) {
-                                Button {
-                                    sharing = list
-                                } label: {
-                                    Label("Share", systemImage: "person.badge.plus")
+                                if !onDeviceOnly {
+                                    Button {
+                                        sharing = list
+                                    } label: {
+                                        Label("Share", systemImage: "person.badge.plus")
+                                    }
+                                    .tint(.accentColor)
                                 }
-                                .tint(.accentColor)
                             }
                             .swipeActions(edge: .trailing) {
                                 if list.role >= .owner {
@@ -224,23 +219,11 @@ struct ListsView: View {
                         .accessibilityIdentifier("list.new")
                 }
             }
-            // C4. Not a precaution: the cache holds rows keyed by ids and uuids the
-            // old server minted, and the history and suggestions belong to an account
-            // on it. Carrying them across would show one server's lists under another
-            // server's name.
-            .alert("Change server?", isPresented: $changingServer) {
-                Button("Cancel", role: .cancel) {}
-                Button("Change server", role: .destructive) { leaveThisServer() }
-            } message: {
-                Text(
-                    """
-                    This signs you out and removes everything stored on this device. \
-                    Anything still waiting to be sent will be lost.
-                    """
-                )
-            }
-            .sheet(isPresented: $managingServer) {
-                ServerPeopleView(api: api)
+            .sheet(item: $elsewhere) { screen in
+                switch screen {
+                case .settings: SettingsView(cache: cache)
+                case .whoMaySignIn: ServerPeopleView(api: api)
+                }
             }
             .sheet(item: $sharing) { list in
                 ShareSheet(list: list, api: api) { await load() }

@@ -118,10 +118,10 @@ struct ServerDirectoryTests {
         #expect(!about("closed").admitsAnyone)
     }
 
-    /// The state that is easy to miss. On a build compiled with an address, forgetting
-    /// must not fall back to it — that would be a "change server" button that appears
-    /// to work and does nothing.
-    @Test func forgettingIsNotTheSameAsNeverHavingBeenAsked() {
+    /// On a build compiled with an address, forgetting must not fall back to it —
+    /// that would be a "stop using this server" button that appears to work and does
+    /// nothing.
+    @Test func forgettingLeavesTheDeviceOnItsOwn() {
         let key = "server.address"
         let before = UserDefaults.standard.string(forKey: key)
         defer { UserDefaults.standard.set(before, forKey: key) }
@@ -130,7 +130,24 @@ struct ServerDirectoryTests {
         ServerDirectory.forget()
 
         #expect(ServerDirectory.current == nil)
-        #expect(ServerDirectory.needsAnAddress)
+        #expect(ServerDirectory.isOnDeviceOnly)
+    }
+
+    /// The default, and the reason there is no first-run screen: a shopping list opens
+    /// and is usable, rather than opening and asking a question about hosting.
+    @Test func sayingNothingMeansThisDeviceOnly() {
+        let key = "server.address"
+        let before = UserDefaults.standard.string(forKey: key)
+        defer { UserDefaults.standard.set(before, forKey: key) }
+
+        UserDefaults.standard.removeObject(forKey: key)
+
+        // A debug build is pointed at the machine on the desk, which is the one
+        // exception — so this asserts what is true of a shipped build by asserting the
+        // stored answer rather than the built-in one.
+        UserDefaults.standard.set("", forKey: key)
+        #expect(ServerDirectory.isOnDeviceOnly)
+        #expect(ServerDirectory.current == nil)
     }
 
     @Test func everyRefusalSaysSomething() {

@@ -26,33 +26,27 @@ struct ShoppingListApp: App {
 struct RootView: View {
     @Environment(Identity.self) private var identity
 
-    /// Re-read after the address screen answers, because `ServerDirectory` is storage
+    /// Re-read when settings change the answer, because `ServerDirectory` is storage
     /// rather than observable state and nothing would otherwise tell SwiftUI.
-    @State private var addressed = !ServerDirectory.needsAnAddress
+    @State private var hasServer = !ServerDirectory.isOnDeviceOnly
 
     var body: some View {
-        if !addressed {
-            // Before sign-in and never after (C1). A development build has an address
-            // from `Config.xcconfig`, so this screen does not appear there at all.
-            ServerAddressView(
-                accepted: { address, _ in
-                    ServerDirectory.remember(address)
-                    addressed = true
-                },
-                declined: {
-                    ServerDirectory.onlyThisDevice()
-                    addressed = true
-                }
-            )
-        } else if ServerDirectory.isOnDeviceOnly {
-            // S1. No server means nobody to sign in to, so there is no sign-in. The
-            // app runs exactly as it does with no signal — which is not a compromise
-            // but the point: `API` fails every call as a transport error, the cache
-            // answers, and the outbox keeps what was written down until there is
-            // somewhere to send it.
-            lists
-        } else {
-            signedInOrNot
+        Group {
+            if hasServer {
+                signedInOrNot
+            } else {
+                // The default, and it opens straight into the lists. A shopping list
+                // should be usable the moment it is installed, not open by asking a
+                // question about hosting — so there is no first-run screen, no sheet
+                // to dismiss, and nothing to sign in to. Somebody who has a server
+                // goes and says so in settings.
+                lists
+            }
+        }
+        // Settings is the only thing that changes this, and it changes it under our
+        // feet, so the answer is re-read rather than remembered from launch.
+        .onReceive(NotificationCenter.default.publisher(for: .serverChanged)) { _ in
+            hasServer = !ServerDirectory.isOnDeviceOnly
         }
     }
 
