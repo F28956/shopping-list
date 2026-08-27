@@ -107,14 +107,20 @@ struct SettingsView: View {
                 ServerPeopleView(api: api)
             }
             .sheet(isPresented: $choosing) {
-                ServerAddressView { address, _ in
-                    // C4 in the other direction: what is here was made with no server,
-                    // and it is about to be sent to one. Nothing is thrown away —
-                    // adding a server is not the destructive half of changing one.
-                    ServerDirectory.remember(address)
-                    choosing = false
-                    dismiss()
-                }
+                ServerAddressView(
+                    accepted: { address, _ in
+                        // C4 in the other direction: what is here was made with no
+                        // server, and it is about to be sent to one. Nothing is thrown
+                        // away — adding a server is not the destructive half of
+                        // changing one.
+                        ServerDirectory.remember(address)
+                        choosing = false
+                        dismiss()
+                    },
+                    // Back to settings, with the answer unchanged. Somebody who opened
+                    // this to read it is not somebody who has agreed to anything.
+                    cancelled: { choosing = false }
+                )
             }
             // C4. The cache holds rows keyed by ids and uuids that server minted, and
             // history and suggestions belong to an account on it. Keeping them would

@@ -69,17 +69,23 @@ struct SignInView: View {
         }
         .padding(32)
         .sheet(isPresented: $choosing) {
-            ServerAddressView { address, _ in
-                // C4. A different server mints different ids, so what the last one put
-                // in the cache cannot stay -- `remember` says whether it is a different
-                // one, and only then is anything thrown away. Retyping the address of
-                // the server already configured is a correction, not a move.
-                if ServerDirectory.remember(address) {
-                    cache.forgetEverything()
-                    identity.signOut()
-                }
-                choosing = false
-            }
+            ServerAddressView(
+                accepted: { address, _ in
+                    // C4. A different server mints different ids, so what the last one
+                    // put in the cache cannot stay -- `remember` says whether it is a
+                    // different one, and only then is anything thrown away. Retyping
+                    // the address of the server already configured is a correction, not
+                    // a move.
+                    if ServerDirectory.remember(address) {
+                        cache.forgetEverything()
+                        identity.signOut()
+                    }
+                    choosing = false
+                },
+                // Back to signing in to the same server, with nothing cleared and
+                // nobody signed out: this sheet was opened and read, not answered.
+                cancelled: { choosing = false }
+            )
         }
         // C4 again, and this time the cache goes whatever happens: the lists on screen
         // after this belong to no server, and rows keyed by ids that one minted would

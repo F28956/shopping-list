@@ -17,6 +17,18 @@ struct ServerAddressView: View {
     /// everything local away.
     let accepted: (ServerAddress, ServerDirectory.About) -> Void
 
+    /// Leaving without answering.
+    ///
+    /// Not optional, and it used to be missing altogether: this sheet had no Cancel and
+    /// no Done, so somebody who opened it to see what it said was held here until they
+    /// produced a working address. The Android half had exactly this bug and was fixed
+    /// first; the trap outlived it here by one screen, because the sign-in screen it is
+    /// reached from was itself a dead end. A screen somebody cannot leave is a screen
+    /// that has taken the phone off them.
+    ///
+    /// Cancelling changes nothing. The stored address is whatever it was, and the
+    /// caller has nothing to undo — this sheet only ever calls `accepted`.
+    let cancelled: () -> Void
 
     @State private var suggestion: ServerAddress?
 
@@ -26,6 +38,30 @@ struct ServerAddressView: View {
     @FocusState private var editing: Bool
 
     var body: some View {
+        // A navigation bar with nothing in it but Cancel. The screen already says what
+        // it is, in a size no bar title would improve on; the bar is here because it is
+        // where somebody looks for the way out of a sheet.
+        NavigationStack {
+            form
+                .navigationTitle("")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        // Disabled only while a check is in flight, so a tap does not
+                        // race an answer.
+                        Button("Cancel") { cancelled() }
+                            .disabled(asking)
+                            .accessibilityIdentifier("cancel-server-address")
+                    }
+                }
+        }
+        // The swipe down as well as the button -- somebody who drags a sheet away
+        // expects it to go, and one that ignores them feels broken rather than firm.
+        // Held only for the moment an address is being asked about.
+        .interactiveDismissDisabled(asking)
+    }
+
+    private var form: some View {
         VStack(spacing: 20) {
             Text("Your server")
                 .font(.largeTitle.weight(.semibold))
