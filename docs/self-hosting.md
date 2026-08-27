@@ -313,9 +313,18 @@ operator documentation so people know what was considered.
 ## S12 · Backups are where data leaks
 
 Not the running server: object storage, an old laptop, a drive that went in a bin.
-Encrypt them with a key that has never been on the VM — `age` or `restic` — and do it
-before any of the rest of part three, because it is an afternoon's work and covers
-the likeliest failure.
+Encrypt them with a key that has never been on the VM, and do it before any of the
+rest of part three, because it is an afternoon's work and covers the likeliest
+failure.
+
+**Built** — `ops/backup.sh`, `ops/restore.sh` and [ops/README.md](../ops/README.md).
+The server holds only an `age` public key, so it writes backups it cannot read; the
+private half never goes near it, and restoring is a thing you do on a laptop.
+
+The half that matters and is easy to skip is that restoring is *tested*. `restore.sh`
+checks every page and prints the counts, so a file that decrypts and passes an
+integrity check can still be recognised as the wrong one. A backup nobody has opened
+is a belief.
 
 ## S13 · Erasure that reaches the backups
 

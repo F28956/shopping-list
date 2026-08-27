@@ -71,14 +71,15 @@ Cheap, unrelated to each other, and all of them reduce a risk that exists today.
    rule only applied on read. One `housekeeping` task in `main`, which is where any
    future retention goes so that "what does this server delete, and when" has one
    answer in one place.
-2. **Encrypted backups**, key held off the machine — `age` or `restic`. This is
-   [self-hosting.md](self-hosting.md)'s S12 and it covers the copy that actually
-   leaks.
+2. ~~**Encrypted backups**, key held off the machine.~~ **Done.** `ops/backup.sh`
+   writes to an `age` recipient, so the server cannot read what it just wrote;
+   `ops/restore.sh` opens one on a machine that holds the private half, checks every
+   page, and prints the counts — because a backup nobody has opened is a belief.
 
 *A third item was planned here and turned out to exist:* `item_history` is capped at
 `MAX_ENTRIES` and trimmed by `history::Entry::prune` on every write. Nothing to do.
 
-**Off-ramp:** this is worth doing even if the plan stops here.
+**Done.** All of it was worth doing even though the plan carried on.
 
 ## P1 · Somebody else can run it
 
