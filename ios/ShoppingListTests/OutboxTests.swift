@@ -186,4 +186,42 @@ struct OutboxTests {
         #expect(queued.itemID == -1234)
         #expect(queued.onTheWire.item == "minted")
     }
+
+    // MARK: - Filing
+
+    @Test("filing is queued rather than sent, so it survives having no server")
+    func filingIsQueued() {
+        let outbox = Cache.inMemory().outbox
+        let milk = item(7, "Milk")
+
+        outbox.tag(milk, on: list, tagID: 5, attached: true)
+        outbox.tag(milk, on: list, tagID: 3, attached: false)
+
+        let queued = outbox.forList(list)
+        #expect(queued.count == 2)
+        #expect(queued[0].kind == QueuedOperation.Kind.attachTag)
+        #expect(queued[0].tagID == 5)
+        #expect(queued[1].kind == QueuedOperation.Kind.detachTag)
+        #expect(queued[1].tagID == 3)
+    }
+
+    @Test("the wire calls it tag_id, which is the one thing the server insists on")
+    func filingOnTheWire() throws {
+        // The two tag kinds are built by hand at both ends, so nothing but a test
+        // notices if the key is spelled the way Swift spells the property. A phone in
+        // a shop would notice, eventually, by the filing never arriving.
+        let outbox = Cache.inMemory().outbox
+        outbox.tag(item(7, "Milk"), on: list, tagID: 5, attached: true)
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let wire = try encoder.encode(outbox.forList(list)[0].onTheWire)
+        let fields = try #require(
+            try JSONSerialization.jsonObject(with: wire) as? [String: Any]
+        )
+
+        #expect(fields["kind"] as? String == "attach_tag")
+        #expect((fields["tag_id"] as? NSNumber)?.int64Value == 5)
+        #expect(fields["item"] as? String == "item-7")
+    }
 }
