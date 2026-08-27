@@ -10,10 +10,10 @@
 
 use std::collections::BTreeSet;
 
-use crate::models::admission::{Admitted, Server, owner_count, set_owner};
+use crate::models::admission::{Admitted, Note, Server, key, owner_count, owners, set_owner};
 use crate::models::user::{self, Email, User};
 
-use super::{Ctx, Result};
+use super::{Actor, Ctx, Result, ServiceError};
 
 /// Who may sign in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,6 +157,127 @@ pub async fn seed(ctx: &Ctx, configured: Option<&Admission>) -> Result<()> {
         set_owner(&ctx.db, user.id, true).await?;
         Server::claim(&ctx.db).await?;
         tracing::info!(user = user.id.0, "existing server: the earliest person owns it");
+    }
+
+    Ok(())
+}
+
+/// Whether this person may administer the server.
+pub async fn is_owner(ctx: &Ctx, user_id: user::Id) -> Result<bool> {
+    Ok(owners(&ctx.db).await?.contains(&user_id))
+}
+
+/// Refuses anybody who is not an owner.
+///
+/// Here rather than in a handler, per D1: the browser and the API ask the same
+/// question and must get the same answer, and a check written twice is a check that
+/// disagrees with itself eventually.
+async fn owner_only(ctx: &Ctx, actor: &Actor) -> Result<user::Id> {
+    let person = actor.person()?;
+
+    if !is_owner(ctx, person.id).await? {
+        return Err(ServiceError::Forbidden);
+    }
+
+    Ok(person.id)
+}
+
+/// Every admitted address, for the screen that manages them.
+pub async fn listing(ctx: &Ctx, actor: &Actor) -> Result<Vec<Admitted>> {
+    owner_only(ctx, actor).await?;
+    Ok(Admitted::all(&ctx.db).await?)
+}
+
+/// Admits an address. Admitting one twice is a double-click, not an error.
+pub async fn admit(
+    ctx: &Ctx,
+    actor: &Actor,
+    email: &Email,
+    note: Option<&Note>,
+) -> Result<()> {
+    let by = owner_only(ctx, actor).await?;
+
+    if key(email).is_empty() {
+        return Err(ServiceError::InvalidInput);
+    }
+
+    Admitted::add(&ctx.db, email, by, note).await?;
+    tracing::info!(by = by.0, "address admitted");
+    Ok(())
+}
+
+/// Withdraws an address.
+///
+/// The rule that matters is A5's second half: the last owner cannot withdraw their
+/// own admission. Removal takes effect on the next request, so doing it would sign
+/// them out of a server with nobody left who can let anybody back in — and the way
+/// back involves `sqlite3` on the host. The person most likely to try it is the one
+/// tidying up their own address at two in the morning.
+pub async fn withdraw(ctx: &Ctx, actor: &Actor, email: &Email) -> Result<()> {
+    let by = owner_only(ctx, actor).await?;
+
+    let theirs = Admitted::all(&ctx.db)
+        .await?
+        .into_iter()
+        .find(|row| row.email.0 == key(email))
+        .and_then(|row| row.user_id);
+
+    if theirs == Some(by) && owner_count(&ctx.db).await? <= 1 {
+        return Err(ServiceError::InUse);
+    }
+
+    if !Admitted::remove(&ctx.db, email).await? {
+        return Err(ServiceError::NotFound);
+    }
+
+    tracing::info!(by = by.0, "address withdrawn");
+    Ok(())
+}
+
+/// Promotes somebody to owner, or demotes them.
+///
+/// A5's first half: the last owner cannot be demoted, including by themselves. A
+/// server with no owner has no way back that does not involve a shell on the host.
+///
+/// Promotion makes a second owner equal to the first, deliberately — the alternative
+/// is a hierarchy where somebody cannot be demoted by the person they promoted, and
+/// nobody has asked for that.
+pub async fn set_ownership(
+    ctx: &Ctx,
+    actor: &Actor,
+    subject: user::Id,
+    owner: bool,
+) -> Result<()> {
+    let by = owner_only(ctx, actor).await?;
+
+    if !owner && owner_count(&ctx.db).await? <= 1 && is_owner(ctx, subject).await? {
+        return Err(ServiceError::InUse);
+    }
+
+    // An owner who cannot sign in is the same problem as no owner, arrived at from a
+    // different direction.
+    if owner && !admits_user(ctx, subject).await? {
+        return Err(ServiceError::InvalidInput);
+    }
+
+    set_owner(&ctx.db, subject, owner).await?;
+    tracing::info!(by = by.0, subject = subject.0, owner, "ownership changed");
+    Ok(())
+}
+
+/// Opens the server to anybody a provider vouches for, or closes it again.
+///
+/// Logged loudly on the way in, exactly as `ALLOWED_EMAILS="*"` is: it is a
+/// legitimate thing to want and it should never be something that happened quietly.
+pub async fn set_open(ctx: &Ctx, actor: &Actor, open: bool) -> Result<()> {
+    let by = owner_only(ctx, actor).await?;
+
+    Server::set_admits_anyone(&ctx.db, open).await?;
+
+    if open {
+        tracing::warn!(by = by.0, "the server now admits anyone who can sign in");
+    } else {
+        tracing::info!(by = by.0, "the server admits only listed addresses");
     }
 
     Ok(())

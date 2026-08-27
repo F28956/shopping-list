@@ -2354,3 +2354,212 @@ async fn seeding_an_existing_server_gives_it_to_the_earliest_person(
         "an upgraded server was left unclaimed, so a stranger could still claim it"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Who may administer the server
+// ---------------------------------------------------------------------------
+
+/// An owner and somebody who merely uses the server, both admitted.
+async fn a_server_with_an_owner(pool: &SqlitePool) -> (Ctx, Actor, Actor) {
+    use crate::models::admission::set_owner;
+    use crate::models::user;
+    use crate::service::identity;
+
+    let ctx = admitting(pool, "owner@example.com, guest@example.com").await;
+
+    let mut who = Vec::new();
+    for name in ["owner", "guest"] {
+        who.push(
+            identity::from_claims(
+                &ctx,
+                "google",
+                user::Sub(name.into()),
+                None,
+                Some(user::Email(format!("{name}@example.com"))),
+            )
+            .await
+            .unwrap(),
+        );
+    }
+
+    let guest = who.pop().unwrap();
+    let owner = who.pop().unwrap();
+    set_owner(&ctx.db, owner.person().unwrap().id, true).await.unwrap();
+
+    (ctx, owner, guest)
+}
+
+#[rstest]
+#[tokio::test]
+async fn an_owner_admits_and_withdraws(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user::Email;
+    use crate::service::admission;
+
+    let (ctx, owner, _) = a_server_with_an_owner(&pool).await;
+    let her = Email("her@example.com".into());
+
+    admission::admit(&ctx, &owner, &her, None).await.unwrap();
+    assert!(admission::admits_email(&ctx, Some(&her)).await.unwrap());
+
+    admission::withdraw(&ctx, &owner, &her).await.unwrap();
+    assert!(!admission::admits_email(&ctx, Some(&her)).await.unwrap());
+}
+
+/// Everything on the owner's screen is refused to somebody who merely uses the server.
+/// Using it is not administering it.
+#[rstest]
+#[tokio::test]
+async fn a_guest_cannot_administer_anything(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user::Email;
+    use crate::service::admission;
+
+    let (ctx, owner, guest) = a_server_with_an_owner(&pool).await;
+    let her = Email("her@example.com".into());
+    let owner_id = owner.person().unwrap().id;
+
+    assert_eq!(admission::listing(&ctx, &guest).await.err(), Some(ServiceError::Forbidden));
+    assert_eq!(
+        admission::admit(&ctx, &guest, &her, None).await.err(),
+        Some(ServiceError::Forbidden)
+    );
+    assert_eq!(
+        admission::withdraw(&ctx, &guest, &Email("owner@example.com".into()))
+            .await
+            .err(),
+        Some(ServiceError::Forbidden)
+    );
+    assert_eq!(
+        admission::set_ownership(&ctx, &guest, guest.person().unwrap().id, true)
+            .await
+            .err(),
+        Some(ServiceError::Forbidden),
+        "a guest promoted themselves"
+    );
+    assert_eq!(
+        admission::set_ownership(&ctx, &guest, owner_id, false).await.err(),
+        Some(ServiceError::Forbidden),
+        "a guest demoted the owner"
+    );
+    assert_eq!(
+        admission::set_open(&ctx, &guest, true).await.err(),
+        Some(ServiceError::Forbidden),
+        "a guest opened the server to everybody"
+    );
+}
+
+/// A5. A server with no owner has no way back that does not involve `sqlite3` on the
+/// host, and the person most likely to arrange it is the owner tidying up.
+#[rstest]
+#[tokio::test]
+async fn the_last_owner_cannot_be_demoted(#[future(awt)] pool: SqlitePool) {
+    use crate::service::admission;
+
+    let (ctx, owner, _) = a_server_with_an_owner(&pool).await;
+    let owner_id = owner.person().unwrap().id;
+
+    assert_eq!(
+        admission::set_ownership(&ctx, &owner, owner_id, false).await.err(),
+        Some(ServiceError::InUse),
+        "the last owner demoted themselves"
+    );
+    assert!(admission::is_owner(&ctx, owner_id).await.unwrap());
+}
+
+/// The same rule reached from the other direction: withdrawing your own admission
+/// signs you out, and removal takes effect on the very next request.
+#[rstest]
+#[tokio::test]
+async fn the_last_owner_cannot_withdraw_their_own_admission(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user::Email;
+    use crate::service::admission;
+
+    let (ctx, owner, _) = a_server_with_an_owner(&pool).await;
+
+    assert_eq!(
+        admission::withdraw(&ctx, &owner, &Email("owner@example.com".into()))
+            .await
+            .err(),
+        Some(ServiceError::InUse)
+    );
+}
+
+/// Once there are two, either may go — they are equal, which is the whole point of a
+/// flag rather than a hierarchy.
+#[rstest]
+#[tokio::test]
+async fn with_two_owners_either_may_step_down(#[future(awt)] pool: SqlitePool) {
+    use crate::service::admission;
+
+    let (ctx, owner, guest) = a_server_with_an_owner(&pool).await;
+    let owner_id = owner.person().unwrap().id;
+    let guest_id = guest.person().unwrap().id;
+
+    admission::set_ownership(&ctx, &owner, guest_id, true).await.unwrap();
+
+    // The promoted one demotes the one who promoted them, which is allowed on
+    // purpose: an owner who cannot be demoted by somebody they promoted is a
+    // hierarchy nobody asked for.
+    admission::set_ownership(&ctx, &guest, owner_id, false).await.unwrap();
+
+    assert!(!admission::is_owner(&ctx, owner_id).await.unwrap());
+    assert!(admission::is_owner(&ctx, guest_id).await.unwrap());
+}
+
+/// An owner who cannot sign in is the same problem as no owner, reached from a
+/// different direction.
+#[rstest]
+#[tokio::test]
+async fn somebody_who_cannot_sign_in_cannot_be_made_an_owner(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user::Email;
+    use crate::service::admission;
+
+    let (ctx, owner, guest) = a_server_with_an_owner(&pool).await;
+    let guest_id = guest.person().unwrap().id;
+
+    admission::withdraw(&ctx, &owner, &Email("guest@example.com".into()))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        admission::set_ownership(&ctx, &owner, guest_id, true).await.err(),
+        Some(ServiceError::InvalidInput)
+    );
+}
+
+/// Opening the server is a legitimate thing to want, and it must be something
+/// somebody did rather than something that happened.
+#[rstest]
+#[tokio::test]
+async fn an_owner_can_open_the_server_and_close_it_again(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user::Email;
+    use crate::service::admission;
+
+    let (ctx, owner, _) = a_server_with_an_owner(&pool).await;
+    let stranger = Email("stranger@example.com".into());
+
+    assert!(!admission::admits_email(&ctx, Some(&stranger)).await.unwrap());
+
+    admission::set_open(&ctx, &owner, true).await.unwrap();
+    assert!(admission::admits_email(&ctx, Some(&stranger)).await.unwrap());
+
+    admission::set_open(&ctx, &owner, false).await.unwrap();
+    assert!(!admission::admits_email(&ctx, Some(&stranger)).await.unwrap());
+}
+
+/// Withdrawing something nobody admitted is a mistake worth reporting, not a no-op:
+/// the owner is looking at a list and expected that row to be on it.
+#[rstest]
+#[tokio::test]
+async fn withdrawing_an_address_that_was_never_admitted(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user::Email;
+    use crate::service::admission;
+
+    let (ctx, owner, _) = a_server_with_an_owner(&pool).await;
+
+    assert_eq!(
+        admission::withdraw(&ctx, &owner, &Email("nobody@example.com".into()))
+            .await
+            .err(),
+        Some(ServiceError::NotFound)
+    );
+}
