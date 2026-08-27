@@ -26,6 +26,10 @@ tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring
 hyper = "1.11.0"
 hyper-util = { version = "0.1.20", features = ["server-auto", "tokio"] }
 tower = "0.5"
+# `webpki-roots` is what gives `AcmeConfig::new` a client configuration to reach the
+# CA with; without it only the bring-your-own-roots constructor exists.
+rustls-acme = { version = "0.15", default-features = false, features = ["ring", "tls12", "tokio", "webpki-roots"] }
+tokio-stream = "0.1"
 
 [dev-dependencies]
 api = { path = "../api", features = ["test-support"] }

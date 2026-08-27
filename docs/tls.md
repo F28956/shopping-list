@@ -1,8 +1,13 @@
 # Serving HTTPS, and keeping the certificate fresh
 
-**Partly built.** `TLS_MODE` is `off`, `files` or `acme`; the first two work, and
-`acme` is refused at startup rather than pretended at. T2, T7, T9, T10 and T12 are
-done; T3, T8 and T11's certificate detail arrive with `acme`.
+**Built**, bar the parts marked Open below. `TLS_MODE` is `off`, `files` or `acme`,
+and all three work.
+
+One thing this document did not say and should have: **the plain listener answers
+`/healthz` and redirects everything else.** T11 leans on that — a server that cannot
+get a certificate serves no HTTPS at all, so redirecting the health check to a port
+that will not complete a handshake hides the reason at exactly the moment somebody is
+looking for it.
 
 Both arrangements are supported and neither is assumed — T1's default stands, but the
 operator guide leads with the reverse proxy, which is the configuration most people

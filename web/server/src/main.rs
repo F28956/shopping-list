@@ -92,11 +92,14 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("reachable from this network at {address}");
     }
 
+    let status = tls::Status::for_mode(&tls.mode);
+
     if let Some(port) = tls.redirect_port {
-        redirect_listener(port, tls.port);
+        redirect_listener(port, tls.port, status.clone());
     }
 
-    tls::serve(&tls.mode, listener, app(api_state, web_state, sessions, &tls)).await
+    let app = app(api_state, web_state, sessions, status.clone(), hsts(&tls.mode));
+    tls::serve(&tls.mode, listener, app, status).await
 }
 
 /// The code that claims an unclaimed server, printed where its operator is looking.
@@ -177,19 +180,18 @@ fn app(
     api_state: ApiState,
     web_state: web::AppState,
     sessions: SqliteSessions,
-    tls: &tls::Settings,
+    tls: tls::Status,
+    hsts: Option<HeaderValue>,
 ) -> Router {
     // T11. A supervisor wants a status code and a person wants to know whether the
     // certificate is the thing that is wrong, and the second is free.
-    let health = format!("ok\ntls: {}\n", tls.mode.name());
-
     Router::new()
-        .route("/healthz", get(move || async move { health }))
+        .route("/healthz", get(move || async move { format!("ok\ntls: {}\n", tls.line()) }))
         .nest("/api", api::router().with_state(api_state))
         .merge(web::router(web_state, sessions))
         .layer(CatchPanicLayer::new())
         .layer(TraceLayer::new_for_http())
-        .layer(security_headers(hsts(&tls.mode)))
+        .layer(security_headers(hsts))
 }
 
 /// The plain-HTTP listener, which serves no application (T9).
@@ -200,7 +202,7 @@ fn app(
 ///
 /// Failing to bind is a warning and not a failure: the redirect is a courtesy, and a
 /// process that cannot have port 80 should still serve the application.
-fn redirect_listener(port: u16, tls_port: u16) {
+fn redirect_listener(port: u16, tls_port: u16, status: tls::Status) {
     use axum::http::{StatusCode, Uri};
     use axum::response::{IntoResponse, Redirect};
 
@@ -226,7 +228,20 @@ fn redirect_listener(port: u16, tls_port: u16) {
             Redirect::permanent(&format!("https://{authority}{path}")).into_response()
         };
 
-        let app = Router::new().fallback(to_https);
+        // T11. `/healthz` answers here too, and is the one thing this listener does
+        // not redirect. A server that cannot get a certificate serves no HTTPS at all,
+        // so redirecting the health check to a port that will not complete a handshake
+        // would hide the reason at exactly the moment somebody is looking for it.
+        let health = status.clone();
+        let app = Router::new()
+            .route(
+                "/healthz",
+                get(move || {
+                    let health = health.clone();
+                    async move { format!("ok\ntls: {}\n", health.line()) }
+                }),
+            )
+            .fallback(to_https);
 
         match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
             Ok(listener) => {

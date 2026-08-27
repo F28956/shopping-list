@@ -85,9 +85,10 @@ Cheap, unrelated to each other, and all of them reduce a risk that exists today.
 
 The server becomes a thing you can hand to a person who is not you.
 
-1. **TLS** — [tls.md](tls.md), and settle T1 versus S4 first: which of in-process or
-   reverse-proxy the operator guide leads with. The capability is designed both ways;
-   only the emphasis is open, and it decides which of the two gets built first.
+1. ~~**TLS**~~ **Done.** Both arrangements, neither assumed: `TLS_MODE` is `off`
+   (behind a proxy), `files` (PEM somebody else obtained) or `acme` (ordered and
+   renewed in the process). `off` stays the default, and the operator guide leads
+   with the proxy — which settles T1 versus S4 as emphasis rather than capability.
 2. **The address at runtime** — [configuration.md](configuration.md) C1–C7. The
    single change that makes one binary serve everybody. Client work, on both
    platforms, and the only part of P1 that is not the server.

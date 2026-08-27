@@ -11,8 +11,8 @@
 //! exceptions are deliberate and are both about telling the truth rather than changing
 //! behaviour: the HSTS header (T10) and what `/healthz` says (T11).
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 use anyhow::Context;
 use axum::Router;
@@ -167,6 +167,41 @@ impl Settings {
     }
 }
 
+
+/// What `/healthz` says about the certificate (T11).
+///
+/// Shared because only the ACME task knows: an order that failed knows why, and a
+/// supervisor's health check is where somebody will be looking. "The certificate could
+/// not be renewed" is not actionable; the CA's own words are.
+#[derive(Clone)]
+pub struct Status(Arc<RwLock<String>>);
+
+impl Status {
+    pub fn for_mode(mode: &Mode) -> Self {
+        let initial = match mode {
+            Mode::Off => "off".to_string(),
+            Mode::Files { .. } => "files".to_string(),
+            Mode::Acme { domains, .. } => {
+                format!("acme, {}, no certificate yet", domains.join(", "))
+            }
+        };
+
+        Status(Arc::new(RwLock::new(initial)))
+    }
+
+    /// The line for `/healthz`. A poisoned lock answers "unknown" rather than
+    /// panicking: a health check that panics reports the wrong problem.
+    pub fn line(&self) -> String {
+        self.0.read().map(|s| s.clone()).unwrap_or_else(|_| "unknown".into())
+    }
+
+    fn set(&self, line: String) {
+        if let Ok(mut held) = self.0.write() {
+            *held = line;
+        }
+    }
+}
+
 /// Chooses the cryptography rustls will use.
 ///
 /// Required rather than tidy: two providers are in the dependency tree — `ring` here,
@@ -182,7 +217,12 @@ fn choose_cryptography() {
 
 /// Serves the application, wrapping the accepted socket when there is a certificate to
 /// wrap it with.
-pub async fn serve(mode: &Mode, listener: TcpListener, app: Router) -> anyhow::Result<()> {
+pub async fn serve(
+    mode: &Mode,
+    listener: TcpListener,
+    app: Router,
+    status: Status,
+) -> anyhow::Result<()> {
     if mode.serves_tls() {
         choose_cryptography();
     }
@@ -190,13 +230,134 @@ pub async fn serve(mode: &Mode, listener: TcpListener, app: Router) -> anyhow::R
     match mode {
         Mode::Off => Ok(axum::serve(listener, app).await?),
         Mode::Files { cert, key } => {
-            let config = from_files(cert, key)?;
-            serve_tls(listener, app, Arc::new(config)).await
+            let config = Arc::new(from_files(cert, key)?);
+            serve_tls(listener, app, move |_| config.clone()).await
         }
-        Mode::Acme { .. } => {
-            anyhow::bail!("TLS_MODE=acme is not built yet; use files, or off behind a proxy")
+        Mode::Acme { domains, contact, staging, cache } => {
+            serve_acme(listener, app, status, domains, contact.as_deref(), *staging, cache).await
         }
     }
+}
+
+/// Orders a certificate, renews it, and serves with whatever is current.
+///
+/// Renewal is folded into the process rather than into cron (T3): a new certificate
+/// lands in a resolver that the next handshake reads, connections in flight are
+/// undisturbed, and nothing restarts.
+async fn serve_acme(
+    listener: TcpListener,
+    app: Router,
+    status: Status,
+    domains: &[String],
+    contact: Option<&str>,
+    staging: bool,
+    cache: &Path,
+) -> anyhow::Result<()> {
+    use rustls_acme::caches::DirCache;
+    use rustls_acme::{AcmeConfig, is_tls_alpn_challenge};
+    use tokio_stream::StreamExt;
+
+    private_directory(cache)?;
+
+    let mut state = AcmeConfig::new(domains.to_vec())
+        .contact(contact.into_iter())
+        .cache(DirCache::new(cache.to_path_buf()))
+        .directory_lets_encrypt(!staging)
+        .state();
+
+    let challenge = state.challenge_rustls_config();
+    let ordinary = with_alpn(state.default_rustls_config());
+
+    let names = domains.join(", ");
+    let watcher = status.clone();
+    tokio::spawn(async move {
+        while let Some(event) = state.next().await {
+            match event {
+                Ok(ok) => {
+                    tracing::info!(event = ?ok, "acme");
+                    watcher.set(format!("acme, {names}, certificate in hand"));
+                }
+                // The CA's own words, not a summary of them: "the certificate could
+                // not be renewed" is not actionable, and "no A record for
+                // list.example.com" is.
+                Err(e) => {
+                    tracing::error!(error = ?e, "acme order failed; it will be retried");
+                    watcher.set(format!("acme, {names}, no certificate — {e:?}"));
+                }
+            }
+        }
+    });
+
+    // T11. If the order never succeeds, handshakes fail and this keeps trying. It does
+    // not fall back to cleartext on the same port: that would put bearer tokens on the
+    // wire in exchange for nothing, since the clients refuse `http://` in release
+    // builds anyway — so the fallback could not even produce a working app, only a
+    // working leak.
+    serve_tls(listener, app, move |hello| {
+        if is_tls_alpn_challenge(hello) {
+            tracing::info!("answering a TLS-ALPN-01 validation request");
+            challenge.clone()
+        } else {
+            ordinary.clone()
+        }
+    })
+    .await
+}
+
+/// The ACME cache directory, created private and refused if it is not (T8).
+///
+/// The account key and the certificate live here rather than in the database. Putting
+/// them in SQLite would keep "one file to back up" true, which is a real property of
+/// this application, and it is still wrong: the database is the thing that gets copied
+/// to a laptop to debug and attached to an issue, while the certificate is the one
+/// piece of state that is cheap to lose and expensive to leak. Losing this directory
+/// costs a fresh order. Leaking the database should not also cost the private key.
+fn private_directory(cache: &Path) -> anyhow::Result<()> {
+    let existed = cache.exists();
+
+    // Created 0700 rather than created and then checked. `create_dir_all` applies the
+    // process umask, which is 022 on almost every machine — so checking afterwards
+    // would refuse the directory this function had just made, on every fresh install.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(cache)
+            .with_context(|| format!("creating {}", cache.display()))?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(cache).with_context(|| format!("creating {}", cache.display()))?;
+
+    // Only a directory that was already there can be too open, and that is worth
+    // refusing rather than quietly narrowing: somebody chose those permissions, and
+    // widening a key's exposure silently is worse than stopping.
+    #[cfg(unix)]
+    if existed {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = std::fs::metadata(cache)?.permissions().mode() & 0o777;
+        anyhow::ensure!(
+            mode & 0o077 == 0,
+            "{} is mode {mode:o}; it holds a private key and must be 0700",
+            cache.display()
+        );
+    }
+
+    let _ = existed;
+    Ok(())
+}
+
+/// Advertises HTTP/2, which `rustls-acme` does not do for us.
+///
+/// Without it every connection is HTTP/1.1 — which works, and is a quiet halving of
+/// throughput that would be very hard to notice.
+fn with_alpn(config: Arc<rustls::ServerConfig>) -> Arc<rustls::ServerConfig> {
+    let mut config = (*config).clone();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Arc::new(config)
 }
 
 /// Reads a certificate chain and its key.
@@ -232,28 +393,41 @@ fn from_files(cert: &PathBuf, key: &PathBuf) -> anyhow::Result<rustls::ServerCon
 
 /// The accept loop for a listener that terminates TLS.
 ///
+/// `configure` is handed each `ClientHello` and answers with the configuration for
+/// that connection. Under `files` it ignores the hello and returns the one
+/// certificate; under `acme` it is how a validation handshake is told apart from a
+/// person's, which is what makes TLS-ALPN-01 arrive on the same socket as ordinary
+/// traffic rather than needing a second listener.
+///
 /// A handshake that fails is logged at `debug` and dropped. It is not worth waking
 /// anybody for: a port on the internet collects probes, and every one of them would
 /// otherwise be a warning.
-async fn serve_tls(
-    listener: TcpListener,
-    app: Router,
-    config: Arc<rustls::ServerConfig>,
-) -> anyhow::Result<()> {
+async fn serve_tls<F>(listener: TcpListener, app: Router, configure: F) -> anyhow::Result<()>
+where
+    F: Fn(&rustls::server::ClientHello) -> Arc<rustls::ServerConfig> + Send + Sync + Clone + 'static,
+{
     use hyper_util::rt::{TokioExecutor, TokioIo};
     use hyper_util::server::conn::auto::Builder;
-    use tokio_rustls::TlsAcceptor;
+    use tokio_rustls::LazyConfigAcceptor;
     use tower::Service;
-
-    let acceptor = TlsAcceptor::from(config);
 
     loop {
         let (socket, peer) = listener.accept().await?;
-        let acceptor = acceptor.clone();
         let app = app.clone();
+        let configure = configure.clone();
 
         tokio::spawn(async move {
-            let stream = match acceptor.accept(socket).await {
+            let start = match LazyConfigAcceptor::new(Default::default(), socket).await {
+                Ok(start) => start,
+                Err(e) => {
+                    tracing::debug!(%peer, error = %e, "no usable client hello");
+                    return;
+                }
+            };
+
+            let config = configure(&start.client_hello());
+
+            let stream = match start.into_stream(config).await {
                 Ok(stream) => stream,
                 Err(e) => {
                     tracing::debug!(%peer, error = %e, "TLS handshake failed");
