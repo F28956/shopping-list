@@ -243,7 +243,7 @@ pub unsafe extern "C" fn quickadd_resolve(input: *const c_char) -> *mut c_char {
             let units: Vec<parsing::add::Unit> = asked
                 .units
                 .into_iter()
-                .map(|u| parsing::add::Unit { id: u.id, name: u.name })
+                .map(|u| parsing::add::Unit { id: u.id, name: u.name, bare: u.bare })
                 .collect();
             let rows: Vec<parsing::add::Row> = asked
                 .rows
@@ -296,6 +296,11 @@ struct Asked {
 struct AskedUnit {
     id: i64,
     name: String,
+    /// Whether it may be written with no number in front of it -- `pint milk`.
+    /// Defaulted, so a caller that has not learned about this yet keeps the old
+    /// behaviour rather than reading every unit that way.
+    #[serde(default)]
+    bare: bool,
 }
 
 #[derive(serde::Deserialize)]

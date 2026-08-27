@@ -31,6 +31,9 @@ pub struct Row {
 pub struct Unit {
     pub id: i64,
     pub name: String,
+    /// Whether this unit means something written with no number in front of it --
+    /// `pint milk`. See [`crate::quick_add::parse_with`] for why it is per unit.
+    pub bare: bool,
 }
 
 /// What this list's history knows about a name.
@@ -127,7 +130,12 @@ pub fn resolve(
     remembered: Option<&Remembered>,
 ) -> Decision {
     let names: Vec<String> = units.iter().map(|u| u.name.clone()).collect();
-    let parsed = quick_add::parse(line, &names);
+    let standalone: Vec<String> = units
+        .iter()
+        .filter(|u| u.bare)
+        .map(|u| u.name.clone())
+        .collect();
+    let parsed = quick_add::parse_with(line, &names, &standalone);
     let unit_id = unit_for(parsed.unit.as_deref(), remembered, units);
     let amount = amount_for(&parsed, remembered);
 
@@ -148,9 +156,9 @@ mod tests {
 
     fn units() -> Vec<Unit> {
         vec![
-            Unit { id: 1, name: "unit".into() },
-            Unit { id: 2, name: "kg".into() },
-            Unit { id: 3, name: "pint".into() },
+            Unit { id: 1, name: "unit".into(), bare: false },
+            Unit { id: 2, name: "kg".into(), bare: true },
+            Unit { id: 3, name: "pint".into(), bare: true },
         ]
     }
 
@@ -280,5 +288,18 @@ mod tests {
             resolve("1 kg apples", &units(), &[], Some(&remembered)),
             Decision::New { amount, .. } if amount == 1.0
         ));
+    }
+
+    #[test]
+    fn a_unit_with_no_number_is_still_a_unit() {
+        assert_eq!(
+            resolve("pint milk", &units(), &[], None),
+            Decision::New {
+                name: "milk".into(),
+                amount: 1.0,
+                unit_id: Some(3),
+                tag_ids: vec![],
+            }
+        );
     }
 }

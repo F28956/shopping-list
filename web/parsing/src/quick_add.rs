@@ -44,16 +44,73 @@ pub struct QuickAdd {
 /// 50` becomes fifty of "factor". Both are wrong, and both are the same rule that
 /// makes `6 eggs` and `apples 6` right. The editor is one tap away.
 pub fn parse(input: &str, known: &[String]) -> QuickAdd {
+    parse_with(input, known, &[])
+}
+
+/// As [`parse`], and also reads a unit written with no number in front of it.
+///
+/// `pint milk` is one pint of milk and everybody knows it, but only some units can be
+/// read that way. Half of them are also the first word of ordinary things to buy --
+/// `can opener`, `tin foil`, `box grater`, `tube socks`, `pound cake` -- and reading
+/// those as a quantity would be worse than not helping. So `standalone` names the ones
+/// that may, and it comes from the units table rather than from a guess here: it is a
+/// fact about each unit, and the server and the clients read it from the same place.
+///
+/// A number still wins wherever there is one. This only runs when neither end has one.
+pub fn parse_with(input: &str, known: &[String], standalone: &[String]) -> QuickAdd {
     let text = input.trim();
 
     leading(text, known)
         .or_else(|| trailing(text, known))
+        .or_else(|| bare_unit(text, standalone))
         .unwrap_or_else(|| QuickAdd {
             name: text.to_string(),
             amount: 1.0,
             stated: false,
             unit: None,
         })
+}
+
+/// `pint milk` — a unit that may stand alone, then the name.
+///
+/// Leading only. A trailing one (`milk pint`) is left alone deliberately: it reads far
+/// less like a quantity, and `orange squash pint` is the shape of a name more often
+/// than it is the shape of an order.
+fn bare_unit(text: &str, standalone: &[String]) -> Option<QuickAdd> {
+    // Longest first, so `fl oz` beats a hypothetical `fl` -- the same reason `leading`
+    // sorts them.
+    let mut candidates: Vec<&String> = standalone.iter().collect();
+    candidates.sort_by_key(|u| std::cmp::Reverse(u.len()));
+
+    for unit in candidates {
+        let Some(rest) = strip_leading_word(text, unit) else { continue };
+        if rest.is_empty() {
+            // `pint` on its own is a thing somebody wants one of, not a quantity of
+            // nothing. Left as a name, the same way `1 dozen` is.
+            continue;
+        }
+        return Some(QuickAdd {
+            name: rest.to_string(),
+            amount: 1.0,
+            // Not stated: nobody wrote a number, so how much you usually buy still
+            // applies -- see `crate::add::amount_for`.
+            stated: false,
+            unit: Some(unit.clone()),
+        });
+    }
+    None
+}
+
+/// `text` with `word` removed from the front, if it is there as a whole word.
+fn strip_leading_word<'a>(text: &'a str, word: &str) -> Option<&'a str> {
+    let rest = text.get(..word.len()).filter(|head| head.eq_ignore_ascii_case(word))?;
+    let _ = rest;
+    let after = &text[word.len()..];
+    // A word boundary, so `mint` is not `m` followed by `int`.
+    if !after.is_empty() && !after.starts_with(char::is_whitespace) {
+        return None;
+    }
+    Some(after.trim_start())
 }
 
 /// `2 kg apples` — a number, then perhaps a unit, then the name.
@@ -350,5 +407,83 @@ mod tests {
     fn an_empty_line_stays_empty() {
         // The CHECK constraint rejects it downstream; this must not invent a name.
         assert_eq!(parse("   ", &units()).name, "");
+    }
+
+    fn standalone() -> Vec<String> {
+        ["kg", "pint", "litre", "fl oz", "dozen"].iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The shared fixture plus `pint`, which these cases are mostly about.
+    fn units_including_pint() -> Vec<String> {
+        let mut all = units();
+        all.push("pint".to_string());
+        all
+    }
+
+    /// A unit with no number in front of it.
+    #[rstest]
+    // The case this exists for.
+    #[case("pint milk", "milk", 1.0, Some("pint"))]
+    #[case("kg apples", "apples", 1.0, Some("kg"))]
+    #[case("dozen eggs", "eggs", 1.0, Some("dozen"))]
+    // Case and spacing, as everywhere else here.
+    #[case("PINT milk", "milk", 1.0, Some("pint"))]
+    #[case("  pint   milk  ", "milk", 1.0, Some("pint"))]
+    // Two words, and the longer match wins.
+    #[case("fl oz cream", "cream", 1.0, Some("fl oz"))]
+    // A number still wins wherever there is one.
+    #[case("2 pint milk", "milk", 2.0, Some("pint"))]
+    // Whole words only: `mint` is not `m` and then `int`.
+    #[case("mint sauce", "mint sauce", 1.0, None)]
+    // Nothing left over is a name, not a quantity of nothing -- as `1 dozen` is.
+    #[case("pint", "pint", 1.0, None)]
+    fn reads_a_unit_written_without_a_number(
+        #[case] input: &str,
+        #[case] name: &str,
+        #[case] amount: f64,
+        #[case] unit: Option<&str>,
+    ) {
+        let got = parse_with(input, &units_including_pint(), &standalone());
+        assert_eq!(got.name, name, "name, parsing {input:?}");
+        assert_eq!(got.amount, amount, "amount, parsing {input:?}");
+        assert_eq!(got.unit.as_deref(), unit, "unit, parsing {input:?}");
+    }
+
+    /// The units that may **not** stand alone, which is most of them.
+    ///
+    /// These are the reason the rule is per unit rather than for every unit: each of
+    /// these is an ordinary thing to buy whose name happens to start with a unit, and
+    /// reading it as a quantity would be worse than not helping at all.
+    #[rstest]
+    #[case("can opener")]
+    #[case("tin foil")]
+    #[case("box grater")]
+    #[case("tube socks")]
+    #[case("bag clips")]
+    #[case("roll mat")]
+    #[case("pound cake")]
+    #[case("cup cakes")]
+    fn leaves_names_that_begin_with_a_unit_alone(#[case] input: &str) {
+        // The real table, so this fails the day somebody marks one of these `bare`.
+        let all: Vec<String> = [
+            "unit", "pair", "dozen", "pack", "box", "bag", "bottle", "can", "jar",
+            "tin", "tube", "sachet", "roll", "bunch", "punnet", "loaf", "slice", "g",
+            "kg", "oz", "pound", "ml", "litre", "fl oz", "pint", "gallon", "tsp",
+            "tbsp", "cup", "cm", "m",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let bare: Vec<String> = [
+            "g", "kg", "oz", "ml", "litre", "fl oz", "pint", "gallon", "tsp", "tbsp",
+            "cm", "m", "dozen",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        let got = parse_with(input, &all, &bare);
+        assert_eq!(got.name, input, "{input:?} was read as a quantity");
+        assert_eq!(got.unit, None, "{input:?} was read as a quantity");
     }
 }

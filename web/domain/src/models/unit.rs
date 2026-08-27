@@ -19,6 +19,10 @@ pub const MAX_NAME: usize = 64;
 pub struct Unit {
     pub id: Id,
     pub name: Name,
+    /// Whether this unit means something written with no number in front of it --
+    /// `pint milk`. Data rather than a rule in code, because it is a fact about each
+    /// unit and the clients need the same answer; see `parsing::quick_add::parse_with`.
+    pub bare: bool,
     pub created_at: CreatedAt,
 }
 
@@ -69,6 +73,7 @@ impl Unit {
             RETURNING
                 id          as "id: Id",
                 name        as "name: Name",
+                bare        as "bare!: bool",
                 created_at  as "created_at: CreatedAt"
             "#,
             name,
@@ -91,6 +96,7 @@ impl Unit {
             RETURNING
                 id          as "id: Id",
                 name        as "name: Name",
+                bare        as "bare!: bool",
                 created_at  as "created_at: CreatedAt"
             "#,
             name,
@@ -148,6 +154,7 @@ impl Unit {
         SELECT
             id          as "id: Id",
             name        as "name: Name",
+            bare        as "bare!: bool",
             created_at  as "created_at: CreatedAt"
         FROM units
         ORDER BY
@@ -203,6 +210,7 @@ impl Unit {
                 SELECT
                     id          as "id: Id",
                     name        as "name: Name",
+                    bare        as "bare!: bool",
                     created_at  as "created_at: CreatedAt"
                 FROM units
                 WHERE id = ?1 "#,
@@ -219,6 +227,7 @@ impl Unit {
                 SELECT
                     id          as "id: Id",
                     name        as "name: Name",
+                    bare        as "bare!: bool",
                     created_at  as "created_at: CreatedAt"
                 FROM units
                 WHERE name = ?1 "#,

@@ -38,10 +38,11 @@ mod tests {
 
         let file: Value = serde_json::from_str(JSON).expect("reference.json is not JSON");
 
-        let units: Vec<(i64, String)> = sqlx::query_as("SELECT id, name FROM units ORDER BY id")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
+        let units: Vec<(i64, String, bool)> =
+            sqlx::query_as("SELECT id, name, bare FROM units ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
 
         let listed = file["units"].as_array().expect("no units in the file");
         assert_eq!(
@@ -52,9 +53,18 @@ mod tests {
             units.len()
         );
 
-        for (row, (id, name)) in listed.iter().zip(&units) {
+        for (row, (id, name, bare)) in listed.iter().zip(&units) {
             assert_eq!(row["id"].as_i64(), Some(*id), "unit ids differ: {row}");
             assert_eq!(row["name"].as_str(), Some(name.as_str()), "unit names differ");
+            // Which units may be written without a number is a rule the clients run
+            // for themselves -- see `parsing::quick_add::parse_with`. A phone that
+            // disagreed with the server about this would read `pint milk` one way and
+            // have it corrected to another on the next drain.
+            assert_eq!(
+                row["bare"].as_bool(),
+                Some(*bare),
+                "the file and the migrations disagree about whether {name} stands alone"
+            );
         }
 
         let tags: Vec<(i64, String, String, i64)> =

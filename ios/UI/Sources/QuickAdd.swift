@@ -98,7 +98,7 @@ enum QuickAdd {
     ) -> Resolution {
         var input: [String: Any] = [
             "line": line,
-            "units": units.map { ["id": $0.id, "name": $0.name] },
+            "units": units.map { ["id": $0.id, "name": $0.name, "bare": $0.bare] },
             "rows": rows.map {
                 [
                     "uuid": $0.uuid,

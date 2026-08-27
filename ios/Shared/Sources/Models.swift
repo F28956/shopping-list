@@ -233,6 +233,32 @@ struct ServerAbout: Decodable {
 struct Unit: Identifiable, Decodable, Hashable {
     let id: Int64
     let name: String
+    /// Whether this unit means something written with no number in front of it —
+    /// `pint milk`. Not every unit may be: half of them are also the first word of
+    /// ordinary things to buy, and `can opener` is not one can of opener. It is a fact
+    /// about each unit rather than a rule here, so the server and this agree.
+    ///
+    /// Absent is `false`, and it has to be spelled out: Swift's synthesised decoder
+    /// ignores a property's default value and throws on a missing key, so a server
+    /// that predates this column would have failed to decode a single unit.
+    let bare: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, bare
+    }
+
+    init(id: Int64, name: String, bare: Bool = false) {
+        self.id = id
+        self.name = name
+        self.bare = bare
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int64.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        bare = try c.decodeIfPresent(Bool.self, forKey: .bare) ?? false
+    }
 }
 
 struct Tag: Identifiable, Decodable, Hashable {

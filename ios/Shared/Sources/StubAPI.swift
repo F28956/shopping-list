@@ -44,7 +44,11 @@
 
         /// Units and tags are reference data on the real server too — seeded by
         /// migration, ordered by where they fall in a shop.
-        let units: [(Int64, String)] = [(1, "kg"), (2, "unit"), (3, "pint")]
+        /// The third is `bare`: whether it may be written with no number in front of
+        /// it. `kg` and `pint` may; `unit` may not, being a word that starts names.
+        let units: [(Int64, String, Bool)] = [
+            (1, "kg", true), (2, "unit", false), (3, "pint", true),
+        ]
         let tags: [(Int64, String, Int64, String?)] = [
             (10, "produce", 10, nil),
             (20, "fruits", 20, "🍎"),
@@ -157,7 +161,9 @@
         }
 
         func unitsJSON() -> String {
-            let items = units.map { #"{"id": \#($0.0), "name": "\#($0.1)"}"# }
+            let items = units.map {
+                #"{"id": \#($0.0), "name": "\#($0.1)", "bare": \#($0.2)}"#
+            }
             return page(items)
         }
 

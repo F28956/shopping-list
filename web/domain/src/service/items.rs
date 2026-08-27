@@ -140,7 +140,7 @@ async fn measured_or_counted(ctx: &Ctx, asked: Option<unit::Id>) -> Option<unit:
         .unwrap_or_default();
     let shared: Vec<parsing::add::Unit> = units
         .iter()
-        .map(|u| parsing::add::Unit { id: u.id.0, name: u.name.0.clone() })
+        .map(|u| parsing::add::Unit { id: u.id.0, name: u.name.0.clone(), bare: u.bare })
         .collect();
 
     parsing::add::unit_for(None, None, &shared).map(unit::Id)
@@ -316,7 +316,15 @@ pub async fn quick_add(
     let units = unit::Unit::list(&ctx.db, super::everything(), super::by_name()).await?;
     let names: Vec<String> = units.items.iter().map(|u| u.name.0.clone()).collect();
 
-    let parsed = quick_add::parse(line, &names);
+    let standalone: Vec<String> = units
+        .items
+        .iter()
+        .filter(|u| u.bare)
+        .map(|u| u.name.0.clone())
+        .collect();
+    // `pint milk` is one pint of milk. Only some units may be read that way -- see
+    // `parsing::quick_add::parse_with`.
+    let parsed = quick_add::parse_with(line, &names, &standalone);
     let name = Name(parsed.name.clone());
 
     // What the line said, if it said anything.
@@ -327,7 +335,7 @@ pub async fn quick_add(
     let shared: Vec<parsing::add::Unit> = units
         .items
         .iter()
-        .map(|u| parsing::add::Unit { id: u.id.0, name: u.name.0.clone() })
+        .map(|u| parsing::add::Unit { id: u.id.0, name: u.name.0.clone(), bare: u.bare })
         .collect();
     let held = remembered.as_ref().map(|e| parsing::add::Remembered {
         unit_id: e.unit_id.map(|u| u.0),

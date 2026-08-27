@@ -3,127 +3,158 @@
   "units": [
     {
       "id": 1,
-      "name": "unit"
+      "name": "unit",
+      "bare": false
     },
     {
       "id": 2,
-      "name": "pair"
+      "name": "pair",
+      "bare": false
     },
     {
       "id": 3,
-      "name": "dozen"
+      "name": "dozen",
+      "bare": true
     },
     {
       "id": 4,
-      "name": "pack"
+      "name": "pack",
+      "bare": false
     },
     {
       "id": 5,
-      "name": "box"
+      "name": "box",
+      "bare": false
     },
     {
       "id": 6,
-      "name": "bag"
+      "name": "bag",
+      "bare": false
     },
     {
       "id": 7,
-      "name": "bottle"
+      "name": "bottle",
+      "bare": false
     },
     {
       "id": 8,
-      "name": "can"
+      "name": "can",
+      "bare": false
     },
     {
       "id": 9,
-      "name": "jar"
+      "name": "jar",
+      "bare": false
     },
     {
       "id": 10,
-      "name": "tin"
+      "name": "tin",
+      "bare": false
     },
     {
       "id": 11,
-      "name": "tube"
+      "name": "tube",
+      "bare": false
     },
     {
       "id": 12,
-      "name": "sachet"
+      "name": "sachet",
+      "bare": false
     },
     {
       "id": 13,
-      "name": "roll"
+      "name": "roll",
+      "bare": false
     },
     {
       "id": 14,
-      "name": "bunch"
+      "name": "bunch",
+      "bare": false
     },
     {
       "id": 15,
-      "name": "punnet"
+      "name": "punnet",
+      "bare": false
     },
     {
       "id": 16,
-      "name": "loaf"
+      "name": "loaf",
+      "bare": false
     },
     {
       "id": 17,
-      "name": "slice"
+      "name": "slice",
+      "bare": false
     },
     {
       "id": 18,
-      "name": "g"
+      "name": "g",
+      "bare": true
     },
     {
       "id": 19,
-      "name": "kg"
+      "name": "kg",
+      "bare": true
     },
     {
       "id": 20,
-      "name": "oz"
+      "name": "oz",
+      "bare": true
     },
     {
       "id": 21,
-      "name": "pound"
+      "name": "pound",
+      "bare": false
     },
     {
       "id": 22,
-      "name": "ml"
+      "name": "ml",
+      "bare": true
     },
     {
       "id": 23,
-      "name": "litre"
+      "name": "litre",
+      "bare": true
     },
     {
       "id": 24,
-      "name": "fl oz"
+      "name": "fl oz",
+      "bare": true
     },
     {
       "id": 25,
-      "name": "pint"
+      "name": "pint",
+      "bare": true
     },
     {
       "id": 26,
-      "name": "gallon"
+      "name": "gallon",
+      "bare": true
     },
     {
       "id": 27,
-      "name": "tsp"
+      "name": "tsp",
+      "bare": true
     },
     {
       "id": 28,
-      "name": "tbsp"
+      "name": "tbsp",
+      "bare": true
     },
     {
       "id": 29,
-      "name": "cup"
+      "name": "cup",
+      "bare": false
     },
     {
       "id": 30,
-      "name": "cm"
+      "name": "cm",
+      "bare": true
     },
     {
       "id": 31,
-      "name": "m"
+      "name": "m",
+      "bare": true
     }
   ],
   "tags": [

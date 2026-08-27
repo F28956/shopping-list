@@ -197,3 +197,57 @@ struct HistoryTests {
         #expect(row.unitID == 2)
     }
 }
+
+/// Reading a unit written with no number in front of it.
+///
+/// The rule and the data both come from the shared core — `parsing::quick_add` decides,
+/// and each unit's `bare` says whether it may. These check the crossing and the two
+/// answers that matter.
+struct BareUnitTests {
+    private let units = [
+        Unit(id: 1, name: "unit", bare: false),
+        Unit(id: 3, name: "pint", bare: true),
+        Unit(id: 8, name: "can", bare: false),
+    ]
+
+    @Test("a unit that stands alone is read as one")
+    func aBareUnitIsAUnit() {
+        guard case .new(let row) = QuickAdd.resolve(
+            "pint milk",
+            units: units,
+            rows: [],
+            remembered: nil
+        ) else {
+            Issue.record("expected a new row")
+            return
+        }
+        #expect(row.name == "milk")
+        #expect(row.amount == 1)
+        #expect(row.unitID == 3)
+    }
+
+    @Test("a name that begins with a unit that does not stand alone is left alone")
+    func canOpenerIsNotOneCanOfOpener() {
+        guard case .new(let row) = QuickAdd.resolve(
+            "can opener",
+            units: units,
+            rows: [],
+            remembered: nil
+        ) else {
+            Issue.record("expected a new row")
+            return
+        }
+        #expect(row.name == "can opener", "it was read as a quantity")
+        #expect(row.unitID == 1, "it should be counted, not measured in cans")
+    }
+
+    @Test("a unit is decoded as not standing alone when the server does not say")
+    func anOlderServerSaysNothing() throws {
+        // A server that predates the column. Swift's synthesised decoder ignores
+        // default values and throws on a missing key, so without the explicit
+        // initialiser this would fail to decode at all rather than defaulting.
+        let json = Data(#"{"id": 3, "name": "pint"}"#.utf8)
+        let unit = try JSONDecoder().decode(Unit.self, from: json)
+        #expect(unit.bare == false)
+    }
+}

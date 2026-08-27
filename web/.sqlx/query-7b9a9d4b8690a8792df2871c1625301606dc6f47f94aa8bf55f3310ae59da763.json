@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n                SELECT\n                    id          as \"id: Id\",\n                    name        as \"name: Name\",\n                    created_at  as \"created_at: CreatedAt\"\n                FROM units\n                WHERE name = ?1 ",
+  "query": "\n                SELECT\n                    id          as \"id: Id\",\n                    name        as \"name: Name\",\n                    bare        as \"bare!: bool\",\n                    created_at  as \"created_at: CreatedAt\"\n                FROM units\n                WHERE name = ?1 ",
   "describe": {
     "columns": [
       {
@@ -26,8 +26,19 @@
         }
       },
       {
-        "name": "created_at: CreatedAt",
+        "name": "bare!: bool",
         "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "units",
+            "name": "bare"
+          }
+        }
+      },
+      {
+        "name": "created_at: CreatedAt",
+        "ordinal": 3,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -43,8 +54,9 @@
     "nullable": [
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "8f1956982783f7b98e27cdd41d93dcf1cb11ac9bfac172f33b1ee0f711eb3fad"
+  "hash": "7b9a9d4b8690a8792df2871c1625301606dc6f47f94aa8bf55f3310ae59da763"
 }
