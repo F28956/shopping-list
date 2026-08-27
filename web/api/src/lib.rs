@@ -23,6 +23,11 @@ use crate::state::AppState;
 /// [`auth::CurrentUser`].
 pub fn router() -> Router<AppState> {
     Router::new()
+        // Who may use this server at all, as opposed to who may see a list.
+        .nest("/admissions", routes::admissions::router())
+        // What a client may know before anybody has signed in, and the one-time
+        // claim -- see the module.
+        .nest("/server", routes::admissions::server_router())
         .nest("/lists", routes::lists::router())
         // Items are nested under their list because the list is what authorises them
         .nest("/lists/{list_id}/items", routes::items::router())

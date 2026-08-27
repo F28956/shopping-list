@@ -5,6 +5,7 @@
 #[cfg(test)]
 mod tests;
 
+pub mod admissions;
 pub mod history;
 pub mod items;
 pub mod lists;

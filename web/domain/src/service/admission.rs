@@ -265,6 +265,32 @@ pub async fn set_ownership(
     Ok(())
 }
 
+/// Promotes or demotes the person behind an admitted address.
+///
+/// By address rather than by id because that is what the owner's screen shows, and
+/// because an address that nobody has used yet has no id to name. Somebody who has
+/// never signed in cannot be promoted: there is no user to make an owner, and the
+/// alternative — a pending promotion that fires on first sign-in — is a second kind of
+/// state to keep in step for a case that can wait until they arrive.
+pub async fn set_ownership_of(
+    ctx: &Ctx,
+    actor: &Actor,
+    email: &Email,
+    owner: bool,
+) -> Result<()> {
+    owner_only(ctx, actor).await?;
+
+    let row = Admitted::all(&ctx.db)
+        .await?
+        .into_iter()
+        .find(|row| row.email.0 == key(email))
+        .ok_or(ServiceError::NotFound)?;
+
+    let subject = row.user_id.ok_or(ServiceError::InvalidInput)?;
+
+    set_ownership(ctx, actor, subject, owner).await
+}
+
 /// Opens the server to anybody a provider vouches for, or closes it again.
 ///
 /// Logged loudly on the way in, exactly as `ALLOWED_EMAILS="*"` is: it is a

@@ -19,7 +19,10 @@ use crate::state::{AppState, AuthMode};
 
 fn app(pool: SqlitePool) -> Router {
     let state = AppState {
-        ctx: Ctx::new(pool),
+        // Offering a claim, so that the tests about claiming can drive the real
+        // route. Every other test starts from the fixture's already-claimed server,
+        // where the code is never looked at.
+        ctx: Ctx::new(pool).awaiting_claim("TEST-CODE".into()),
         auth: AuthMode::TrustTheToken,
     };
     Router::new()
@@ -1501,4 +1504,183 @@ async fn a_session_carries_one_identity_and_not_another(#[future(awt)] pool: Sql
     let (status, _) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &auth, None)).await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ---------------------------------------------------------------------------
+// Who may use this server
+// ---------------------------------------------------------------------------
+
+/// A server with an owner and a guest, both admitted, reached over the wire.
+///
+/// Claimed through the route rather than by writing rows, so the test exercises the
+/// path a real first boot takes.
+async fn a_claimed_server(pool: &SqlitePool) -> Router {
+    let app = app(pool.clone());
+
+    sqlx::raw_sql("UPDATE server SET admits_anyone = 0, claimed_at = NULL")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    let (status, body) = send(
+        &app,
+        req("POST", "/api/server/claim", &me(), Some(json!({"code": "TEST-CODE"}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    app
+}
+
+#[rstest]
+#[tokio::test]
+async fn an_unclaimed_server_says_so_before_anybody_signs_in(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool.clone());
+    sqlx::raw_sql("UPDATE server SET claimed_at = NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // No authorization header at all: a sign-in screen has to be able to ask this
+    // before there is anybody to ask as.
+    let unauthenticated = Request::builder()
+        .uri("/api/server")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let (status, body) = send(&app, unauthenticated).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["claimed"], false);
+}
+
+#[rstest]
+#[tokio::test]
+async fn claiming_signs_the_owner_in(#[future(awt)] pool: SqlitePool) {
+    let app = a_claimed_server(&pool).await;
+
+    let (status, body) = send(&app, req("GET", "/api/me", &me(), None)).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["is_owner"], true);
+    assert_eq!(body["sub"], "google|google-oauth2|me");
+}
+
+/// The land grab A2 is about, over the wire.
+#[rstest]
+#[tokio::test]
+async fn the_wrong_code_claims_nothing_over_the_wire(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool.clone());
+    sqlx::raw_sql("UPDATE server SET admits_anyone = 0, claimed_at = NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (status, _) = send(
+        &app,
+        req("POST", "/api/server/claim", &them(), Some(json!({"code": "NOPE-NOPE"}))),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (_, body) = send(&app, req("GET", "/api/server", &me(), None)).await;
+    assert_eq!(body["claimed"], false, "a wrong code claimed the server anyway");
+}
+
+#[rstest]
+#[tokio::test]
+async fn an_owner_manages_who_may_sign_in(#[future(awt)] pool: SqlitePool) {
+    let app = a_claimed_server(&pool).await;
+
+    let (status, _) = send(
+        &app,
+        req("POST", "/api/admissions", &me(), Some(json!({"email": "her@example.com", "note": "mum"}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, listed) = send(&app, req("GET", "/api/admissions", &me(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = listed.as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{listed}");
+    assert!(rows.iter().any(|r| r["email"] == "her@example.com" && r["note"] == "mum"));
+
+    let (status, _) = send(
+        &app,
+        req("DELETE", "/api/admissions/her@example.com", &me(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, listed) = send(&app, req("GET", "/api/admissions", &me(), None)).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+}
+
+/// Every route on the owner's screen, refused to somebody who merely uses the server.
+#[rstest]
+#[tokio::test]
+async fn a_guest_is_refused_every_owner_route(#[future(awt)] pool: SqlitePool) {
+    let app = a_claimed_server(&pool).await;
+
+    // Admitted, so this is about administering and not about signing in.
+    send(
+        &app,
+        req("POST", "/api/admissions", &me(), Some(json!({"email": "google-oauth2|someone-else@example.com"}))),
+    )
+    .await;
+
+    for (method, path, body) in [
+        ("GET", "/api/admissions", None),
+        ("POST", "/api/admissions", Some(json!({"email": "x@example.com"}))),
+        ("DELETE", "/api/admissions/x@example.com", None),
+        ("POST", "/api/admissions/x@example.com/owner", None),
+        ("DELETE", "/api/admissions/x@example.com/owner", None),
+        ("PUT", "/api/server", Some(json!({"admits_anyone": true}))),
+    ] {
+        let (status, _) = send(&app, req(method, path, &them(), body)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path} was allowed");
+    }
+}
+
+/// A5 over the wire: the way to lock everybody out is refused at the door.
+#[rstest]
+#[tokio::test]
+async fn the_last_owner_cannot_demote_themselves_over_the_wire(#[future(awt)] pool: SqlitePool) {
+    let app = a_claimed_server(&pool).await;
+
+    let (_, listed) = send(&app, req("GET", "/api/admissions", &me(), None)).await;
+    let mine = listed[0]["email"].as_str().unwrap().to_string();
+
+    let (status, _) = send(
+        &app,
+        req("DELETE", &format!("/api/admissions/{mine}/owner"), &me(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let (status, _) = send(&app, req("DELETE", &format!("/api/admissions/{mine}"), &me(), None)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "the last owner withdrew themselves");
+}
+
+/// A6: open is a setting somebody turned on, and it works.
+#[rstest]
+#[tokio::test]
+async fn an_owner_can_open_the_server(#[future(awt)] pool: SqlitePool) {
+    let app = a_claimed_server(&pool).await;
+
+    // Closed: a stranger cannot get in.
+    let (status, _) = send(&app, req("GET", "/api/me", &third(), None)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = send(
+        &app,
+        req("PUT", "/api/server", &me(), Some(json!({"admits_anyone": true}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _) = send(&app, req("GET", "/api/me", &third(), None)).await;
+    assert_eq!(status, StatusCode::OK, "the server was opened and still refused somebody");
 }
