@@ -175,6 +175,59 @@ struct Person: Identifiable, Decodable, Hashable {
 /// The signed-in person, as the server knows them.
 struct Me: Decodable {
     let id: Int64
+    /// Whether this person administers *this server* — who may sign in, and who else
+    /// administers it.
+    ///
+    /// A fact about the server rather than about them: the same account on somebody
+    /// else's server is not an owner of it, which is why it arrives beside the person
+    /// rather than on them. It is not a data role — an owner has no more access to
+    /// anybody's lists than anybody else.
+    let isOwner: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case isOwner = "is_owner"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int64.self, forKey: .id)
+        // Absent on a server older than this app, where nobody is an owner because the
+        // idea did not exist. Defaulted rather than refused: the rest of `Me` is still
+        // true and the screen it gates simply does not appear.
+        isOwner = try c.decodeIfPresent(Bool.self, forKey: .isOwner) ?? false
+    }
+}
+
+/// One address that may sign in to this server.
+struct Admitted: Identifiable, Decodable, Hashable {
+    let email: String
+    /// Who it turned out to be, once they signed in. `nil` means nobody has used this
+    /// address yet — the difference between "invited" and "here".
+    let userID: Int64?
+    let note: String?
+
+    var id: String { email }
+
+    /// Whether anybody has used it. The screen says so, because withdrawing an address
+    /// somebody is using signs them out and withdrawing one nobody has used does not.
+    var isInUse: Bool { userID != nil }
+
+    enum CodingKeys: String, CodingKey {
+        case email, note
+        case userID = "user_id"
+    }
+}
+
+/// What a server says about itself, over the wire. Mirrors `ServerDirectory.About`,
+/// which is the same shape read before anybody has signed in.
+struct ServerAbout: Decodable {
+    let name: String
+    let version: String
+    /// `open`, `closed` or `unclaimed`.
+    let admission: String
+
+    var admitsAnyone: Bool { admission == "open" }
 }
 
 struct Unit: Identifiable, Decodable, Hashable {

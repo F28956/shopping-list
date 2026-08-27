@@ -2686,3 +2686,85 @@ fn a_claim_code_is_readable_and_not_reused() {
     );
     assert_ne!(new_claim_code(), new_claim_code());
 }
+
+/// The bug this is here to stop coming back: a server seeded from `ALLOWED_EMAILS`
+/// made its earliest user an owner and never bound their address, and `admits_user`
+/// only looked at bindings — so the server refused the person it had just handed
+/// itself to, permanently, with no way back that did not involve `sqlite3`.
+#[rstest]
+#[tokio::test]
+async fn a_seeded_server_lets_its_owner_in(#[future(awt)] pool: SqlitePool) {
+    use crate::models::user;
+    use crate::service::admission::{self, Admission};
+    use crate::service::identity;
+
+    let ctx = Ctx::new(pool.clone());
+
+    // Somebody who signed in before any of this existed.
+    let before = identity::from_claims(
+        &ctx,
+        "google",
+        user::Sub("me".into()),
+        None,
+        Some(user::Email("me@example.com".into())),
+    )
+    .await
+    .unwrap();
+    let id = before.person().unwrap().id;
+
+    sqlx::raw_sql("UPDATE server SET admits_anyone = 0, claimed_at = NULL; DELETE FROM admitted_emails;")
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+
+    admission::seed(&ctx, Some(&Admission::parse("me@example.com").unwrap()))
+        .await
+        .unwrap();
+
+    assert!(admission::is_owner(&ctx, id).await.unwrap());
+    assert!(
+        admission::admits_user(&ctx, id).await.unwrap(),
+        "the server handed itself to somebody it then refused to let in"
+    );
+    assert!(identity::from_session(&ctx, id.0).await.unwrap().is_some());
+}
+
+/// The same rule from the other side: an address admitted while somebody was away
+/// works the moment they come back, without waiting for a sign-in to bind it.
+#[rstest]
+#[tokio::test]
+async fn an_admitted_address_works_before_anything_bound_it(#[future(awt)] pool: SqlitePool) {
+    use crate::models::admission::Admitted;
+    use crate::models::user;
+    use crate::service::{admission, identity};
+
+    let ctx = Ctx::new(pool.clone());
+    let person = identity::from_claims(
+        &ctx,
+        "google",
+        user::Sub("her".into()),
+        None,
+        Some(user::Email("her@example.com".into())),
+    )
+    .await
+    .unwrap();
+    let id = person.person().unwrap().id;
+
+    // Closed, and admitted by an address with nothing bound to it.
+    sqlx::raw_sql("UPDATE server SET admits_anyone = 0; DELETE FROM admitted_emails;")
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+    Admitted::seed(&ctx.db, &user::Email("her@example.com".into()), None)
+        .await
+        .unwrap();
+
+    assert!(admission::admits_user(&ctx, id).await.unwrap());
+
+    // And withdrawing it still refuses them, which is the property that must survive
+    // making this more forgiving.
+    Admitted::remove(&ctx.db, &user::Email("her@example.com".into()))
+        .await
+        .unwrap();
+    assert!(!admission::admits_user(&ctx, id).await.unwrap());
+}

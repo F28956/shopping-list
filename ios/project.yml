@@ -63,6 +63,22 @@ targets:
         # change. There is no client id beside it any more: Sign in with Apple
         # identifies a native app by its bundle identifier and its entitlement.
         ShoppingListAPIBaseURL: $(SHOPPING_LIST_API_BASE_URL)
+        # C6's client half on this platform.
+        #
+        # `NSAllowsLocalNetworking` permits cleartext to the local network and nowhere
+        # else — a server on the same Wi-Fi, which is the case a household actually
+        # has. It is the one exception Apple grants without a written justification at
+        # review, unlike `NSAllowsArbitraryLoads`, which is a routine cause of
+        # rejection.
+        #
+        # It is not what enforces C6. `ServerAddress.allowsCleartext` refuses to store
+        # an `http://` address at all in a release build, so this only ever matters to
+        # a debug build talking to a machine on the desk. Both halves have to agree and
+        # both are here for the same reason: the simulator exempts `localhost`, so
+        # without this the first person to type `http://192.168.1.10` met a silent
+        # failure.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cernauskas.shoppinglist
@@ -101,6 +117,22 @@ targets:
         # unrelated app that can never talk to its phone.
         WKCompanionAppBundleIdentifier: com.cernauskas.shoppinglist
         ShoppingListAPIBaseURL: $(SHOPPING_LIST_API_BASE_URL)
+        # C6's client half on this platform.
+        #
+        # `NSAllowsLocalNetworking` permits cleartext to the local network and nowhere
+        # else — a server on the same Wi-Fi, which is the case a household actually
+        # has. It is the one exception Apple grants without a written justification at
+        # review, unlike `NSAllowsArbitraryLoads`, which is a routine cause of
+        # rejection.
+        #
+        # It is not what enforces C6. `ServerAddress.allowsCleartext` refuses to store
+        # an `http://` address at all in a release build, so this only ever matters to
+        # a debug build talking to a machine on the desk. Both halves have to agree and
+        # both are here for the same reason: the simulator exempts `localhost`, so
+        # without this the first person to type `http://192.168.1.10` met a silent
+        # failure.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         # The suffix is not decoration: watchOS requires the watch app's id to be the
@@ -135,6 +167,22 @@ targets:
       properties:
         CFBundleDisplayName: Shopping
         ShoppingListAPIBaseURL: $(SHOPPING_LIST_API_BASE_URL)
+        # C6's client half on this platform.
+        #
+        # `NSAllowsLocalNetworking` permits cleartext to the local network and nowhere
+        # else — a server on the same Wi-Fi, which is the case a household actually
+        # has. It is the one exception Apple grants without a written justification at
+        # review, unlike `NSAllowsArbitraryLoads`, which is a routine cause of
+        # rejection.
+        #
+        # It is not what enforces C6. `ServerAddress.allowsCleartext` refuses to store
+        # an `http://` address at all in a release build, so this only ever matters to
+        # a debug build talking to a machine on the desk. Both halves have to agree and
+        # both are here for the same reason: the simulator exempts `localhost`, so
+        # without this the first person to type `http://192.168.1.10` met a silent
+        # failure.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         # The same identifier as the phone app, deliberately. A Sign in with Apple

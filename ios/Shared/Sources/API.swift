@@ -181,6 +181,52 @@ actor API {
         try await get("/api/me")
     }
 
+    // MARK: - Administering the server
+
+    /// What this server says about itself, including whether it admits anybody.
+    func serverAbout() async throws -> ServerAbout {
+        try await get("/api/server")
+    }
+
+    /// Every address that may sign in. Owners only — anybody else gets a refusal.
+    func admissions() async throws -> [Admitted] {
+        try await get("/api/admissions")
+    }
+
+    /// Lets an address sign in. Admitting one twice is a double-click, not an error.
+    func admit(_ email: String, note: String?) async throws {
+        var body: [String: Any] = ["email": email]
+        if let note, !note.isEmpty { body["note"] = note }
+        try await send("POST", "/api/admissions", body)
+    }
+
+    /// Takes an address off the list. Takes effect on that person's very next request,
+    /// not whenever their session happens to expire.
+    func withdraw(_ email: String) async throws {
+        try await send("DELETE", "/api/admissions/\(escaped(email))", nil)
+    }
+
+    /// Makes somebody an owner, or stops them being one.
+    ///
+    /// The server refuses the last owner being demoted, and refuses promoting somebody
+    /// who has never signed in — there is no person yet to make an owner.
+    func setOwner(_ email: String, _ owner: Bool) async throws {
+        let path = "/api/admissions/\(escaped(email))/owner"
+        try await send(owner ? "POST" : "DELETE", path, nil)
+    }
+
+    /// Opens the server to anybody a provider vouches for, or closes it again.
+    func setAdmitsAnyone(_ open: Bool) async throws {
+        try await send("PUT", "/api/server", ["admits_anyone": open])
+    }
+
+    /// An address is a path component here, and addresses contain `+` and `@`.
+    private func escaped(_ email: String) -> String {
+        email.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? email
+    }
+
+    // MARK: - Sharing continued
+
     /// Everyone who can see this list, the owner first.
     func people(on list: List) async throws -> [Person] {
         try await get("/api/lists/\(list.id)/members")

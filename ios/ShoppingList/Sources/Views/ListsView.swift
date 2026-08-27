@@ -36,6 +36,11 @@ struct ListsView: View {
     /// Asked once, and worth asking: changing servers throws away everything on this
     /// device (C4).
     @State private var changingServer = false
+    /// Whether this person administers this server, which decides whether the screen
+    /// that manages it exists. Hiding it is a courtesy: every route behind it is
+    /// refused in the service layer to anybody else.
+    @State private var isOwner = false
+    @State private var managingServer = false
 
     /// Forgets the server and everything that came from it.
     ///
@@ -47,6 +52,31 @@ struct ListsView: View {
         cache.forgetEverything()
         identity.signOut()
         ServerDirectory.forget()
+    }
+
+    /// The menu behind the plus.
+    ///
+    /// Its own property rather than inline: the toolbar closure grew past what the
+    /// Swift type checker will do in reasonable time, and the error it gives for that
+    /// names the whole expression rather than the part at fault.
+    @ViewBuilder
+    private var menuItems: some View {
+        Button("New list", systemImage: "plus") { naming = .create }
+        Button("Join a list", systemImage: "person.badge.plus") { joining = true }
+
+        Divider()
+
+        if isOwner {
+            Button("Who may sign in", systemImage: "person.2.badge.key") {
+                managingServer = true
+            }
+            .accessibilityIdentifier("manage-server")
+        }
+
+        Button("Change server", systemImage: "server.rack", role: .destructive) {
+            changingServer = true
+        }
+        .accessibilityIdentifier("change-server")
     }
 
     var body: some View {
@@ -162,20 +192,8 @@ struct ListsView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("New list", systemImage: "plus") { naming = .create }
-                        Button("Join a list", systemImage: "person.badge.plus") {
-                            joining = true
-                        }
-                        Divider()
-                        Button("Change server", systemImage: "server.rack", role: .destructive) {
-                            changingServer = true
-                        }
-                        .accessibilityIdentifier("change-server")
-                    } label: {
-                        Label("Add", systemImage: "plus")
-                    }
-                    .accessibilityIdentifier("list.new")
+                    Menu { menuItems } label: { Label("Add", systemImage: "plus") }
+                        .accessibilityIdentifier("list.new")
                 }
             }
             // C4. Not a precaution: the cache holds rows keyed by ids and uuids the
@@ -192,6 +210,9 @@ struct ListsView: View {
                     Anything still waiting to be sent will be lost.
                     """
                 )
+            }
+            .sheet(isPresented: $managingServer) {
+                ServerPeopleView(api: api)
             }
             .sheet(item: $sharing) { list in
                 ShareSheet(list: list, api: api) { await load() }
@@ -341,6 +362,12 @@ struct ListsView: View {
             error = nil
             offline = false
             fresh = true
+            // Asked once the lists have arrived rather than beside them, because
+            // nothing on this screen waits for it — a menu item appearing a moment
+            // late is better than a screen that waits for a question about
+            // administration before it shows anybody their shopping.
+            isOwner = (try? await api.whoAmI().isOwner) ?? isOwner
+
             // The server is reachable, so anything queued anywhere goes now.
             //
             // Here as well as on the list screen, because the app opens here: a phone

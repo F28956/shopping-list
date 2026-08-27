@@ -57,12 +57,43 @@ pub async fn admits_email(ctx: &Ctx, email: Option<&Email>) -> Result<bool> {
 }
 
 /// Whether this person may sign in, whatever address they arrive with now.
+///
+/// Two ways to be admitted, and the second is what stops this locking somebody out.
+///
+/// The binding is the durable one: a provider address is not stable, and somebody who
+/// changes theirs must not lose a server holding their own lists. But a binding is
+/// written on a *successful sign-in*, so anybody admitted by a path that never went
+/// through one has none — the `ALLOWED_EMAILS` seed being exactly that. Checking the
+/// stored address as well makes the arrangement heal itself instead of refusing the
+/// person it was set up for.
+///
+/// Withdrawing still works, because it deletes the row and neither check then matches.
 pub async fn admits_user(ctx: &Ctx, user_id: user::Id) -> Result<bool> {
     if Server::admits_anyone(&ctx.db).await? {
         return Ok(true);
     }
 
-    Ok(Admitted::admits_user(&ctx.db, user_id).await?)
+    if Admitted::admits_user(&ctx.db, user_id).await? {
+        return Ok(true);
+    }
+
+    // Their address, as this server last heard it.
+    let Ok(person) = User::get(&ctx.db, user::Lookup::Id(user_id)).await else {
+        return Ok(false);
+    };
+
+    let Some(email) = person.email else {
+        return Ok(false);
+    };
+
+    if Admitted::admits_email(&ctx.db, &email).await? {
+        // Bound now, so the next request is answered by the cheap check and so that a
+        // later change of address does not undo this.
+        Admitted::bind(&ctx.db, &email, user_id).await?;
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 /// Ties an admitted address to whoever turned out to be behind it.
@@ -146,8 +177,14 @@ pub async fn seed(ctx: &Ctx, configured: Option<&Admission>) -> Result<()> {
         }
         Admission::These(listed) => {
             for address in listed {
-                Admitted::seed(&ctx.db, &Email(address.clone()), existing.as_ref().map(|u| u.id))
-                    .await?;
+                let email = Email(address.clone());
+                Admitted::seed(&ctx.db, &email, existing.as_ref().map(|u| u.id)).await?;
+
+                // Bound to whoever already holds that address, so an upgraded server
+                // does not hand ownership to somebody it then refuses to let in.
+                if let Ok(Some(person)) = User::by_email(&ctx.db, &email).await {
+                    Admitted::bind(&ctx.db, &email, person.id).await?;
+                }
             }
             tracing::info!(admitted = listed.len(), "seeded admission from ALLOWED_EMAILS");
         }
