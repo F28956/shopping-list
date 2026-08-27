@@ -2003,3 +2003,86 @@ async fn a_tag_taken_off_offline_arrives(
         "still filed: {items}"
     );
 }
+
+/// The whole memory, which is what a device syncs so it can resolve lines itself.
+///
+/// Names alone would not do it: a phone that knows `milk` was bought but not that it
+/// was a pint, under dairy, two at a time, reaches a different answer from the server
+/// for the same four letters -- and the row it drew would be corrected on the next
+/// drain.
+#[rstest]
+#[tokio::test]
+async fn the_history_can_be_taken_whole(
+    // Units to measure it in and aisles to file it under -- the test is about
+    // carrying both back.
+    #[with(fixtures::UNITS_AND_TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+
+    let (_, tags) = send(&app, req("GET", "/api/tags?order_by=name", &me(), None)).await;
+    let tag_id = tags["items"][0]["id"].as_i64().expect("no seeded tags");
+
+    // Bought, measured and filed -- the three things a client needs back.
+    let (status, added) = send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{list_id}/items"),
+            &me(),
+            Some(json!({"line": "2 kg apples"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{added}");
+    let item_id = added["id"].as_i64().unwrap();
+
+    let (status, _) = send(
+        &app,
+        req(
+            "POST",
+            &format!("/api/lists/{list_id}/items/{item_id}/tags"),
+            &me(),
+            Some(json!({"tag_id": tag_id})),
+        ),
+    )
+    .await;
+    // Attaching answers 204, not 201: it creates no resource of its own.
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, entries) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}/history/entries"), &me(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{entries}");
+
+    let apples = entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "apples")
+        .unwrap_or_else(|| panic!("apples is not remembered: {entries}"));
+
+    assert!(apples["unit_id"].as_i64().is_some(), "the unit was not carried");
+    assert_eq!(apples["amount"], 2.0, "how much was not carried");
+    assert_eq!(apples["tags"][0], tag_id, "where it is filed was not carried");
+}
+
+/// Somebody who cannot read the list cannot read what it remembers.
+#[rstest]
+#[tokio::test]
+async fn the_history_is_the_lists_and_not_the_worlds(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+
+    let (status, _) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}/history/entries"), &them(), None),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND, "somebody else read the memory");
+}

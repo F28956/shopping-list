@@ -20,6 +20,8 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list))
+        // The whole memory, for a device that resolves lines for itself.
+        .route("/entries", get(entries))
         .route("/{name}", axum::routing::delete(forget))
 }
 
@@ -46,6 +48,28 @@ async fn list(
             list::Id(list_id),
             domain::service::PAGE_MAX,
             typed.q.as_deref(),
+        )
+        .await?,
+    ))
+}
+
+/// Everything this list remembers, for a device to keep a copy of.
+///
+/// Names alone are enough to autocomplete, which is what `/` answers. A client that
+/// resolves a typed line for itself needs more: the unit, how much, and where it is
+/// filed -- otherwise it reaches a different answer from the server for the same
+/// words. See `items::remembered`.
+async fn entries(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(list_id): Path<i64>,
+) -> Result<Json<Vec<items::Remembered>>, AppError> {
+    Ok(Json(
+        items::remembered(
+            &state.ctx,
+            &user.actor(),
+            list::Id(list_id),
+            domain::service::PAGE_MAX,
         )
         .await?,
     ))

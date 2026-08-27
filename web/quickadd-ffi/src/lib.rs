@@ -94,6 +94,63 @@ pub mod android {
     use jni::objects::{JClass, JString};
     use jni::sys::jstring;
 
+    /// The whole decision, as [`super::quickadd_resolve`] gives it.
+    ///
+    /// Here rather than left to Android because a client that only parses is a client
+    /// that quietly does less: no merging of a line onto a row the list already has,
+    /// no history, no unit written without a number. Those are rules, and this is how
+    /// the JVM reaches them.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn Java_com_cernauskas_shoppinglist_data_QuickAdd_resolve(
+        mut env: JNIEnv,
+        _class: JClass,
+        input: JString,
+    ) -> jstring {
+        answer(&mut env, input, |raw| unsafe {
+            let c = std::ffi::CString::new(raw).unwrap_or_default();
+            super::quickadd_resolve(c.as_ptr())
+        })
+    }
+
+    /// The remembered names worth offering, as [`super::quickadd_suggest`] gives them.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn Java_com_cernauskas_shoppinglist_data_QuickAdd_suggest(
+        mut env: JNIEnv,
+        _class: JClass,
+        input: JString,
+    ) -> jstring {
+        answer(&mut env, input, |raw| unsafe {
+            let c = std::ffi::CString::new(raw).unwrap_or_default();
+            super::quickadd_suggest(c.as_ptr())
+        })
+    }
+
+    /// Shared plumbing: a Java string in, one of the C entry points, a Java string out.
+    ///
+    /// The C function owns what it returns, so it is copied into a `jstring` and then
+    /// freed here -- the JVM's collector cannot know about a `CString`.
+    fn answer(
+        env: &mut JNIEnv,
+        input: JString,
+        call: impl FnOnce(&str) -> *mut std::ffi::c_char,
+    ) -> jstring {
+        let raw: String = env.get_string(&input).map(Into::into).unwrap_or_default();
+        let produced = call(&raw);
+        if produced.is_null() {
+            return std::ptr::null_mut();
+        }
+
+        let text = unsafe { std::ffi::CStr::from_ptr(produced) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { super::quickadd_free(produced) };
+
+        match env.new_string(text) {
+            Ok(made) => made.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
+
     /// Answers with the same JSON the C entry point does.
     ///
     /// The name is not a name: JNI resolves

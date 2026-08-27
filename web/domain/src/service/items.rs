@@ -371,6 +371,48 @@ pub async fn quick_add(
     Ok(item)
 }
 
+/// The whole of what this list remembers, for a device to keep.
+///
+/// `suggestions` answers "what should I offer for these letters" and returns names.
+/// This answers "what does this list know", and returns everything a client needs to
+/// resolve a line for itself: the unit, how much, and where it gets filed.
+///
+/// **Why a device needs it at all.** The clients run the same rules the server does —
+/// see `parsing::add` — but a rule is only as good as what it is given. Without the
+/// history a phone resolving `apples` locally would reach a different answer from the
+/// server, which has one; with it, both have the same inputs and cannot disagree.
+/// Syncing it is also what makes the memory the household's rather than each device's:
+/// what one person taught the list, everybody's phone knows.
+pub async fn remembered(
+    ctx: &Ctx,
+    actor: &Actor,
+    list_id: list::Id,
+    limit: i64,
+) -> Result<Vec<Remembered>> {
+    lists::readable(ctx, actor.person()?, list_id).await?;
+
+    let entries = Entry::for_list(&ctx.db, list_id, limit.clamp(0, super::PAGE_MAX)).await?;
+
+    let mut out = Vec::with_capacity(entries.len());
+    for entry in entries {
+        // Per entry rather than one join: the list is bounded by `PAGE_MAX` and this
+        // reuses the ordering `tags_for` already applies, which is the shop's.
+        let tags = Entry::tags_for(&ctx.db, list_id, &entry.name)
+            .await
+            .unwrap_or_default();
+        out.push(Remembered { entry, tags });
+    }
+    Ok(out)
+}
+
+/// One remembered line, with everything a client needs to act on it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Remembered {
+    #[serde(flatten)]
+    pub entry: Entry,
+    pub tags: Vec<crate::models::tag::Id>,
+}
+
 /// Forgets one remembered item — the way back from a typo.
 ///
 /// An editor's to do: the memory is shared, so forgetting affects everyone on the

@@ -34,6 +34,19 @@ pub mod fixtures {
     pub const ITEMS: &str = include_str!("models/fixtures/items.sql");
     pub const TAGS: &str = include_str!("models/fixtures/tags.sql");
     pub const NOTES: &str = include_str!("models/fixtures/notes.sql");
+
+    /// Both halves of the reference data.
+    ///
+    /// Both halves of the reference data, in that order.
+    ///
+    /// Spelled out rather than built with `seeds!` for the same reason the others are
+    /// constants: that macro is `#[cfg(test)]`, and the transports reach these through
+    /// `test-support`. Anything about an item being both measured and filed wants this.
+    pub const UNITS_AND_TAGS: &str = concat!(
+        include_str!("models/fixtures/units.sql"),
+        "\n",
+        include_str!("models/fixtures/tags.sql"),
+    );
 }
 
 /// A fresh v4 UUID, lowercase hex with the usual dashes.
