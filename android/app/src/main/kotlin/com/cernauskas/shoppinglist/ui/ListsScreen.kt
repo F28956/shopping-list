@@ -42,6 +42,7 @@ fun ListsScreen(
     model: ListsViewModel,
     onOpen: (ShoppingList) -> Unit,
     onSignOut: () -> Unit,
+    onLeaveServer: () -> Unit,
 ) {
     val state by model.state.collectAsState()
     val snackbars = remember { SnackbarHostState() }
@@ -53,6 +54,8 @@ fun ListsScreen(
     var deleting by remember { mutableStateOf<ShoppingList?>(null) }
     var sharing by remember { mutableStateOf<ShoppingList?>(null) }
     var joining by remember { mutableStateOf(false) }
+    /** Asked once, and worth asking: changing servers throws away everything here (C4). */
+    var leavingServer by remember { mutableStateOf(false) }
 
     state.message?.let { message ->
         LaunchedEffect(message) {
@@ -96,6 +99,11 @@ fun ListsScreen(
                         DropdownMenuItem(
                             text = { Text("Sign out") },
                             onClick = { open = false; onSignOut() },
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Change server") },
+                            onClick = { open = false; leavingServer = true },
                         )
                     }
                 },
@@ -183,6 +191,30 @@ fun ListsScreen(
                     is Naming.Rename -> model.rename(purpose.list, name)
                 }
                 naming = null
+            },
+        )
+    }
+
+    // C4. Not a precaution: the cache holds rows keyed by ids and uuids the old server
+    // minted, and history and suggestions belong to an account on it. Carrying them
+    // across would show one server's lists under another server's name.
+    if (leavingServer) {
+        AlertDialog(
+            onDismissRequest = { leavingServer = false },
+            title = { Text("Change server?") },
+            text = {
+                Text(
+                    "This signs you out and removes everything stored on this device. " +
+                        "Anything still waiting to be sent will be lost."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { leavingServer = false; onLeaveServer() }) {
+                    Text("Change server")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { leavingServer = false }) { Text("Cancel") }
             },
         )
     }

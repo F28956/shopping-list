@@ -1,6 +1,7 @@
 # The server you point at, and who it lets in
 
-A design, not an implementation. Nothing here is built yet.
+**Built.** Part one on both clients; part two on the server, with the owner's screens
+still to come — the routes are `/api/admissions` and `/api/server`.
 
 Two changes, and they are the same change seen from two ends. A self-hosted app has
 to ask **which server**, because the answer is different for everybody; and a

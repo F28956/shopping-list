@@ -20,11 +20,13 @@ import androidx.navigation.compose.rememberNavController
 import com.cernauskas.shoppinglist.data.Api
 import com.cernauskas.shoppinglist.data.Cache
 import com.cernauskas.shoppinglist.data.Identity
+import com.cernauskas.shoppinglist.data.ServerDirectory
 import com.cernauskas.shoppinglist.data.ShoppingList
 import com.cernauskas.shoppinglist.ui.ItemsScreen
 import com.cernauskas.shoppinglist.ui.ItemsViewModel
 import com.cernauskas.shoppinglist.ui.ListsScreen
 import com.cernauskas.shoppinglist.ui.ListsViewModel
+import com.cernauskas.shoppinglist.ui.ServerAddressScreen
 import com.cernauskas.shoppinglist.ui.ShoppingTheme
 import kotlinx.coroutines.launch
 
@@ -46,8 +48,24 @@ class MainActivity : ComponentActivity() {
             ShoppingTheme {
                 var state by remember { mutableStateOf<Identity.State>(Identity.State.Unknown) }
                 val scope = rememberCoroutineScope()
+                /**
+                 * Re-read after the address screen answers, because `ServerDirectory`
+                 * is storage rather than observable state and nothing would otherwise
+                 * tell Compose.
+                 */
+                var addressed by remember { mutableStateOf(!ServerDirectory.needsAnAddress) }
 
                 LaunchedEffect(Unit) { state = identity.restore() }
+
+                if (!addressed) {
+                    // Before sign-in and never after (C1). A debug build has an address
+                    // from BuildConfig, so this screen does not appear there at all.
+                    ServerAddressScreen { address, _ ->
+                        ServerDirectory.remember(address)
+                        addressed = true
+                    }
+                    return@ShoppingTheme
+                }
 
                 when (val current = state) {
                     Identity.State.Unknown -> Splash()
@@ -77,6 +95,17 @@ class MainActivity : ComponentActivity() {
                             state = Identity.State.SignedOut(
                                 (why as? Identity.Departure.Refused)?.problem
                             )
+                        },
+                        onLeaveServer = {
+                            // The order matters only in that the address goes last: if
+                            // anything above fails, the device is still pointed at a
+                            // server it can be signed into again rather than at nothing
+                            // with a cache full of somebody else's ids.
+                            identity.signOut()
+                            scope.launch { cache.forgetEverything() }
+                            ServerDirectory.forget()
+                            addressed = false
+                            state = Identity.State.SignedOut(null)
                         },
                     )
                 }
@@ -137,7 +166,12 @@ private fun SignIn(configured: Boolean, problem: String?, onSignIn: () -> Unit) 
 }
 
 @Composable
-private fun Shopping(api: Api, cache: Cache, onSignedOut: (Identity.Departure) -> Unit) {
+private fun Shopping(
+    api: Api,
+    cache: Cache,
+    onSignedOut: (Identity.Departure) -> Unit,
+    onLeaveServer: () -> Unit,
+) {
     val nav = rememberNavController()
     var open by remember { mutableStateOf<ShoppingList?>(null) }
 
@@ -151,6 +185,7 @@ private fun Shopping(api: Api, cache: Cache, onSignedOut: (Identity.Departure) -
                 onOpen = { list -> open = list; nav.navigate("items") },
                 // Deliberately signed out, so nothing to explain on the way back.
                 onSignOut = { onSignedOut(Identity.Departure.Deliberate) },
+                onLeaveServer = onLeaveServer,
             )
         }
 

@@ -100,10 +100,11 @@ The server becomes a thing you can hand to a person who is not you.
    says when the server changed — which is the cue for C4. `Config.apiBaseURL` reads
    it, so nothing is pointed anywhere by a build setting any more.
 
-   ~~The screens.~~ **Done on iOS**: the address is asked for before sign-in (C1),
-   changing it clears the device (C4), the watch is told in the same message as its
-   token (C5), and a copied share link offers its origin (C7). What is left is all of
-   it again on Android.
+   ~~The screens.~~ **Done.** The address is asked for before sign-in (C1), changing
+   it clears the device (C4), the watch is told in the same message as its token (C5),
+   and a copied share link offers its origin (C7) — on both platforms. C6 is the
+   cleartext policy, refused in release builds and permitted in debug, in the address
+   parser and in Android's network security config, which have to agree.
 3. ~~**Admission and ownership as data**~~ **Done.** A1–A7: rows read on every
    request, `ALLOWED_EMAILS` demoted to a seed, a claim code printed at boot, and the
    last-owner rule in the service layer with tests from three directions.
@@ -112,7 +113,7 @@ The server becomes a thing you can hand to a person who is not you.
    address is forgotten too, since somebody asking to be erased asked for that;
    and the last owner of the server is refused, which is A5 arrived at a third way.
 
-**Two left: TLS and the address.** At the end of P1 a friend can run their own server and
+**Done.** At the end of P1 a friend can run their own server and
 install the app from a build you hand them. No store, no encryption, no rewrite. If
 the plan stops here it has delivered the thing that started this conversation.
 

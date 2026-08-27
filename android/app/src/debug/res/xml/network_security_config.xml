@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext, for development only.
+
+  This file replaces the one in `main` for debug builds. It permits plain HTTP to
+  anything, which is what a server on the same desk needs: `10.0.2.2` for the emulator,
+  and whatever `192.168.x.x` a handset on the same Wi-Fi has to use.
+
+  It cannot reach a release build — a different source set is a different resource — and
+  `ServerAddress.allowsCleartext()` is keyed on `BuildConfig.DEBUG` for the same reason.
+  Both halves have to agree, and both are compiled out of a shipped app.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

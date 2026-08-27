@@ -1,15 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Android has refused cleartext HTTP since API 28, and it is right to. This permits it
-  for exactly one host: 10.0.2.2, which is the machine running the emulator, reached
-  over a virtual network that never leaves it.
+  No cleartext, anywhere.
 
-  `cleartextTrafficPermitted` is false everywhere else, so a build pointed at a real
-  server cannot quietly fall back to plain HTTP.
+  C6. Once the server address is something a person types, the app can be pointed
+  anywhere — and the choice is between shipping a blanket permission for plain HTTP and
+  refusing it. This refuses it. The alternative puts every user's shopping list and
+  their bearer token on whatever cafe Wi-Fi they happen to be on, and is the kind of
+  thing store review asks about.
+
+  The debug build overrides this file wholesale (`app/src/debug/res/xml/`), because a
+  server on the same desk is the case that would otherwise be impossible to develop
+  against.
+
+  The other half is `ServerAddress.allowsCleartext()`, which refuses the address before
+  a connection is ever attempted — so somebody typing `http://` is told why, rather than
+  meeting a failure from deep inside the networking stack.
 -->
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">10.0.2.2</domain>
-    </domain-config>
     <base-config cleartextTrafficPermitted="false" />
 </network-security-config>

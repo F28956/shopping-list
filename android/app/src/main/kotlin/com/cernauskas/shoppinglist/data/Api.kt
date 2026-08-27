@@ -53,7 +53,13 @@ sealed class ApiError(message: String) : Exception(message) {
  * which is what lets it share an origin with the browser safely.
  */
 class Api(
-    private val baseUrl: String = BuildConfig.API_BASE_URL,
+    /**
+     * Asked per request rather than held, because a self-hosted app learns its server
+     * after it has started -- from the first screen, or from a share link somebody
+     * pasted. An `Api` built at launch would otherwise be pointed at nothing for the
+     * whole first run.
+     */
+    private val server: () -> String = { ServerDirectory.current?.origin.orEmpty() },
     private val token: suspend () -> String?,
     /**
      * Whether somebody is signed in on this device, whether or not there is a token to
@@ -272,7 +278,7 @@ class Api(
 
     private fun events(path: String): Flow<kotlin.Unit> = callbackFlow {
         val request = Request.Builder()
-            .url("$baseUrl$path")
+            .url("${server()}$path")
             .header("Accept", "text/event-stream")
             .header("Authorization", "Bearer ${token() ?: ""}")
             .build()
@@ -325,7 +331,7 @@ class Api(
             val bearer = bearer ?: throw noToken()
 
             val request = Request.Builder()
-                .url("$baseUrl$path")
+                .url("${server()}$path")
                 .header("Authorization", "Bearer $bearer")
                 .apply {
                     if (body == null) {

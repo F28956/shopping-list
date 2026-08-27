@@ -146,3 +146,36 @@ fun tokenIn(pasted: String): String? {
     }
     return if (trimmed.contains(' ') || trimmed.contains('/')) null else trimmed
 }
+
+/**
+ * The server a share link came from, if it named one.
+ *
+ * C7. A share link is the ordinary way a second person arrives — often on a phone with
+ * no app on it yet — and it carries its own origin. Offering that address turns the
+ * worst first run in the product, "somebody sent me a list and the app is asking me for
+ * a URL", into one tap.
+ *
+ * **Offered and never adopted.** A link is a bearer credential from an untrusted sender,
+ * and pointing an app at a host because a message said so is not something to do without
+ * showing the host.
+ *
+ * `null` for a bare token, which names nothing.
+ */
+fun serverAddressIn(pasted: String): ServerAddress? {
+    val trimmed = pasted.trim()
+    if (!trimmed.contains("://")) return null
+
+    val uri = android.net.Uri.parse(trimmed)
+    val scheme = uri.scheme ?: return null
+    val host = uri.host ?: return null
+
+    // Rebuilt from the parts rather than trimmed from the string, so that whatever
+    // `ServerAddress` refuses is refused here too — one set of rules about what an
+    // address is, and it lives there.
+    val origin = buildString {
+        append(scheme).append("://").append(host)
+        if (uri.port != -1) append(':').append(uri.port)
+    }
+
+    return ServerAddress.parse(origin, allowingCleartext = true).getOrNull()
+}

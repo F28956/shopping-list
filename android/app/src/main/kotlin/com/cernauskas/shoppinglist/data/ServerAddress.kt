@@ -1,6 +1,7 @@
 package com.cernauskas.shoppinglist.data
 
 import android.net.Uri
+import com.cernauskas.shoppinglist.BuildConfig
 
 /**
  * Where the server is, as a thing that has been checked rather than a string.
@@ -100,6 +101,15 @@ data class ServerAddress(
         }
 
         private fun defaultPort(scheme: String) = if (scheme == "https") 443 else 80
+
+        /**
+         * C6: cleartext in debug builds, where the server is on the same desk, and
+         * never in a release one.
+         *
+         * The manifest's `networkSecurityConfig` is the other half — this refuses the
+         * address, and that refuses the connection.
+         */
+        fun allowsCleartext(): Boolean = BuildConfig.DEBUG
     }
 
     /** Carries a [Problem] through `Result`, which wants a `Throwable`. */
