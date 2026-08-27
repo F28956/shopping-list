@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO admitted_emails (email, added_by, note)\n            VALUES (?1, ?2, ?3)\n            ON CONFLICT(email) DO UPDATE SET note = coalesce(excluded.note, note)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "59b9d82603a31a958ca1259281fba65a505fdc097c38730028799a19afb77408"
+}

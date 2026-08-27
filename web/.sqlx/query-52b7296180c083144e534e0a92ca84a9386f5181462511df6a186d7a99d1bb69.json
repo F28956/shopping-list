@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id as \"id: user::Id\" FROM users WHERE is_owner <> 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: user::Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "52b7296180c083144e534e0a92ca84a9386f5181462511df6a186d7a99d1bb69"
+}

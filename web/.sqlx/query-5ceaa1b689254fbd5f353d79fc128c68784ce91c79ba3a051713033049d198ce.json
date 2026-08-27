@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT admits_anyone FROM server WHERE id = 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "admits_anyone",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "server",
+            "name": "admits_anyone"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5ceaa1b689254fbd5f353d79fc128c68784ce91c79ba3a051713033049d198ce"
+}

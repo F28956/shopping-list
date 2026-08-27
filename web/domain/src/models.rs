@@ -1,6 +1,7 @@
 #[macro_use]
 pub(in crate::models) mod macros;
 
+pub mod admission;
 mod common;
 pub mod error;
 pub mod history;

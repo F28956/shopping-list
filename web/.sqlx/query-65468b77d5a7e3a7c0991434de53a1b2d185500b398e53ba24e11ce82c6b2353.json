@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT email as \"email: Email\",\n                   user_id as \"user_id: user::Id\",\n                   added_by as \"added_by: user::Id\",\n                   added_at as \"added_at: AddedAt\",\n                   note as \"note: Note\"\n              FROM admitted_emails\n             ORDER BY added_at, email\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "email: Email",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "admitted_emails",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "name": "user_id: user::Id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "admitted_emails",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "name": "added_by: user::Id",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "admitted_emails",
+            "name": "added_by"
+          }
+        }
+      },
+      {
+        "name": "added_at: AddedAt",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "admitted_emails",
+            "name": "added_at"
+          }
+        }
+      },
+      {
+        "name": "note: Note",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "admitted_emails",
+            "name": "note"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "65468b77d5a7e3a7c0991434de53a1b2d185500b398e53ba24e11ce82c6b2353"
+}

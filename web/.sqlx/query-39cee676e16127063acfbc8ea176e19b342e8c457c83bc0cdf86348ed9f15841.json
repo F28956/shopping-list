@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT claimed_at FROM server WHERE id = 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "claimed_at",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "server",
+            "name": "claimed_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "39cee676e16127063acfbc8ea176e19b342e8c457c83bc0cdf86348ed9f15841"
+}

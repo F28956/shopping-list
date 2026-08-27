@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE server SET claimed_at = unixepoch() WHERE id = 1 AND claimed_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "452beab8cb3e257e4c4357d1d6562635272fc35e4d761e50fb4e022777f163ce"
+}

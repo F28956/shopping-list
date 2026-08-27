@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE admitted_emails SET user_id = ?2 WHERE email = ?1 AND user_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "28d3c10133b896c583774784b9dc0a3e527674dcd33ec10e51e0e82a7ceebc68"
+}

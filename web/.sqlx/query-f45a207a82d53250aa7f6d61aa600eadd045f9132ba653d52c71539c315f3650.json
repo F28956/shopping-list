@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM admitted_emails WHERE email = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f45a207a82d53250aa7f6d61aa600eadd045f9132ba653d52c71539c315f3650"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE server SET admits_anyone = ?1 WHERE id = 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "db19d4bc8794eb2f8a90e3768c1b26c675118a99d6ad9bf5ed2da66443fa584b"
+}
