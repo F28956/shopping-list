@@ -87,9 +87,10 @@ The server becomes a thing you can hand to a person who is not you.
 
 1. **TLS** — [tls.md](tls.md), and settle T1 versus S4 first: which of in-process or
    reverse-proxy the operator guide leads with. The capability is designed both ways;
-   only the emphasis is open.
+   only the emphasis is open, and it decides which of the two gets built first.
 2. **The address at runtime** — [configuration.md](configuration.md) C1–C7. The
-   single change that makes one binary serve everybody.
+   single change that makes one binary serve everybody. Client work, on both
+   platforms, and the only part of P1 that is not the server.
 3. ~~**Admission and ownership as data**~~ **Done.** A1–A7: rows read on every
    request, `ALLOWED_EMAILS` demoted to a seed, a claim code printed at boot, and the
    last-owner rule in the service layer with tests from three directions.
@@ -98,7 +99,7 @@ The server becomes a thing you can hand to a person who is not you.
    address is forgotten too, since somebody asking to be erased asked for that;
    and the last owner of the server is refused, which is A5 arrived at a third way.
 
-**Only TLS left.** At the end of P1 a friend can run their own server and
+**Two left: TLS and the address.** At the end of P1 a friend can run their own server and
 install the app from a build you hand them. No store, no encryption, no rewrite. If
 the plan stops here it has delivered the thing that started this conversation.
 

@@ -30,7 +30,14 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                "server=debug,api=debug,web=debug,tower_http=debug,sqlx=warn".into()
+                // `domain` is here because the interesting lines are: sign-in
+                // refused, the server has been claimed, a shared list changed hands,
+                // account closed. Without it a self-hoster reading the log to find out
+                // why somebody cannot get in sees every request and no answer.
+                //
+                // At `info`, not `debug`, because the service layer is on the hot path
+                // and its debug is per-query noise.
+                "server=debug,api=debug,web=debug,domain=info,tower_http=debug,sqlx=warn".into()
             }),
         )
         .with(tracing_subscriber::fmt::layer())
