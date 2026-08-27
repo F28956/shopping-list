@@ -71,25 +71,18 @@ pub struct Ctx {
     /// Who to tell when a list changes. Clone a `Ctx` to share it; construct two and
     /// the transports are watching separate worlds.
     pub changes: changes::Changes,
-    /// Who may sign in at all. See [`admission`].
-    pub admission: admission::Admission,
 }
 
 impl Ctx {
-    /// A context that admits anyone.
+    /// A context over this pool.
     ///
-    /// For tests and tools. A server built this way is open to every Google account
-    /// there is, which is why `main` reads the policy from configuration and refuses
-    /// to start without it rather than falling back to this.
+    /// Says nothing about who may sign in: that is rows now, not a field, so that
+    /// changing it is something a person does through the app rather than a redeploy.
+    /// See [`admission`].
     pub fn new(db: sqlx::SqlitePool) -> Self {
-        Self::with_admission(db, admission::Admission::Anyone)
-    }
-
-    pub fn with_admission(db: sqlx::SqlitePool, admission: admission::Admission) -> Self {
         Self {
             db,
             changes: changes::Changes::new(),
-            admission,
         }
     }
 }

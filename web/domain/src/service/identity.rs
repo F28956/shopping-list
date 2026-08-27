@@ -12,6 +12,7 @@
 
 use crate::models::user::{self, Email, Name, Sub, User};
 
+use super::admission;
 use super::{Actor, Ctx, Result, ServiceError};
 
 /// Resolves the identity behind a verified provider token, creating the user on first
@@ -35,7 +36,7 @@ pub async fn from_claims(
     // first authorisation -- admission that read the token alone would let a person in
     // once and refuse them for ever after.
     if let Some(known) = User::by_identity(&ctx.db, provider, &sub).await? {
-        if !ctx.admission.admits(known.email.as_ref()) {
+        if !admission::admits_user(ctx, known.id).await? {
             tracing::warn!(user = known.id.0, "sign-in refused: no longer an admitted address");
             return Err(ServiceError::NotAdmitted);
         }
@@ -52,7 +53,7 @@ pub async fn from_claims(
 
     // A new identity. From here the token's email is all there is, and Apple does send
     // it on a first authorisation -- which is the only time this branch runs.
-    if !ctx.admission.admits(email.as_ref()) {
+    if !admission::admits_email(ctx, email.as_ref()).await? {
         tracing::warn!(%provider, sub = %sub.0, "sign-in refused: not an admitted address");
         return Err(ServiceError::NotAdmitted);
     }
@@ -70,7 +71,8 @@ pub async fn from_claims(
     {
         User::attach_identity(&ctx.db, provider, &sub, existing.id).await?;
         tracing::info!(user = existing.id.0, %provider, "identity attached by address");
-        let refreshed = User::refresh(&ctx.db, existing.id, name, Some(email)).await?;
+        let refreshed = User::refresh(&ctx.db, existing.id, name, Some(email.clone())).await?;
+        admission::bind(ctx, Some(&email), existing.id).await?;
         return Ok(Actor::User(refreshed));
     }
 
@@ -83,8 +85,11 @@ pub async fn from_claims(
     // raw subject they were created with, and are found by their identity row rather
     // than by this column -- which is why nothing had to be rewritten.
     let qualified = user::Sub(format!("{provider}|{}", sub.0));
-    let user = User::find_or_create(&ctx.db, qualified, name, email).await?;
+    let user = User::find_or_create(&ctx.db, qualified, name, email.clone()).await?;
     User::attach_identity(&ctx.db, provider, &sub, user.id).await?;
+    // Binds the address to the person, so that from here on admission follows them
+    // rather than the address -- see `models::admission`.
+    admission::bind(ctx, email.as_ref(), user.id).await?;
     Ok(Actor::User(user))
 }
 
@@ -100,7 +105,7 @@ pub async fn from_claims(
 /// they land on the sign-in page, and signing in again is what tells them no.
 pub async fn from_session(ctx: &Ctx, user_id: i64) -> Result<Option<Actor>> {
     match User::get(&ctx.db, user::Lookup::Id(user::Id(user_id))).await {
-        Ok(user) if !ctx.admission.admits(user.email.as_ref()) => {
+        Ok(user) if !admission::admits_user(ctx, user.id).await.unwrap_or(false) => {
             tracing::warn!(user = user.id.0, "session dropped: no longer admitted");
             Ok(None)
         }

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO admitted_emails (email, added_by) VALUES (?1, ?2)\n            ON CONFLICT(email) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "1c2328f2fe05e6e455d9e3026c6b68e11e151665d8d92036ada46b287e6aae20"
+}

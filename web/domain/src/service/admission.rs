@@ -10,7 +10,10 @@
 
 use std::collections::BTreeSet;
 
-use crate::models::user::Email;
+use crate::models::admission::{Admitted, Server, owner_count, set_owner};
+use crate::models::user::{self, Email, User};
+
+use super::{Ctx, Result};
 
 /// Who may sign in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,8 +35,54 @@ pub enum AdmissionError {
     AdmitsNobody,
 }
 
+/// Whether this address may sign in, according to what the server holds.
+///
+/// The check for somebody arriving for the first time. Anybody who has been here
+/// before is answered by [`admits_user`], because a provider address is not stable and
+/// the person is.
+pub async fn admits_email(ctx: &Ctx, email: Option<&Email>) -> Result<bool> {
+    if Server::admits_anyone(&ctx.db).await? {
+        return Ok(true);
+    }
+
+    // An identity with no address is refused by a list, because there is nothing to
+    // check it against. The providers supply one for the scopes this asks for, so in
+    // practice this is the case where something has gone wrong -- and the safe answer
+    // to "I cannot tell who this is" on a private server is no.
+    let Some(email) = email else {
+        return Ok(false);
+    };
+
+    Ok(Admitted::admits_email(&ctx.db, email).await?)
+}
+
+/// Whether this person may sign in, whatever address they arrive with now.
+pub async fn admits_user(ctx: &Ctx, user_id: user::Id) -> Result<bool> {
+    if Server::admits_anyone(&ctx.db).await? {
+        return Ok(true);
+    }
+
+    Ok(Admitted::admits_user(&ctx.db, user_id).await?)
+}
+
+/// Ties an admitted address to whoever turned out to be behind it.
+///
+/// Called after a successful sign-in, and silent when there is no row — which is the
+/// open-server case, where nothing was admitted by address in the first place.
+pub async fn bind(ctx: &Ctx, email: Option<&Email>, user_id: user::Id) -> Result<()> {
+    if let Some(email) = email {
+        Admitted::bind(&ctx.db, email, user_id).await?;
+    }
+
+    Ok(())
+}
+
 impl Admission {
     /// Reads a configured value: `*` for anyone, otherwise a comma-separated list.
+    ///
+    /// Only for seeding. `ALLOWED_EMAILS` is read on the first boot of a server that
+    /// has none of this in its database yet, and after that the rows are the truth —
+    /// see [`seed`].
     pub fn parse(raw: &str) -> Result<Self, AdmissionError> {
         if raw.trim() == "*" {
             return Ok(Self::Anyone);
@@ -52,12 +101,11 @@ impl Admission {
         Ok(Self::These(listed))
     }
 
-    /// Whether this address may sign in.
+    /// Whether this address is in the configured list.
     ///
-    /// An identity with no address is refused by a list, because there is nothing to
-    /// check it against. Google supplies one for the scopes this asks for, so in
-    /// practice this is the case where something has gone wrong — and the safe answer
-    /// to "I cannot tell who this is" on a private service is no.
+    /// The in-memory check, over what [`Self::parse`] read. What a running server
+    /// asks is [`admits_email`]; this is kept because the seed uses it, and because
+    /// the parsing rules deserve tests that do not need a database.
     pub fn admits(&self, email: Option<&Email>) -> bool {
         match self {
             Self::Anyone => true,
@@ -65,6 +113,53 @@ impl Admission {
                 .is_some_and(|address| listed.contains(&address.0.trim().to_lowercase())),
         }
     }
+}
+
+/// Moves a configured `ALLOWED_EMAILS` into the database, once.
+///
+/// Runs on every boot and does nothing on almost all of them. It applies only when
+/// there is nothing stored yet — no admitted addresses and no owner — which is true of
+/// a fresh install and of the first boot after this migration, and false for ever
+/// after. Otherwise a variable left behind in a unit file would quietly undo every
+/// removal somebody made through the app.
+///
+/// On a server that already has users, the earliest-created one becomes the owner.
+/// "First person through the door" cannot apply to a server whose door has been open
+/// for a year — it would hand it to whoever opened the app next.
+pub async fn seed(ctx: &Ctx, configured: Option<&Admission>) -> Result<()> {
+    if !Admitted::all(&ctx.db).await?.is_empty() || owner_count(&ctx.db).await? > 0 {
+        return Ok(());
+    }
+
+    let Some(configured) = configured else {
+        return Ok(());
+    };
+
+    // The earliest user, if there is one. `None` on a genuinely fresh install, which
+    // is the case the claim covers instead.
+    let existing = User::earliest(&ctx.db).await?;
+
+    match configured {
+        Admission::Anyone => {
+            Server::set_admits_anyone(&ctx.db, true).await?;
+            tracing::warn!("seeded from ALLOWED_EMAILS=\"*\": anyone may sign in");
+        }
+        Admission::These(listed) => {
+            for address in listed {
+                Admitted::seed(&ctx.db, &Email(address.clone()), existing.as_ref().map(|u| u.id))
+                    .await?;
+            }
+            tracing::info!(admitted = listed.len(), "seeded admission from ALLOWED_EMAILS");
+        }
+    }
+
+    if let Some(user) = existing {
+        set_owner(&ctx.db, user.id, true).await?;
+        Server::claim(&ctx.db).await?;
+        tracing::info!(user = user.id.0, "existing server: the earliest person owns it");
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -45,7 +45,13 @@ async fn main() -> anyhow::Result<()> {
     // change notifier, and that sharing is the whole feature: a list edited in the
     // browser has to reach a phone watching it through the API. Two `Ctx::new` calls
     // would compile, pass every test, and silently never cross.
-    let ctx = Ctx::with_admission(db.clone(), admission()?);
+    let ctx = Ctx::new(db.clone());
+
+    // `ALLOWED_EMAILS` is now a seed rather than a policy: it applies to a server that
+    // has nothing stored yet, and is ignored for ever after. Optional, because on a
+    // server that has been claimed there is nothing for it to do — see
+    // `service::admission::seed`.
+    domain::service::admission::seed(&ctx, admission()?.as_ref()).await?;
 
     let api_state = ApiState {
         ctx: ctx.clone(),
@@ -167,29 +173,25 @@ fn security_headers() -> Headers {
     )
 }
 
-/// Who may sign in, from `ALLOWED_EMAILS`.
+/// Who may sign in, from `ALLOWED_EMAILS`, if anybody said.
 ///
-/// Required, with no default. This is a personal service: owning the domain does not
-/// make it private, because anyone with a Google account can complete the sign-in
-/// flow and become a user on first sight. A default of "anyone" would make forgetting
-/// to set this indistinguishable from deciding not to, and the difference only shows
-/// up as a stranger's list appearing in the database.
+/// No longer required, and that is the change: admission is rows now, managed by
+/// whoever owns the server, and this variable only ever seeds a database that has
+/// none. A fresh install with nothing set is not misconfigured — it is unclaimed, and
+/// the first person through the door claims it.
 ///
-/// `ALLOWED_EMAILS="*"` is how an open instance says so, deliberately and in writing.
-fn admission() -> anyhow::Result<Admission> {
-    let configured = std::env::var("ALLOWED_EMAILS").map_err(|_| {
-        anyhow::anyhow!(
-            "ALLOWED_EMAILS is not set. List the addresses allowed to sign in, \
-             comma-separated, or \"*\" to admit anyone."
-        )
-    })?;
+/// `ALLOWED_EMAILS="*"` still says "anyone may sign in", deliberately and in writing.
+fn admission() -> anyhow::Result<Option<Admission>> {
+    let Ok(configured) = std::env::var("ALLOWED_EMAILS") else {
+        return Ok(None);
+    };
 
     let admission = Admission::parse(&configured)?;
     match &admission {
         Admission::Anyone => tracing::warn!("ALLOWED_EMAILS is \"*\": anyone may sign in"),
-        Admission::These(listed) => tracing::info!(admitted = listed.len(), "sign-in restricted"),
+        Admission::These(listed) => tracing::info!(configured = listed.len(), "admission seed"),
     }
-    Ok(admission)
+    Ok(Some(admission))
 }
 
 /// The address a device on the same network can reach this on.

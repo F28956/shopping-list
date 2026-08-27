@@ -408,6 +408,25 @@ impl User {
         Ok(page.page_of(users, total))
     }
 
+    /// The person who signed up first, or `None` on a server nobody has used.
+    ///
+    /// Ordered by id as well as by `created_at`, because two users created in the
+    /// same second is otherwise a coin toss — and this decides who owns the server.
+    pub async fn earliest(pool: &sqlx::SqlitePool) -> Result<Option<User>> {
+        Ok(sqlx::query_as!(
+            User,
+            r#"
+            SELECT id as "id: Id", sub as "sub: Sub", name as "name: Name",
+                   email as "email: Email", created_at as "created_at: CreatedAt"
+              FROM users
+             ORDER BY created_at, id
+             LIMIT 1
+            "#
+        )
+        .fetch_optional(pool)
+        .await?)
+    }
+
     /// Fetches one user. A miss is [`Error::NotFound`], not `Ok(None)`.
     ///
     /// `sub` is matched exactly. Unlike `units.name` it is neither normalised nor

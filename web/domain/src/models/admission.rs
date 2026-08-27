@@ -89,6 +89,29 @@ impl Admitted {
         Ok(())
     }
 
+    /// Admits an address that nobody added, or that the earliest user is credited
+    /// with. The configuration path — see `service::admission::seed`.
+    pub async fn seed(
+        pool: &sqlx::SqlitePool,
+        email: &Email,
+        added_by: Option<user::Id>,
+    ) -> Result<()> {
+        let email = key(email);
+
+        sqlx::query!(
+            r#"
+            INSERT INTO admitted_emails (email, added_by) VALUES (?1, ?2)
+            ON CONFLICT(email) DO NOTHING
+            "#,
+            email,
+            added_by,
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Withdraws an address, and says whether there was one.
     pub async fn remove(pool: &sqlx::SqlitePool, email: &Email) -> Result<bool> {
         let email = key(email);
@@ -335,11 +358,21 @@ mod tests {
         assert!(!Admitted::admits_email(&pool, &email("her@example.com")).await.unwrap());
     }
 
+    /// Back to how a server arrives, since the fixture hands over one that is claimed
+    /// and open so that tests about lists need not be tests about admission.
+    async fn fresh(pool: &SqlitePool) {
+        sqlx::raw_sql("UPDATE server SET admits_anyone = 0, claimed_at = NULL")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
     /// The race a home server's first minute actually runs: two people opening the app
     /// at once, and exactly one of them claiming it.
     #[rstest]
     #[tokio::test]
     async fn a_server_is_claimed_once(#[future(awt)] pool: SqlitePool) {
+        fresh(&pool).await;
         assert!(!Server::is_claimed(&pool).await.unwrap());
 
         assert!(Server::claim(&pool).await.unwrap(), "the first claim was refused");
@@ -350,7 +383,8 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn an_open_server_says_so(#[future(awt)] pool: SqlitePool) {
-        assert!(!Server::admits_anyone(&pool).await.unwrap(), "open by default");
+        fresh(&pool).await;
+        assert!(!Server::admits_anyone(&pool).await.unwrap(), "a fresh server is closed");
 
         Server::set_admits_anyone(&pool, true).await.unwrap();
         assert!(Server::admits_anyone(&pool).await.unwrap());

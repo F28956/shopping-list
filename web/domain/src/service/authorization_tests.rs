@@ -1575,6 +1575,34 @@ async fn an_item_with_no_unit_gets_the_unit_unit(
 }
 
 /// A typo can be taken back.
+/// A context over a server that admits exactly these addresses and nobody else.
+///
+/// The fixture leaves a server claimed and open, because a test about lists should not
+/// have to admit anybody first. These tests are the ones actually about admission, so
+/// they say what they mean: closed, and holding this list.
+///
+/// Called a second time it replaces the list, which is how "the owner withdrew that
+/// address" is written — including withdrawing one somebody has already used, since
+/// the binding row goes with it.
+async fn admitting(pool: &SqlitePool, addresses: &str) -> Ctx {
+    use crate::models::admission::Admitted;
+    use crate::models::user::Email;
+
+    let ctx = Ctx::new(pool.clone());
+    sqlx::raw_sql("UPDATE server SET admits_anyone = 0; DELETE FROM admitted_emails;")
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+
+    for address in addresses.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+        Admitted::seed(&ctx.db, &Email(address.to_string()), None)
+            .await
+            .unwrap();
+    }
+
+    ctx
+}
+
 /// The same person, arriving the other way, is the same person.
 ///
 /// Android signs in with Google and the Apple clients sign in with Apple, so one human
@@ -1584,10 +1612,9 @@ async fn an_item_with_no_unit_gets_the_unit_unit(
 #[tokio::test]
 async fn two_providers_one_person(#[future(awt)] pool: SqlitePool) {
     use crate::models::user;
-    use crate::service::admission::Admission;
     use crate::service::identity;
 
-    let ctx = Ctx::with_admission(pool.clone(), Admission::parse("me@example.com").unwrap());
+    let ctx = admitting(&pool, "me@example.com").await;
 
     let first = identity::from_claims(
         &ctx,
@@ -1637,10 +1664,9 @@ async fn two_providers_one_person(#[future(awt)] pool: SqlitePool) {
 #[tokio::test]
 async fn a_later_sign_in_with_no_address_is_still_admitted(#[future(awt)] pool: SqlitePool) {
     use crate::models::user;
-    use crate::service::admission::Admission;
     use crate::service::identity;
 
-    let ctx = Ctx::with_admission(pool.clone(), Admission::parse("me@example.com").unwrap());
+    let ctx = admitting(&pool, "me@example.com").await;
 
     identity::from_claims(
         &ctx,
@@ -1669,10 +1695,9 @@ async fn a_later_sign_in_with_no_address_is_still_admitted(#[future(awt)] pool: 
 #[tokio::test]
 async fn removing_an_address_stops_a_nameless_token_too(#[future(awt)] pool: SqlitePool) {
     use crate::models::user;
-    use crate::service::admission::Admission;
     use crate::service::identity;
 
-    let welcome = Ctx::with_admission(pool.clone(), Admission::parse("me@example.com").unwrap());
+    let welcome = admitting(&pool, "me@example.com").await;
     identity::from_claims(
         &welcome,
         "apple",
@@ -1683,7 +1708,7 @@ async fn removing_an_address_stops_a_nameless_token_too(#[future(awt)] pool: Sql
     .await
     .unwrap();
 
-    let removed = Ctx::with_admission(pool.clone(), Admission::parse("someone@else.com").unwrap());
+    let removed = admitting(&pool, "someone@else.com").await;
     let refused =
         identity::from_claims(&removed, "apple", user::Sub("apple|me".into()), None, None).await;
 
@@ -1695,10 +1720,9 @@ async fn removing_an_address_stops_a_nameless_token_too(#[future(awt)] pool: Sql
 #[tokio::test]
 async fn the_same_subject_from_two_providers_is_two_people(#[future(awt)] pool: SqlitePool) {
     use crate::models::user;
-    use crate::service::admission::Admission;
     use crate::service::identity;
 
-    let ctx = Ctx::with_admission(pool.clone(), Admission::Anyone);
+    let ctx = Ctx::new(pool.clone());
 
     let one = identity::from_claims(
         &ctx,
@@ -1731,13 +1755,9 @@ async fn the_same_subject_from_two_providers_is_two_people(#[future(awt)] pool: 
 #[tokio::test]
 async fn an_unlisted_address_cannot_sign_in(#[future(awt)] pool: SqlitePool) {
     use crate::models::user;
-    use crate::service::admission::Admission;
     use crate::service::identity;
 
-    let ctx = Ctx::with_admission(
-        pool.clone(),
-        Admission::parse("me@example.com").unwrap(),
-    );
+    let ctx = admitting(&pool, "me@example.com").await;
 
     assert_eq!(
         identity::from_claims(
@@ -1781,10 +1801,9 @@ async fn an_unlisted_address_cannot_sign_in(#[future(awt)] pool: SqlitePool) {
 #[tokio::test]
 async fn a_session_stops_working_when_the_address_is_removed(#[future(awt)] pool: SqlitePool) {
     use crate::models::user;
-    use crate::service::admission::Admission;
     use crate::service::identity;
 
-    let welcome = Ctx::with_admission(pool.clone(), Admission::parse("me@example.com").unwrap());
+    let welcome = admitting(&pool, "me@example.com").await;
     let actor = identity::from_claims(
         &welcome,
         "google",
@@ -1798,10 +1817,7 @@ async fn a_session_stops_working_when_the_address_is_removed(#[future(awt)] pool
 
     assert!(identity::from_session(&welcome, id).await.unwrap().is_some());
 
-    let removed = Ctx::with_admission(
-        pool.clone(),
-        Admission::parse("someone-else@example.com").unwrap(),
-    );
+    let removed = admitting(&pool, "someone-else@example.com").await;
     assert!(
         identity::from_session(&removed, id).await.unwrap().is_none(),
         "the session outlived the permission"
@@ -2212,4 +2228,129 @@ async fn the_owner_is_not_a_member_row(#[future(awt)] pool: SqlitePool) {
 
     assert_eq!(members.len(), 1);
     assert_ne!(members[0].user_id, s.mine.person().unwrap().id);
+}
+
+/// A7, and the single property that makes an admission list worth having.
+///
+/// The removal and the refusal go through **the same `Ctx`**. Rebuilding it would
+/// prove only that a fresh read sees fresh rows, which is not the question — the
+/// question is whether anything between them is holding the old answer. A cache added
+/// later with a time-based expiry would quietly turn "you are out now" into "you are
+/// out within five minutes", and this is the test that would notice.
+#[rstest]
+#[tokio::test]
+async fn withdrawing_an_address_takes_effect_on_the_very_next_request(
+    #[future(awt)] pool: SqlitePool,
+) {
+    use crate::models::admission::Admitted;
+    use crate::models::user;
+    use crate::service::identity;
+
+    let ctx = admitting(&pool, "me@example.com").await;
+
+    let actor = identity::from_claims(
+        &ctx,
+        "google",
+        user::Sub("me".into()),
+        None,
+        Some(user::Email("me@example.com".into())),
+    )
+    .await
+    .unwrap();
+    let id = actor.person().unwrap().id;
+
+    assert!(identity::from_session(&ctx, id.0).await.unwrap().is_some());
+
+    Admitted::remove(&ctx.db, &user::Email("me@example.com".into()))
+        .await
+        .unwrap();
+
+    assert!(
+        identity::from_session(&ctx, id.0).await.unwrap().is_none(),
+        "the session outlived the permission"
+    );
+    assert_eq!(
+        identity::from_claims(&ctx, "google", user::Sub("me".into()), None, None)
+            .await
+            .err(),
+        Some(ServiceError::NotAdmitted),
+        "signing in again outlived the permission"
+    );
+}
+
+/// The seed is for a database with nothing in it, and must not undo somebody's work.
+///
+/// A variable left behind in a unit file is the likeliest way this goes wrong: an
+/// owner withdraws an address through the app, the box reboots, and the address comes
+/// back with no sign of why.
+#[rstest]
+#[tokio::test]
+async fn seeding_does_nothing_to_a_server_that_has_been_set_up(#[future(awt)] pool: SqlitePool) {
+    use crate::models::admission::Admitted;
+    use crate::models::user::Email;
+    use crate::service::admission::{self, Admission};
+
+    let ctx = admitting(&pool, "her@example.com").await;
+
+    admission::seed(&ctx, Some(&Admission::parse("stranger@example.com").unwrap()))
+        .await
+        .unwrap();
+
+    assert!(
+        !Admitted::admits_email(&ctx.db, &Email("stranger@example.com".into()))
+            .await
+            .unwrap(),
+        "a stale variable let somebody back in"
+    );
+    assert!(
+        Admitted::admits_email(&ctx.db, &Email("her@example.com".into()))
+            .await
+            .unwrap()
+    );
+}
+
+/// A server that already has people cannot ask who arrived first — it would hand
+/// itself to whoever opened the app next.
+#[rstest]
+#[tokio::test]
+async fn seeding_an_existing_server_gives_it_to_the_earliest_person(
+    #[future(awt)] pool: SqlitePool,
+) {
+    use crate::models::admission::{Server, owners};
+    use crate::models::user::{self, User};
+    use crate::service::admission::{self as admission_service, Admission};
+    use crate::service::identity;
+
+    let ctx = Ctx::new(pool.clone());
+
+    // Two people, in a known order, on a server that was open before any of this
+    // existed -- which is the shape of every server this migration will meet.
+    for who in ["first", "second"] {
+        identity::from_claims(
+            &ctx,
+            "google",
+            user::Sub(who.into()),
+            None,
+            Some(user::Email(format!("{who}@example.com"))),
+        )
+        .await
+        .unwrap();
+    }
+
+    sqlx::raw_sql("UPDATE server SET admits_anyone = 0, claimed_at = NULL")
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+
+    admission_service::seed(&ctx, Some(&Admission::parse("first@example.com").unwrap()))
+        .await
+        .unwrap();
+
+    let earliest = User::earliest(&ctx.db).await.unwrap().unwrap();
+    assert_eq!(earliest.email, Some(user::Email("first@example.com".into())));
+    assert_eq!(owners(&ctx.db).await.unwrap(), vec![earliest.id]);
+    assert!(
+        Server::is_claimed(&ctx.db).await.unwrap(),
+        "an upgraded server was left unclaimed, so a stranger could still claim it"
+    );
 }

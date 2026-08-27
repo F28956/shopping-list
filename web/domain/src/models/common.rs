@@ -84,14 +84,23 @@ pub mod tests {
     /// the baseline: a test asserting "a rejected name must not insert" is checking
     /// for zero rows, and the fixtures stamp `created_at` with deliberately staggered
     /// offsets that the production seed has no reason to carry.
+    ///
+    /// **The server is claimed and open.** A fresh database is neither, and a test
+    /// that had to admit somebody before it could ask anything about lists would be a
+    /// test about admission wearing a disguise. Anything actually testing who may sign
+    /// in sets the state it means — see `models::admission` and
+    /// `service::authorization_tests`.
     #[fixture]
     pub async fn pool(#[default("")] seed: &'static str) -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::migrate!().run(&pool).await.unwrap();
-        sqlx::raw_sql("DELETE FROM tags; DELETE FROM units;")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::raw_sql(
+            "DELETE FROM tags; DELETE FROM units; \
+             UPDATE server SET admits_anyone = 1, claimed_at = unixepoch();",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         if !seed.is_empty() {
             sqlx::raw_sql(seed).execute(&pool).await.unwrap();
         }
