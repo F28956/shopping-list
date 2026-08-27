@@ -11,6 +11,7 @@ pub mod lists;
 pub mod me;
 pub mod notes;
 pub mod reference;
+pub mod sessions;
 pub mod sharing;
 pub mod sync;
 

@@ -33,6 +33,9 @@ pub fn router() -> Router<AppState> {
         .nest("/invites", routes::sharing::invites_router())
         .nest("/me", routes::me::router())
         .nest("/notes", routes::notes::router())
+        // Signing in, for the clients whose provider will not keep them signed
+        // in -- see the module.
+        .nest("/sessions", routes::sessions::router())
         // One route for everything a device did while it was away -- see the module.
         .nest("/sync", routes::sync::router())
         .nest("/units", routes::reference::units_router())

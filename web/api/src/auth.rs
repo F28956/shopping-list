@@ -1,6 +1,6 @@
 use axum::{extract::FromRequestParts, http::request::Parts};
-use domain::models::user;
-use domain::service::{Actor, identity};
+use domain::models::{session, user};
+use domain::service::{Actor, identity, sessions};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 
 use crate::error::AppError;
@@ -68,13 +68,19 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let token = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .ok_or(AppError::Unauthorized)?;
+        let Bearer(token) = Bearer::from_request_parts(parts, state).await?;
 
+        // A token this server issued, rather than one it was shown. Recognised by
+        // shape and not by trying it: sixty-four lowercase hex characters is what
+        // `sessions::issue` mints and is not a shape any JWT has, so there is no
+        // ambiguity to resolve and no failed provider lookup on every request.
+        if is_session_token(&token) {
+            return Ok(CurrentUser(
+                sessions::resolve(&state.ctx, &session::Token(token)).await?,
+            ));
+        }
+
+        let token = token.as_str();
         let (provider, claims) = match &state.auth {
             AuthMode::Providers(providers) => verify(token, providers).await?,
             #[cfg(any(test, feature = "test-support"))]
@@ -109,7 +115,7 @@ impl FromRequestParts<AppState> for CurrentUser {
 /// A token no provider accepts is `Unauthorized`, and deliberately says no more: which
 /// of the checks failed is the sender's business only in the sense that they should
 /// stop.
-async fn verify(token: &str, providers: &[Provider]) -> Result<(&'static str, Claims), AppError> {
+pub async fn verify(token: &str, providers: &[Provider]) -> Result<(&'static str, Claims), AppError> {
     let kid = decode_header(token)?.kid.ok_or(AppError::Unauthorized)?;
 
     for provider in providers {
@@ -131,4 +137,43 @@ async fn verify(token: &str, providers: &[Provider]) -> Result<(&'static str, Cl
     }
 
     Err(AppError::Unauthorized)
+}
+
+/// The bearer token, whatever kind it turns out to be.
+///
+/// Split out from [`CurrentUser`] because `POST /api/sessions` needs the raw token
+/// rather than the identity behind it: it is the route that *makes* an identity into a
+/// session, so it cannot ask for one first.
+///
+/// Bearer only. This never looks at cookies, for the reason [`CurrentUser`] gives.
+pub struct Bearer(pub String);
+
+impl FromRequestParts<AppState> for Bearer {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        parts
+            .headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|token| Bearer(token.to_string()))
+            .ok_or(AppError::Unauthorized)
+    }
+}
+
+/// Whether this is one of ours.
+///
+/// Deliberately a shape test rather than a database lookup. Trying the sessions table
+/// first and falling back to the providers would put a query in front of every Google
+/// request; trying the providers first would put a signature check in front of every
+/// Apple one. The two token formats do not overlap, so neither is necessary.
+fn is_session_token(token: &str) -> bool {
+    token.len() == 64
+        && token
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
 }

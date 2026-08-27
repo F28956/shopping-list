@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE app_sessions\n               SET last_used_at = unixepoch()\n             WHERE token_hash = ?1 AND last_used_at > ?2\n            RETURNING user_id as \"user_id: user::Id\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "user_id: user::Id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "app_sessions",
+            "name": "user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "94c82c19379607c80b48bd2de1549115b25a313c7af2c36f9eb069a43afb2771"
+}

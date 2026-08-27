@@ -1406,3 +1406,99 @@ async fn a_refused_batch_is_still_a_two_hundred(#[future(awt)] pool: SqlitePool)
     assert_eq!(replayed["operations"][0]["outcome"], "refused");
     assert_eq!(replayed["operations"][0]["why"], "not_allowed");
 }
+
+/// The whole point of the exchange: what comes back works everywhere the provider's
+/// token did.
+///
+/// Apple's identity token lasts about ten minutes, so an Apple client trades it once
+/// for this and never shows the provider's token again.
+#[rstest]
+#[tokio::test]
+async fn a_session_token_stands_in_for_the_one_that_bought_it(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+
+    let (status, issued) = send(&app, req("POST", "/api/sessions", &me(), None)).await;
+    assert_eq!(status, StatusCode::OK, "{issued}");
+
+    let token = issued["token"].as_str().expect("no token").to_string();
+    assert_eq!(token.len(), 64, "not an opaque token: {token}");
+    assert!(issued["idle_seconds"].as_i64().unwrap() > 0);
+
+    let (status, whoami) = send(
+        &app,
+        req("GET", "/api/me", &format!("Bearer {token}"), None),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{whoami}");
+    assert_eq!(whoami["sub"], "google|google-oauth2|me");
+}
+
+/// Signing out has to end it, or the session outlives the person's decision.
+#[rstest]
+#[tokio::test]
+async fn ending_a_session_stops_the_token_working(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+
+    let (_, issued) = send(&app, req("POST", "/api/sessions", &me(), None)).await;
+    let auth = format!("Bearer {}", issued["token"].as_str().unwrap());
+
+    let (status, _) = send(&app, req("DELETE", "/api/sessions", &auth, None)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _) = send(&app, req("GET", "/api/me", &auth, None)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// Two devices, two sessions. Signing out on the phone must not sign out the Mac.
+#[rstest]
+#[tokio::test]
+async fn one_device_signing_out_leaves_the_others_alone(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+
+    let (_, phone) = send(&app, req("POST", "/api/sessions", &me(), None)).await;
+    let (_, mac) = send(&app, req("POST", "/api/sessions", &me(), None)).await;
+
+    let phone = format!("Bearer {}", phone["token"].as_str().unwrap());
+    let mac = format!("Bearer {}", mac["token"].as_str().unwrap());
+    assert_ne!(phone, mac, "two sign-ins produced the same token");
+
+    send(&app, req("DELETE", "/api/sessions", &phone, None)).await;
+
+    let (status, _) = send(&app, req("GET", "/api/me", &mac, None)).await;
+    assert_eq!(status, StatusCode::OK, "the other device was signed out too");
+}
+
+/// An invented token of the right shape is still nobody.
+///
+/// The shape test is how a session token is told apart from a JWT, so it must not also
+/// be how one is accepted.
+#[rstest]
+#[tokio::test]
+async fn a_token_shaped_like_a_session_but_issued_by_nobody(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let invented = "f".repeat(64);
+
+    let (status, _) = send(
+        &app,
+        req("GET", "/api/me", &format!("Bearer {invented}"), None),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// One person's session must not reach another person's list.
+#[rstest]
+#[tokio::test]
+async fn a_session_carries_one_identity_and_not_another(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let (list_id, _) = a_list_with_an_item(&app).await;
+
+    let (_, issued) = send(&app, req("POST", "/api/sessions", &them(), None)).await;
+    let auth = format!("Bearer {}", issued["token"].as_str().unwrap());
+
+    let (status, _) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &auth, None)).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

@@ -18,6 +18,7 @@ pub mod identity;
 pub mod items;
 pub mod lists;
 pub mod notes;
+pub mod sessions;
 pub mod sync;
 pub mod tags;
 pub mod units;

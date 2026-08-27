@@ -8,6 +8,7 @@ pub mod invite;
 pub mod item;
 pub mod list;
 pub mod note;
+pub mod session;
 pub mod tag;
 pub mod unit;
 pub mod user;

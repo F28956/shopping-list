@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT last_used_at FROM app_sessions WHERE token_hash = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "last_used_at",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "app_sessions",
+            "name": "last_used_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d85b785bf1a489010dc73783e51da0709ec2465b521f103af33408b5865ae578"
+}

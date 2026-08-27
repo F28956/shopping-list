@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM app_sessions WHERE token_hash = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "8df0354b3ed40575f823a192958d5855eaf8c185c5b97f9c32fc170ff09c6ed9"
+}
