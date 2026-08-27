@@ -603,7 +603,19 @@ struct ItemsView: View {
         }
     }
 
+    /// Which rows are still waiting on a server, and how many.
+    ///
+    /// Both are empty on a device with no server, and not because nothing is queued --
+    /// on a list that is only ever this device's, *everything* is queued and nothing
+    /// ever leaves. Marking every row as waiting says the app is behind on work it
+    /// means to do, and it isn't: the list is already exactly what it should be. The
+    /// queue is still kept, because a server added later is owed every one of them.
     private func refreshUnsent() {
+        guard !ServerDirectory.isOnDeviceOnly else {
+            unsent = []
+            waiting = 0
+            return
+        }
         let queued = cache.outbox.forList(list)
         unsent = Set(queued.map(\.itemUUID))
         waiting = queued.count

@@ -26,10 +26,11 @@ use time::OffsetDateTime;
 
 use crate::models::item::{self, Amount, Item, Name};
 use crate::models::list::{self, List};
+use crate::models::tag;
 use crate::models::unit;
 use crate::models::user;
 
-use super::{Actor, Ctx, Result, ServiceError, items, lists};
+use super::{Actor, Ctx, Result, ServiceError, items, lists, tags};
 
 /// How far ahead of the server a device's clock may be before it is pulled back.
 ///
@@ -105,6 +106,14 @@ pub enum What {
     /// Empty the trolley, of exactly the rows the device could see. See the service's
     /// [`items::clear_done`] for why it names them.
     ClearDone { items: Vec<item::Uuid> },
+    /// File it under an aisle, or stop filing it there.
+    ///
+    /// These were the last two things a device could only do with a connection, which
+    /// on a device with no server at all meant it could never do them. The tag is named
+    /// by `id` rather than by name, and that is safe for the same reason the clients
+    /// bundle `reference.json`: the ids in that file are the ids in the seed, so a
+    /// phone that has never met a server still means aisle 5 by 5.
+    Tag { item: item::Uuid, tag: tag::Id, attached: bool },
 }
 
 impl What {
@@ -117,6 +126,8 @@ impl What {
             What::Update { .. } => "update",
             What::Delete { .. } => "delete",
             What::ClearDone { .. } => "clear_done",
+            What::Tag { attached: true, .. } => "attach_tag",
+            What::Tag { attached: false, .. } => "detach_tag",
         }
     }
 }
@@ -344,6 +355,36 @@ async fn apply(
             items::clear_done(ctx, actor, list.id, Some(&ids)).await?;
             Ok(Outcome::Applied { item: None, list: None })
         }
+
+        What::Tag { item, tag, attached } => match find(ctx, item).await? {
+            None => Ok(Outcome::Refused { why: Refusal::Gone }),
+            Some(row) => {
+                let done = if *attached {
+                    tags::attach(ctx, actor, row.id, *tag).await
+                } else {
+                    tags::detach(ctx, actor, row.id, *tag).await
+                };
+                match done {
+                    // The row rather than nothing, so the device learns what it is
+                    // filed under now -- including any tag another device added while
+                    // this one had no signal.
+                    Ok(()) => Ok(finish(
+                        Item::get(&ctx.db, item::Lookup::Uuid(item.clone()))
+                            .await
+                            .map_err(Into::into),
+                    )),
+                    // A tag id that is not a tag. Invalid rather than gone: the row is
+                    // there, the aisle never was, and resending will not help. Both
+                    // errors mean that -- the foreign key refuses it as invalid input,
+                    // and a tag deleted since refuses it as not found.
+                    Err(ServiceError::NotFound | ServiceError::InvalidInput) => {
+                        Ok(Outcome::Refused { why: Refusal::Invalid })
+                    }
+                    Err(ServiceError::Forbidden) => Ok(Outcome::Refused { why: Refusal::NotAllowed }),
+                    Err(other) => Err(other),
+                }
+            }
+        },
     }
 }
 
@@ -424,7 +465,8 @@ async fn remembered(ctx: &Ctx, operation: &Operation) -> Result<Option<Remembere
         What::Add { item, .. }
         | What::SetDone { item, .. }
         | What::Update { item, .. }
-        | What::Delete { item, .. } => Some(item.clone()),
+        | What::Delete { item, .. }
+        | What::Tag { item, .. } => Some(item.clone()),
         What::MakeList { .. } | What::ClearDone { .. } => None,
     };
 

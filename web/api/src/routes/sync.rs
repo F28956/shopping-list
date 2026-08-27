@@ -7,7 +7,7 @@
 
 use axum::{Json, Router, routing::post};
 use domain::models::item::{self, Amount, Name};
-use domain::models::{list, unit};
+use domain::models::{list, tag, unit};
 use domain::service::items::Seen;
 use domain::service::sync::{self, Applied, Operation, What};
 use time::OffsetDateTime;
@@ -80,6 +80,16 @@ pub enum WhatInput {
     ClearDone {
         items: Vec<item::Uuid>,
     },
+    /// File it under an aisle. `tag_id` and not a name: see `What::Tag`.
+    AttachTag {
+        item: item::Uuid,
+        tag_id: i64,
+    },
+    /// Stop filing it there.
+    DetachTag {
+        item: item::Uuid,
+        tag_id: i64,
+    },
 }
 
 /// The row as the device saw it when an edit was made against it.
@@ -145,6 +155,16 @@ impl From<WhatInput> for What {
             },
             WhatInput::Delete { item } => What::Delete { item },
             WhatInput::ClearDone { items } => What::ClearDone { items },
+            WhatInput::AttachTag { item, tag_id } => What::Tag {
+                item,
+                tag: tag::Id(tag_id),
+                attached: true,
+            },
+            WhatInput::DetachTag { item, tag_id } => What::Tag {
+                item,
+                tag: tag::Id(tag_id),
+                attached: false,
+            },
         }
     }
 }

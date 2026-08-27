@@ -530,3 +530,122 @@ async fn changes_for_a_list_that_has_gone_are_refused(#[future(awt)] pool: Sqlit
 
     assert_eq!(answers[0].outcome, Outcome::Refused { why: Refusal::ListGone });
 }
+
+// ------------------------------------------------------------------------------- aisles
+
+/// Ben, with no signal, files milk under an aisle. It arrives later.
+///
+/// Filing was the last thing a device could only do with a connection, which on a
+/// device with no server at all meant never -- docs/offline.md.
+#[rstest]
+#[tokio::test]
+async fn a_tag_filed_offline_arrives(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+    let dairy = a_tag(&s, "dairy").await;
+
+    let answers = sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![s.op(
+            "file",
+            What::Tag { item: milk.uuid.clone(), tag: dairy, attached: true },
+        )],
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        matches!(answers[0].outcome, Outcome::Applied { .. }),
+        "filing was refused: {:?}",
+        answers[0].outcome
+    );
+    assert_eq!(tags_on(&s, milk.id).await, vec![dairy], "not filed");
+}
+
+/// And unfiling, which is the same operation with the flag the other way.
+#[rstest]
+#[tokio::test]
+async fn a_tag_taken_off_offline_arrives(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+    let dairy = a_tag(&s, "dairy").await;
+    super::tags::attach(&s.ctx, &s.anna, milk.id, dairy).await.unwrap();
+
+    sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![s.op(
+            "unfile",
+            What::Tag { item: milk.uuid.clone(), tag: dairy, attached: false },
+        )],
+    )
+    .await
+    .unwrap();
+
+    assert!(tags_on(&s, milk.id).await.is_empty(), "still filed");
+}
+
+/// A tag id that is not a tag.
+///
+/// Invalid rather than gone, and the difference matters to the device: `Gone` means the
+/// row went and the operation is dropped, `Invalid` means the operation was never going
+/// to work. Neither is worth a retry, and only one of them is true.
+#[rstest]
+#[tokio::test]
+async fn filing_under_an_aisle_that_does_not_exist_is_invalid(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+
+    let answers = sync::replay(
+        &s.ctx,
+        &s.ben,
+        vec![s.op(
+            "file",
+            What::Tag { item: milk.uuid.clone(), tag: crate::models::tag::Id(9_999), attached: true },
+        )],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(answers[0].outcome, Outcome::Refused { why: Refusal::Invalid });
+}
+
+/// The same filing sent twice, which is what a device does when a reply goes missing.
+#[rstest]
+#[tokio::test]
+async fn filing_the_same_thing_twice_is_harmless(#[future(awt)] pool: SqlitePool) {
+    let s = two(pool).await;
+    let milk = s.add("Milk").await;
+    let dairy = a_tag(&s, "dairy").await;
+    let operation =
+        s.op("file", What::Tag { item: milk.uuid.clone(), tag: dairy, attached: true });
+
+    sync::replay(&s.ctx, &s.ben, vec![operation.clone()]).await.unwrap();
+    let again = sync::replay(&s.ctx, &s.ben, vec![operation]).await.unwrap();
+
+    assert!(
+        matches!(again[0].outcome, Outcome::AlreadyApplied { .. }),
+        "a resend was treated as new work: {:?}",
+        again[0].outcome
+    );
+    assert_eq!(tags_on(&s, milk.id).await, vec![dairy], "filed twice over");
+}
+
+async fn a_tag(s: &Two, name: &str) -> crate::models::tag::Id {
+    // System, because aisles are the server's reference data rather than
+    // anybody's to invent -- see `tags::writable`.
+    super::tags::create(&s.ctx, &Actor::System, crate::models::tag::Name(name.into()), None, None)
+        .await
+        .unwrap()
+        .id
+}
+
+async fn tags_on(s: &Two, item: item::Id) -> Vec<crate::models::tag::Id> {
+    crate::models::tag::Tag::for_item(&s.ctx.db, item)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|t| t.id)
+        .collect()
+}
