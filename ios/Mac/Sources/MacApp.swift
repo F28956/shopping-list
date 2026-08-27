@@ -93,9 +93,27 @@ struct MacRootView: View {
     }
 }
 
+/// Signing in to the server this Mac has been pointed at.
+///
+/// Reached only once somebody has configured a server, so it is never what a fresh
+/// install opens on.
+///
+/// It leads back out as well as in. Preferences is a `Settings` scene and so is
+/// reachable under ⌘, even from here, which made this a softer trap than the phones'
+/// -- but only for somebody who thinks to try it. Somebody who typed the wrong address
+/// is looking at a sign-in button and a server they cannot reach, and the way out
+/// should be on the screen that is the problem.
 struct MacSignInView: View {
     @Environment(Identity.self) private var identity
     @Environment(\.colorScheme) private var scheme
+
+    private let cache = Cache.shared
+
+    /// Which server this is. "Use a different server" and "use this Mac only" are not
+    /// decisions anybody can take without knowing what they are leaving.
+    private let server = ServerDirectory.current
+
+    @State private var leaving = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -103,6 +121,13 @@ struct MacSignInView: View {
                 .font(.largeTitle.weight(.semibold))
             Text("The same lists as the phone, with a keyboard.")
                 .foregroundStyle(.secondary)
+
+            if let server {
+                LabeledContent("Server", value: server.origin)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: 280)
+            }
 
             // Apple's own button rather than one styled to look like it: the mark,
             // the wording and the corner radius are the part people recognise before
@@ -123,8 +148,49 @@ struct MacSignInView: View {
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
+
+            // The two mistakes somebody makes here: the address was wrong, or a server
+            // was never wanted in the first place. Changing it is Preferences' job and
+            // this points at it rather than growing a second copy of that form.
+            HStack(spacing: 16) {
+                Button("Change server…") {
+                    // The same thing ⌘, does. Named here because somebody stuck on
+                    // this screen is not thinking about the menu bar.
+                    if #available(macOS 14, *) {
+                        NSApp.sendAction(
+                            Selector(("showSettingsWindow:")), to: nil, from: nil
+                        )
+                    } else {
+                        NSApp.sendAction(
+                            Selector(("showPreferencesWindow:")), to: nil, from: nil
+                        )
+                    }
+                }
+                Button("Use this Mac only") { leaving = true }
+            }
+            .font(.footnote)
+            .buttonStyle(.link)
         }
         .padding(40)
+        // C4. The lists on screen after this belong to no server, and rows keyed by
+        // ids that one minted would be showing its lists under nobody's name. Said out
+        // loud rather than done quietly, in the same words Preferences uses, because
+        // it is the same act.
+        .alert("Use this Mac only?", isPresented: $leaving) {
+            Button("Cancel", role: .cancel) {}
+            Button("Use this Mac only", role: .destructive) {
+                cache.forgetEverything()
+                identity.signOut()
+                ServerDirectory.onlyThisDevice()
+            }
+        } message: {
+            Text(
+                """
+                Your lists will stay on this Mac and nothing will be synced. This \
+                removes everything stored here, including anything still waiting to \
+                be sent. You can add a server again in Preferences.
+                """
+            )
+        }
     }
-
 }
