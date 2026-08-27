@@ -127,13 +127,23 @@ pub async fn create(
 /// its absence means somebody has deliberately taken it out, and refusing every write
 /// on a shopping list over that would be the wrong size of reaction.
 async fn measured_or_counted(ctx: &Ctx, asked: Option<unit::Id>) -> Option<unit::Id> {
-    match asked {
-        Some(given) => Some(given),
-        None => unit::Unit::get(&ctx.db, unit::Lookup::Name(unit::Name("unit".into())))
-            .await
-            .map(|u| u.id)
-            .ok(),
+    // The precedence lives in `parsing::add::unit_for`, which the clients call too.
+    // Here there is nothing spelled and nothing remembered -- the caller has already
+    // resolved both -- so this is only its last step, and it is that step by calling
+    // it rather than by repeating it.
+    if asked.is_some() {
+        return asked;
     }
+    let units = unit::Unit::list(&ctx.db, super::everything(), super::by_name())
+        .await
+        .map(|page| page.items)
+        .unwrap_or_default();
+    let shared: Vec<parsing::add::Unit> = units
+        .iter()
+        .map(|u| parsing::add::Unit { id: u.id.0, name: u.name.0.clone() })
+        .collect();
+
+    parsing::add::unit_for(None, None, &shared).map(unit::Id)
 }
 
 /// One page of a list's items, if the list is the actor's.
@@ -310,12 +320,21 @@ pub async fn quick_add(
     let name = Name(parsed.name);
 
     // What the line said, if it said anything.
-    let spelled_unit = parsed
-        .unit
-        .and_then(|u| units.items.iter().find(|x| x.name.0 == u).map(|x| x.id));
-
     let remembered = Entry::get(&ctx.db, list_id, &name).await?;
-    let unit_id = spelled_unit.or_else(|| remembered.as_ref().and_then(|e| e.unit_id));
+
+    // Which unit this ends up in, by the rule every client also runs -- the line, then
+    // what this name was last bought in, then `unit`. See `parsing::add::unit_for`.
+    let shared: Vec<parsing::add::Unit> = units
+        .items
+        .iter()
+        .map(|u| parsing::add::Unit { id: u.id.0, name: u.name.0.clone() })
+        .collect();
+    let held = remembered.as_ref().map(|e| parsing::add::Remembered {
+        unit_id: e.unit_id.map(|u| u.0),
+        tag_ids: Vec::new(),
+    });
+    let unit_id = parsing::add::unit_for(parsed.unit.as_deref(), held.as_ref(), &shared)
+        .map(unit::Id);
 
     // Through `create` rather than the model, so there is one place that learns.
     let item = create(

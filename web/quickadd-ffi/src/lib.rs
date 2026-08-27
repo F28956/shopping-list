@@ -200,3 +200,114 @@ struct Remembered {
     uses: i64,
     last_used_at: i64,
 }
+
+/// What a typed line should do to a list.
+///
+/// The whole decision, not just the parse: which unit it lands in, whether the list
+/// already has that row, and whether a crossed-off one comes back. See
+/// [`parsing::add`] for the rules and for why they are not written out again here.
+///
+/// This is the entry point the clients should reach for when somebody types a line.
+/// [`quickadd_parse`] is the smaller question -- what do these words mean -- and is
+/// still right for a caller that only wants that.
+///
+/// ```json
+/// {"line": "2 pint milk",
+///  "units": [{"id": 3, "name": "pint"}],
+///  "rows": [{"uuid": "abc", "name": "milk", "unit_id": 3, "done": true}],
+///  "remembered": {"unit_id": 3, "tag_ids": [7]}}
+/// ```
+///
+/// answers with one of:
+///
+/// ```json
+/// {"existing": {"uuid": "abc", "put_back": true}}
+/// {"new": {"name": "milk", "amount": 2.0, "unit_id": 3, "tag_ids": [7]}}
+/// ```
+///
+/// # Safety
+///
+/// As [`quickadd_parse`]: nul-terminated UTF-8 in, a string for [`quickadd_free`] out.
+/// Never returns null. Input it cannot read answers with a `new` row named by the line
+/// as given, which is what an unreadable line means everywhere else here.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn quickadd_resolve(input: *const c_char) -> *mut c_char {
+    let raw = unsafe { borrow(input) }.unwrap_or("");
+    let asked: Option<Asked> = serde_json::from_str(raw).ok();
+
+    let answer = match asked {
+        None => serde_json::json!({
+            "new": { "name": "", "amount": 1.0, "unit_id": null, "tag_ids": [] }
+        }),
+        Some(asked) => {
+            let units: Vec<parsing::add::Unit> = asked
+                .units
+                .into_iter()
+                .map(|u| parsing::add::Unit { id: u.id, name: u.name })
+                .collect();
+            let rows: Vec<parsing::add::Row> = asked
+                .rows
+                .into_iter()
+                .map(|r| parsing::add::Row {
+                    uuid: r.uuid,
+                    name: r.name,
+                    unit_id: r.unit_id,
+                    done: r.done,
+                })
+                .collect();
+            let remembered = asked.remembered.map(|r| parsing::add::Remembered {
+                unit_id: r.unit_id,
+                tag_ids: r.tag_ids,
+            });
+
+            match parsing::add::resolve(&asked.line, &units, &rows, remembered.as_ref()) {
+                parsing::add::Decision::Existing { uuid, put_back } => {
+                    serde_json::json!({ "existing": { "uuid": uuid, "put_back": put_back } })
+                }
+                parsing::add::Decision::New { name, amount, unit_id, tag_ids } => {
+                    serde_json::json!({
+                        "new": {
+                            "name": name,
+                            "amount": amount,
+                            "unit_id": unit_id,
+                            "tag_ids": tag_ids,
+                        }
+                    })
+                }
+            }
+        }
+    };
+
+    CString::new(answer.to_string()).unwrap().into_raw()
+}
+
+#[derive(serde::Deserialize)]
+struct Asked {
+    line: String,
+    units: Vec<AskedUnit>,
+    #[serde(default)]
+    rows: Vec<AskedRow>,
+    #[serde(default)]
+    remembered: Option<AskedRemembered>,
+}
+
+#[derive(serde::Deserialize)]
+struct AskedUnit {
+    id: i64,
+    name: String,
+}
+
+#[derive(serde::Deserialize)]
+struct AskedRow {
+    uuid: String,
+    name: String,
+    unit_id: Option<i64>,
+    done: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct AskedRemembered {
+    unit_id: Option<i64>,
+    #[serde(default)]
+    tag_ids: Vec<i64>,
+}

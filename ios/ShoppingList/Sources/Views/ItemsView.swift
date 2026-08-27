@@ -457,42 +457,50 @@ struct ItemsView: View {
         // the add lands, the reload replaces it with the server's row — same uuid, real
         // id.
         //
-        // The line is read here, and it used to be shown as typed until the server
-        // sent back what it had made of it. That was fine when there was always a
-        // server; on a device with none, `2 kg apples` stayed an item called
-        // "2 kg apples" for ever -- no amount, no unit, and nothing coming to fix it.
-        //
-        // It is not a second parser. `QuickAdd` is the server's own, compiled for the
-        // phone, so what appears in this row is what the server would have said and
-        // the reload has nothing to correct.
-        let parsed = QuickAdd.parse(typed, units: units.map(\.name))
+        // **What the line does is not decided here.** Which unit a bare name lands in,
+        // whether `Milk` is the `milk` already on the list, whether a crossed-off row
+        // comes back — all of it is `parsing::add`, compiled in and shared with the
+        // server. Written out in Swift instead, these drifted immediately: this screen
+        // showed three rows for `milk`, `milk` and `Milk` where a server would have
+        // shown one, and nothing was ever going to merge them.
+        let remembered = cache.remembered(typed, on: list)
+        let decision = QuickAdd.resolve(typed, units: units, rows: items, remembered: remembered)
 
-        // What this list already knows about that name. The server does the same two
-        // things with its own history and they are the difference between a history
-        // that only autocompletes and one that pays back: `milk` arrives in pints,
-        // under dairy, having typed four letters. Without it a re-added item came back
-        // bare -- somebody who removed milk and typed it again lost its aisle.
-        let remembered = cache.remembered(parsed.name, on: list)
+        switch decision {
+        case .existing(let uuid, let putBack):
+            // Nothing is created. Queued all the same, and under a **fresh** uuid: the
+            // server runs this same rule when it hears the line, and handing it the
+            // row's own uuid takes the early return in `create` and skips the putting
+            // back.
+            guard let alike = items.first(where: { $0.uuid == uuid }) else { return }
+            cache.outbox.add(
+                uuid: UUID().uuidString.lowercased(),
+                localID: alike.id,
+                line: typed,
+                on: list
+            )
+            cache.remember(alike, on: list, isNew: true)
+            if putBack {
+                show { rows in rows.map { $0.uuid == uuid ? $0.withDone(false) : $0 } }
+            }
 
-        let uuid = UUID().uuidString.lowercased()
-        let local = Item(
-            id: -Int64(Date().timeIntervalSince1970 * 1000),
-            uuid: uuid,
-            name: parsed.name,
-            amount: parsed.amount,
-            // The line first, then the memory. Somebody who spelled a unit out meant
-            // it; somebody who did not is being offered what they used last time.
-            //
-            // Matched case-insensitively, because the parser answers with the unit as
-            // the line spelled it -- `2 KG apples` names the same unit as `2 kg`.
-            unitID: units.first { $0.name.lowercased() == parsed.unit?.lowercased() }?.id
-                ?? remembered?.unitID,
-            doneAt: nil,
-            tagIDs: remembered?.tagIDs ?? []
-        )
-        cache.outbox.add(uuid: uuid, localID: local.id, line: typed, on: list)
-        cache.remember(local, on: list, isNew: true)
-        show { $0 + [local] }
+        case .new(let row):
+            let uuid = UUID().uuidString.lowercased()
+            let local = Item(
+                id: -Int64(Date().timeIntervalSince1970 * 1000),
+                uuid: uuid,
+                name: row.name,
+                amount: row.amount,
+                unitID: row.unitID,
+                doneAt: nil,
+                // Where the history says it belongs, so a re-added item files itself.
+                tagIDs: row.tagIDs
+            )
+            cache.outbox.add(uuid: uuid, localID: local.id, line: typed, on: list)
+            cache.remember(local, on: list, isNew: true)
+            show { $0 + [local] }
+        }
+
         await drain()
     }
 
@@ -554,12 +562,23 @@ struct ItemsView: View {
     /// the diff. Only what changed is sent -- re-attaching a tag an item already has
     /// would be a conflict, and detaching one it never had a miss.
     private func apply(_ edit: ItemEdit, to target: Editing) async throws {
+        // Counted rather than measured is still a unit, and `unit` is the one that
+        // says so. The server normalises this on its own update and the device has to
+        // agree: left empty, `milk` and `1 unit milk` are different units and so
+        // different rows, and the list grows a near-duplicate nothing will merge.
+        //
+        // It is also what a row shows. An item with no unit prints no measure at all,
+        // which reads as a row that has lost one rather than a row of one thing.
+        let unitID = edit.unitID ?? units.first { $0.name.lowercased() == "unit" }?.id
+        // A missing amount is one. Nobody writing a shopping list means "zero of it".
+        let amount = edit.amount > 0 ? edit.amount : 1
+
         cache.outbox.update(
             target.item,
             on: list,
             name: edit.name,
-            amount: edit.amount,
-            unitID: edit.unitID
+            amount: amount,
+            unitID: unitID
         )
         // Queued, not sent. Filing used to go straight to the network and fail if it
         // could not get there, which offline lost the change and on a device with no
@@ -580,8 +599,8 @@ struct ItemsView: View {
                 id: target.item.id,
                 uuid: target.item.uuid,
                 name: edit.name,
-                amount: edit.amount,
-                unitID: edit.unitID,
+                amount: amount,
+                unitID: unitID,
                 doneAt: target.item.doneAt,
                 tagIDs: Array(edit.tagIDs)
             ),
@@ -596,8 +615,8 @@ struct ItemsView: View {
                     id: $0.id,
                     uuid: $0.uuid,
                     name: edit.name,
-                    amount: edit.amount,
-                    unitID: edit.unitID,
+                    amount: amount,
+                    unitID: unitID,
                     doneAt: $0.doneAt,
                     // What the editor was closed on. It used to keep the row's old
                     // filing and wait for the server to send the new one back, which

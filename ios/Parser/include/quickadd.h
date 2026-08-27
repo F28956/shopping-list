@@ -20,4 +20,9 @@ void quickadd_free(char *answer);
 /// the Rust side for the shape. The answer is yours, and goes back to `quickadd_free`.
 char *quickadd_suggest(const char *input);
 
+/// What a typed line should do to a list: which unit, which row, and whether a
+/// crossed-off one comes back. JSON in, JSON out; see the Rust side for the shape.
+/// The answer is yours, and goes back to `quickadd_free`.
+char *quickadd_resolve(const char *input);
+
 #endif

@@ -386,25 +386,50 @@ struct MacItemsView: View {
         line = ""
         typing = true
         suggestions.clear()
-        // See the phone's `ItemsView.add` for the negative id and why it never leaves,
-        // and for why the line is read here rather than waited for: with no server
-        // nothing ever comes back to correct it, so `2 kg apples` would stay an item
-        // called "2 kg apples". `QuickAdd` is the server's own parser, compiled in.
-        let parsed = QuickAdd.parse(typed, units: units.map(\.name))
-        let uuid = UUID().uuidString.lowercased()
-        let local = Item(
-            id: -Int64(Date().timeIntervalSince1970 * 1000),
-            uuid: uuid,
-            name: parsed.name,
-            amount: parsed.amount,
-            // Case-insensitively: the parser answers with the unit as the line spelled
-            // it, and `2 KG apples` names the same unit as `2 kg apples`.
-            unitID: units.first { $0.name.lowercased() == parsed.unit?.lowercased() }?.id,
-            doneAt: nil,
-            tagIDs: []
-        )
-        cache.outbox.add(uuid: uuid, localID: local.id, line: typed, on: list)
-        show { $0 + [local] }
+        // See the phone's `ItemsView.add` for the negative id and why it never leaves.
+        //
+        // **What the line does is not decided here.** Which unit a bare name lands in,
+        // whether `Milk` is the `milk` already on the list, whether a crossed-off row
+        // comes back -- all of it is `parsing::add`, compiled in and shared with the
+        // server. This screen used to make its own row every time, so typing the same
+        // thing twice made two of them and nothing was going to merge them.
+        let remembered = cache.remembered(typed, on: list)
+        let decision = QuickAdd.resolve(typed, units: units, rows: items, remembered: remembered)
+
+        switch decision {
+        case .existing(let uuid, let putBack):
+            guard let alike = items.first(where: { $0.uuid == uuid }) else { return }
+            // A fresh uuid, not the row's: handing the server its own would take the
+            // early return in `create` and skip the putting-back.
+            cache.outbox.add(
+                uuid: UUID().uuidString.lowercased(),
+                localID: alike.id,
+                line: typed,
+                on: list
+            )
+            cache.remember(alike, on: list, isNew: true)
+            if putBack {
+                show { rows in rows.map { $0.uuid == uuid ? $0.withDone(false) : $0 } }
+            }
+            await drain()
+            return
+
+        case .new(let row):
+            let uuid = UUID().uuidString.lowercased()
+            let local = Item(
+                id: -Int64(Date().timeIntervalSince1970 * 1000),
+                uuid: uuid,
+                name: row.name,
+                amount: row.amount,
+                unitID: row.unitID,
+                doneAt: nil,
+                tagIDs: row.tagIDs
+            )
+            cache.remember(local, on: list, isNew: true)
+            cache.outbox.add(uuid: uuid, localID: local.id, line: typed, on: list)
+            show { $0 + [local] }
+        }
+
         await drain()
     }
 

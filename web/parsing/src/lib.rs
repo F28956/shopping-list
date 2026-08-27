@@ -10,6 +10,7 @@
 //! `domain` re-exports both, so `crate::quick_add` still resolves inside it and no
 //! caller had to change.
 
+pub mod add;
 pub mod fuzzy;
 pub mod history_rank;
 pub mod quick_add;

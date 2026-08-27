@@ -130,9 +130,23 @@ impl Item {
         .fetch_all(pool)
         .await?;
 
-        Ok(candidates
-            .into_iter()
-            .find(|i| i.unit_id == unit_id && i.name.0.trim().to_lowercase() == wanted))
+        // The matching itself is `parsing::add::alike`, not a closure here: the phones
+        // run the same rule with no server to correct them, and a rule written twice
+        // is a rule that drifts. This fetches; that decides.
+        let rows: Vec<parsing::add::Row> = candidates
+            .iter()
+            .map(|i| parsing::add::Row {
+                uuid: i.uuid.0.clone(),
+                name: i.name.0.clone(),
+                unit_id: i.unit_id.map(|u| u.0),
+                done: i.done_at.is_some(),
+            })
+            .collect();
+
+        let found = parsing::add::alike(&rows, &wanted, unit_id.map(|u| u.0))
+            .map(|r| r.uuid.clone());
+
+        Ok(found.and_then(|uuid| candidates.into_iter().find(|i| i.uuid.0 == uuid)))
     }
 
     /// Puts an item back on the list, leaving everything else as it was.

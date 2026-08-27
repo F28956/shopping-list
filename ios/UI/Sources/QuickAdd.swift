@@ -82,4 +82,90 @@ enum QuickAdd {
     private struct Suggested: Decodable {
         var names: [String]
     }
+
+    /// What a typed line should do to a list.
+    ///
+    /// The whole decision, and deliberately not this app's to make. Which unit a bare
+    /// name ends up in, whether `Milk` is the `milk` already on the list, and whether
+    /// a crossed-off row comes back are all rules the server has always had — and
+    /// writing them out again here is how a phone came to show three rows where a
+    /// server would have shown one. See `parsing::add`.
+    static func resolve(
+        _ line: String,
+        units: [Unit],
+        rows: [Item],
+        remembered: Cache.Remembered?
+    ) -> Resolution {
+        var input: [String: Any] = [
+            "line": line,
+            "units": units.map { ["id": $0.id, "name": $0.name] },
+            "rows": rows.map {
+                [
+                    "uuid": $0.uuid,
+                    "name": $0.name,
+                    "unit_id": $0.unitID as Any,
+                    "done": $0.isDone,
+                ]
+            },
+        ]
+        if let remembered {
+            input["remembered"] = [
+                "unit_id": remembered.unitID as Any,
+                "tag_ids": remembered.tagIDs,
+            ]
+        }
+
+        let fallback = Resolution.new(
+            .init(name: line, amount: 1, unitID: nil, tagIDs: [])
+        )
+
+        guard let json = try? JSONSerialization.data(withJSONObject: input),
+              let text = String(data: json, encoding: .utf8),
+              let answer = quickadd_resolve(text)
+        else { return fallback }
+        defer { quickadd_free(answer) }
+
+        let data = Data(String(cString: answer).utf8)
+        guard let decoded = try? JSONDecoder().decode(Answer.self, from: data) else {
+            return fallback
+        }
+        if let existing = decoded.existing {
+            return .existing(uuid: existing.uuid, putBack: existing.putBack)
+        }
+        return decoded.new.map(Resolution.new) ?? fallback
+    }
+
+    enum Resolution {
+        /// The list already wants this. `putBack` when the row was crossed off.
+        case existing(uuid: String, putBack: Bool)
+        case new(NewRow)
+    }
+
+    struct NewRow: Decodable {
+        var name: String
+        var amount: Double
+        var unitID: Int64?
+        var tagIDs: [Int64]
+
+        enum CodingKeys: String, CodingKey {
+            case name, amount
+            case unitID = "unit_id"
+            case tagIDs = "tag_ids"
+        }
+    }
+
+    private struct Answer: Decodable {
+        var existing: ExistingRow?
+        var new: NewRow?
+
+        struct ExistingRow: Decodable {
+            var uuid: String
+            var putBack: Bool
+
+            enum CodingKeys: String, CodingKey {
+                case uuid
+                case putBack = "put_back"
+            }
+        }
+    }
 }
