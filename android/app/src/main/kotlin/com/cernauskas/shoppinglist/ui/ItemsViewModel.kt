@@ -8,6 +8,9 @@ import com.cernauskas.shoppinglist.data.Cache
 import com.cernauskas.shoppinglist.data.Identity
 import com.cernauskas.shoppinglist.data.Item
 import com.cernauskas.shoppinglist.data.QueuedOperation
+import com.cernauskas.shoppinglist.data.QuickAdd
+import com.cernauskas.shoppinglist.data.tagId
+import com.cernauskas.shoppinglist.data.ServerDirectory
 import com.cernauskas.shoppinglist.data.done
 import com.cernauskas.shoppinglist.data.editedAmount
 import com.cernauskas.shoppinglist.data.editedName
@@ -146,6 +149,19 @@ class ItemsViewModel(
         } catch (_: ApiError) {
             // Not reported: without these, rows lose their measure and their order,
             // which is a poorer list rather than no list.
+            //
+            // And on a device with no server there is no answer coming at all, so the
+            // bundled copy stands in. Without it `3 kg potatoes` parsed to an item
+            // called "kg potatoes" -- the amount came off, the unit did not, because
+            // there was no list of units for the parser to recognise `kg` against.
+            val (units, tags) = cache.seedReference(list)
+            _state.update {
+                it.copy(
+                    unitList = it.unitList.ifEmpty { units },
+                    units = it.units.ifEmpty { units.associate { unit -> unit.id to unit.name } },
+                    tags = it.tags.ifEmpty { tags },
+                )
+            }
         }
     }
 
@@ -223,17 +239,31 @@ class ItemsViewModel(
      * something to key on, and the uuid is what the operation actually names. When the
      * add lands, the reload replaces it with the server's row -- same uuid, real id.
      *
-     * The name shown until then is the line as typed, near enough. `2 kg apples` is
-     * parsed on the server, so the amount and unit arrive with the reload; guessing
-     * them here would be a second parser to disagree with the first.
+     * The line is read here, and it used to be shown as typed until the server sent
+     * back what it had made of it. That was fine when there was always a server; on a
+     * device with none, `2 kg apples` stayed an item called "2 kg apples" for ever --
+     * no amount, no unit, and nothing coming to fix it.
+     *
+     * It is not a second parser. [QuickAdd] is the server's own, compiled for the
+     * phone, so what appears in this row is what the server would have said and the
+     * reload has nothing to correct.
      */
     fun add(line: String) = viewModelScope.launch {
         val uuid = java.util.UUID.randomUUID().toString()
+        // `units` is id-to-name, which is the shape the rest of this screen wants.
+        val units = _state.value.units
+        val parsed = QuickAdd.read(line.trim(), units.values.toList())
         val local = Item(
             id = -(Instant.now().toEpochMilli()),
             uuid = uuid,
-            name = line.trim(),
-            amount = 1.0,
+            name = parsed.name,
+            amount = parsed.amount,
+            // Matched case-insensitively, because the parser answers with the unit as
+            // the line spelled it -- somebody who typed `2 KG apples` named the same
+            // unit as somebody who typed `kg`.
+            unitId = units.entries
+                .firstOrNull { (_, name) -> name.equals(parsed.unit, ignoreCase = true) }
+                ?.key,
         )
         cache.outbox.add(uuid, local.id, line, list)
         show { rows -> rows + local }
@@ -272,28 +302,32 @@ class ItemsViewModel(
 
     fun save(item: Item, edit: ItemDraft.Edit, attached: List<Tag>) = viewModelScope.launch {
         cache.outbox.update(item, list, edit.name, edit.amount, edit.unitId)
+
+        // Queued, not sent. Filing used to go straight to the network and apologise if
+        // it could not get there, which offline lost the change and on a device with no
+        // server meant the aisle picker never worked at all.
+        val before = attached.map { it.id }.toSet()
+        _state.value.tags.filter { it.id in edit.tagIds && it.id !in before }
+            .forEach { cache.outbox.tag(item, list, it.id, attached = true) }
+        attached.filter { it.id !in edit.tagIds }
+            .forEach { cache.outbox.tag(item, list, it.id, attached = false) }
+
         show { rows ->
             rows.map {
                 if (it.uuid == item.uuid) {
-                    it.copy(name = edit.name, amount = edit.amount, unitId = edit.unitId)
+                    it.copy(
+                        name = edit.name,
+                        amount = edit.amount,
+                        unitId = edit.unitId,
+                        // What the editor was closed on. It used to keep the row's old
+                        // filing and wait for the server to send the new one back,
+                        // which on a device with no server was a wait that never ended.
+                        tagIds = edit.tagIds.toList(),
+                    )
                 } else {
                     it
                 }
             }
-        }
-
-        // Tags are still online-only, and say so by failing rather than by pretending.
-        // They are the last operations without an offline path; see docs/offline.md.
-        try {
-            val before = attached.map { it.id }.toSet()
-            _state.value.tags.filter { it.id in edit.tagIds && it.id !in before }
-                .forEach { api.attach(it, item, list) }
-            attached.filter { it.id !in edit.tagIds }
-                .forEach { api.detach(it, item, list) }
-        } catch (_: ApiError.Transport) {
-            _state.update { it.copy(message = "Categories need a connection. The rest was saved.") }
-        } catch (e: ApiError) {
-            report(e)
         }
 
         drain()
@@ -358,7 +392,20 @@ class ItemsViewModel(
         if (drained.sent > 0) load().join()
     }
 
+    /**
+     * Which rows are still waiting on a server, and how many.
+     *
+     * Both are empty on a device with no server, and not because nothing is queued --
+     * on a list that is only ever this device's, *everything* is queued and nothing
+     * ever leaves. Marking every row as waiting says the app is behind on work it means
+     * to do, and it isn't: the list is already exactly what it should be. The queue is
+     * still kept, because a server added later is owed every one of them.
+     */
     private suspend fun refreshUnsent() {
+        if (ServerDirectory.isOnDeviceOnly) {
+            _state.update { it.copy(unsent = emptySet(), waiting = 0) }
+            return
+        }
         val queued = cache.outbox.forList(list.id)
         _state.update {
             it.copy(unsent = queued.map { op -> op.itemUuid }.toSet(), waiting = queued.size)
@@ -416,6 +463,23 @@ class ItemsViewModel(
 
                 QueuedOperation.CLEAR_DONE ->
                     rows.filter { it.uuid !in operation.sweptUuids }
+
+                QueuedOperation.ATTACH_TAG, QueuedOperation.DETACH_TAG -> {
+                    val tagId = operation.tagId
+                    if (tagId == null) {
+                        rows
+                    } else {
+                        val attaching = operation.kind == QueuedOperation.ATTACH_TAG
+                        rows.map {
+                            if (it.uuid != operation.itemUuid) {
+                                it
+                            } else {
+                                val filed = it.tagIds.filter { id -> id != tagId }
+                                it.copy(tagIds = if (attaching) filed + tagId else filed)
+                            }
+                        }
+                    }
+                }
 
                 else -> rows
             }

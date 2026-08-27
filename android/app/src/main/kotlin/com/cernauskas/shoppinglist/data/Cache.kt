@@ -248,6 +248,9 @@ val ADD_THE_OUTBOX = object : Migration(1, 2) {
  */
 class Cache(context: Context) {
 
+    /** Kept for the bundled reference data, which is read out of the assets. */
+    private val assets = context.applicationContext
+
     private val db = Room.databaseBuilder(
         context.applicationContext,
         CacheDatabase::class.java,
@@ -265,6 +268,25 @@ class Cache(context: Context) {
 
     /** The queue that lives in the same file — see [Outbox]. */
     val outbox = Outbox(db.outbox())
+
+    /**
+     * Writes down the units and aisles a device with no server would otherwise never
+     * have — see [Reference].
+     *
+     * Written into the cache rather than only handed back, so the next screen finds
+     * them without asking, and so a device that later gains a server simply overwrites
+     * them with that server's answer.
+     *
+     * Does nothing if there is already something there. A server's answer is the
+     * authority and must not be replaced by the bundled copy on the next cold start.
+     */
+    suspend fun seedReference(list: ShoppingList): Pair<List<Unit>, List<Tag>> {
+        val units = Reference.units(assets)
+        val tags = Reference.tags(assets)
+        if (this.units().isEmpty()) rememberUnits(units)
+        if (this.tags(list).isEmpty()) rememberTags(list, tags)
+        return units to tags
+    }
 
     suspend fun lists(): List<ShoppingList> = read {
         dao.lists().map {

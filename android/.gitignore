@@ -3,3 +3,5 @@ local.properties
 build/
 *.iml
 .idea/
+app/src/main/jniLibs/
+app/src/main/assets/reference.json

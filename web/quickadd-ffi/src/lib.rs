@@ -76,3 +76,57 @@ unsafe fn borrow<'a>(raw: *const c_char) -> Option<&'a str> {
     }
     unsafe { CStr::from_ptr(raw) }.to_str().ok()
 }
+
+/// The same parser, for the JVM.
+///
+/// Separate from the C entry points above rather than layered on them, because JNI is
+/// not a C ABI: the symbol name is mangled from the Java class that declares the
+/// method, and the strings are `jstring` handles rather than pointers. What the two
+/// have in common is that neither decides anything -- both call `parsing::quick_add`
+/// and hand back its answer.
+///
+/// Memory is the JVM's here, which is the one real difference for a reader: the
+/// returned string is a Java object and the collector owns it, so there is no free
+/// function to match this one.
+#[cfg(target_os = "android")]
+pub mod android {
+    use jni::JNIEnv;
+    use jni::objects::{JClass, JString};
+    use jni::sys::jstring;
+
+    /// Answers with the same JSON the C entry point does.
+    ///
+    /// The name is not a name: JNI resolves
+    /// `Java_com_cernauskas_shoppinglist_data_QuickAdd_parse` from the package, class
+    /// and method it is declared in. Renaming or moving that Kotlin object without
+    /// renaming this breaks the link at run time, not at build time.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn Java_com_cernauskas_shoppinglist_data_QuickAdd_parse(
+        mut env: JNIEnv,
+        _class: JClass,
+        line: JString,
+        units_json: JString,
+    ) -> jstring {
+        let line: String = env.get_string(&line).map(Into::into).unwrap_or_default();
+        let units_json: String = env
+            .get_string(&units_json)
+            .map(Into::into)
+            .unwrap_or_default();
+        let units: Vec<String> = serde_json::from_str(&units_json).unwrap_or_default();
+
+        let parsed = parsing::quick_add::parse(&line, &units);
+        let answer = serde_json::json!({
+            "name": parsed.name,
+            "amount": parsed.amount,
+            "unit": parsed.unit,
+        });
+
+        // A failure here means the JVM could not allocate a string, which it will
+        // already be throwing about. Null is what JNI expects to be returned while an
+        // exception is pending.
+        match env.new_string(answer.to_string()) {
+            Ok(made) => made.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
+}

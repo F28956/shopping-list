@@ -8,6 +8,39 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// The units and aisles a device with no server still needs, copied from the file the
+// server's own test guards against the migrations -- see `domain::reference`. Copied
+// rather than kept as a second copy in this tree, because a second copy is a thing that
+// drifts.
+val copyReference by tasks.registering(Copy::class) {
+    description = "Copies reference/reference.json into the APK's assets."
+    from("${projectDir}/../../reference/reference.json")
+    into("${projectDir}/src/main/assets")
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
+    .configureEach { dependsOn(copyReference) }
+
+// The shared parser, compiled from Rust into the jniLibs this APK packages.
+//
+// A task rather than a note in the README, because "remember to run the script" means
+// the day somebody changes the parser, rebuilds, and is served a stale answer by a
+// library nobody rebuilt. Cargo is already incremental; when nothing changed this costs
+// a fraction of a second.
+val buildParser by tasks.registering(Exec::class) {
+    description = "Compiles web/parsing into app/src/main/jniLibs."
+    commandLine("${projectDir}/../scripts/build-parser.sh")
+    // The source it actually depends on, so Gradle can skip the call entirely when
+    // none of it has changed. Cargo would work it out too, but not before paying for
+    // a process launch on every build.
+    inputs.dir("${projectDir}/../../web/parsing")
+    inputs.dir("${projectDir}/../../web/quickadd-ffi")
+    outputs.dir("${projectDir}/src/main/jniLibs")
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }
+    .configureEach { dependsOn(buildParser) }
+
 android {
     testOptions {
         unitTests {

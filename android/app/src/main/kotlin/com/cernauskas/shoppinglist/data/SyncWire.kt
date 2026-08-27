@@ -34,6 +34,8 @@ data class SyncOperation(
      * between renaming a row and splitting one. */
     val seen: SeenOn? = null,
     val done: Boolean? = null,
+    /** The aisle an `attach_tag` or `detach_tag` names. */
+    @SerialName("tag_id") val tagId: Long? = null,
 )
 
 @Serializable

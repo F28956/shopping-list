@@ -77,6 +77,8 @@ data class QueuedOperation(
         const val UPDATE = "update"
         const val DELETE = "delete"
         const val CLEAR_DONE = "clear_done"
+        const val ATTACH_TAG = "attach_tag"
+        const val DETACH_TAG = "detach_tag"
     }
 }
 
@@ -194,6 +196,22 @@ class Outbox(private val dao: OutboxDao) {
             }
         },
     )
+
+    /**
+     * Files something under an aisle, or stops filing it there.
+     *
+     * The tag travels as an id, and that is only safe because the ids are agreed in
+     * advance: `reference.json` is the same file the server's seed is checked against,
+     * so a device that has never met a server still means aisle 5 by 5.
+     */
+    suspend fun tag(item: Item, list: ShoppingList, tagId: Long, attached: Boolean) =
+        queue(
+            if (attached) QueuedOperation.ATTACH_TAG else QueuedOperation.DETACH_TAG,
+            item.uuid,
+            item.id,
+            list,
+            buildJsonObject { put("tag_id", tagId) },
+        )
 
     suspend fun delete(item: Item, list: ShoppingList) =
         queue(QueuedOperation.DELETE, item.uuid, item.id, list, buildJsonObject {})
@@ -357,6 +375,7 @@ class Outbox(private val dao: OutboxDao) {
                 )
             },
             done = flag("done"),
+            tagId = payload["tag_id"]?.jsonPrimitive?.content?.toLongOrNull(),
         )
     }
 }
@@ -379,6 +398,10 @@ private fun QueuedOperation.field(key: String): kotlinx.serialization.json.JsonE
 /** Whether a queued [QueuedOperation.SET_DONE] is a tick or an untick. */
 val QueuedOperation.done: Boolean
     get() = field("done")?.jsonPrimitive?.booleanOrNull == true
+
+/** The aisle a queued [QueuedOperation.ATTACH_TAG] or [QueuedOperation.DETACH_TAG] names. */
+val QueuedOperation.tagId: Long?
+    get() = field("tag_id")?.jsonPrimitive?.contentOrNull?.toLongOrNull()
 
 /** The name a queued [QueuedOperation.UPDATE] gives the row. */
 val QueuedOperation.editedName: String?

@@ -7,8 +7,17 @@ edition = "2024"
 # this crate only carries it across the language boundary.
 [lib]
 name = "quickadd"
-crate-type = ["staticlib"]
+# `staticlib` for Apple, which links the archive straight into the app; `cdylib` for
+# Android, which loads a .so through `System.loadLibrary`. The same code either way --
+# only how it is packaged differs.
+crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
 parsing = { path = "../parsing" }
 serde_json = "1"
+
+# Android only. JNI is not a C ABI: the method name is mangled from the class it
+# belongs to and every string is a `jstring` rather than a `char *`, so the Apple
+# entry points cannot be reused as they are.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
