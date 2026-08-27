@@ -206,18 +206,39 @@ that is already written, already tested, and platform-shaped for good reasons. O
 storage buys uniformity nobody is asking for at the price of the only code in this
 project that has been through a real conflict matrix on two handsets.
 
-**The spike that proves it** is P3's item 2, and it should be run before committing to
-any of P3: compile `domain`'s line parser for iOS and Android, call it from Swift and
-Kotlin, and delete the two native implementations. It is small, it removes duplication
-that exists today, and it exercises every part of the toolchain the rest depends on —
-the build, the bindings, the string marshalling, the CI. If that is miserable, P4 is
-not affordable and the plan ends at P3.
+**The spike that proves it** was P3's item 2, and it has been run. **It passed on
+iOS.** What it took, so the estimate for the rest is a real one rather than a hope:
+
+* `quick_add` and `fuzzy` moved to `parsing`, a crate with an empty dependency list.
+  Both were already pure — no imports beyond the standard library — so this was a
+  file move and a re-export from `domain`. **Nothing that used them changed.** The
+  empty dependency list is the guard: anything added there has to cross-compile to a
+  phone, and a build failure says so better than a comment asking people not to.
+* `quickadd-ffi` exposes two C functions, parse and free. No binding generator, no
+  struct across the boundary: strings in, JSON out. Eleven lines of hand-written
+  header that a generator would not have improved.
+* A build phase runs cargo for whatever platform Xcode is building, so the library
+  can never be stale. Nothing binary is committed.
+* Nine Swift tests, about the **crossing** and not the parsing — that UTF-8 survives,
+  that the unit list arrives, that the free happens. The forty-three cases about what
+  a line *means* stayed in Rust, which is the entire point.
+
+Cost: an afternoon, most of it spent on two build-system details (macOS ships bash
+3.2; `-sdk` overrides the SDK for embedded targets of another platform). The
+watchOS targets are tier 3 in rustup and were **not** attempted — the watch has no
+keyboard and nothing to parse, so the parser is linked into the iOS and Mac targets
+only. If a watch ever needs it, that is a `-Z build-std` problem to solve then.
+
+**Android is not yet done**, and it is the half with the NDK in it. The estimate
+above is for the platform that went first and easiest.
 
 ## Risks worth naming
 
-**The spike fails or is too heavy.** Then the merge rules would have to be written
-three times to encrypt anything, and encryption should not be attempted. This is the
-risk the spike exists to find early, and it is cheap to find.
+**~~The spike fails or is too heavy.~~** **Retired on iOS, live on Android.** The
+Apple half cost an afternoon and removed duplication that already existed. The
+Android half has an NDK in it and has not been attempted; if *that* is miserable,
+the risk is back, because rules written for one platform and not the other are
+worse than rules written twice on purpose.
 
 **Recovery proves unusable.** [encryption.md](encryption.md)'s K11 is a phrase people
 lose. If the honest answer turns out to be "lists only you can see are gone", that may

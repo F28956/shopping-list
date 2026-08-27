@@ -256,10 +256,19 @@ Offline handling is mostly a communication problem:
 3. ~~**The outbox, one operation at a time.**~~ **Done for `setDone`.** A tick
    with no signal changes the screen, goes in the queue, and is sent on the next
    successful load from anywhere in the app.
-4. ~~**The rest of the operations**, in the table's order.~~ **Done, bar tags.**
-   `add`, `setDone`, `update`, `delete` and `clearDone` all have an offline path
-   on both native clients, and all of them go over `POST /api/sync`. Attaching
-   and detaching tags is the last one without: it stays online-only and says so.
+4. ~~**The rest of the operations**, in the table's order.~~ **Done.** `add`,
+   `setDone`, `update`, `delete` and `clearDone` all have an offline path, and
+   `attach_tag` / `detach_tag` — the last two without one — joined them as the
+   eighth and ninth operations. They were the reason the editor's aisle picker
+   did nothing on a device with no server: it sent straight at the network and
+   let the failure stand, so the change was discarded when the sheet closed.
+
+   The tag travels as an **id**, which is only safe because the ids are agreed
+   in advance. `reference/reference.json` is the file the clients bundle and the
+   file the seed is checked against, so a phone that has never met a server
+   still means aisle 5 by 5. A tag id that names nothing is refused as
+   `Invalid`, not `Gone` — gone means the row went and the operation should be
+   dropped, invalid means it was never going to work.
 5. ~~**`POST /api/sync`** and batch replay.~~ **Done.** Every operation, named by
    uuid, carrying the device's clock, answered one by one.
 6. ~~**Making a list offline.**~~ **Done**, and it was not on this list — it arrived
@@ -282,7 +291,29 @@ Offline handling is mostly a communication problem:
 
 Each step is useful on its own, and the app is never half-migrated: an operation
 either has an offline path or it does not, and the ones that do not stay
-online-only until they get one.
+online-only until they get one. Only invitations and joining remain, and they
+always will — a share code is a secret the server issues.
+
+## The device has to know what a line means
+
+An offline path for `add` is not enough on its own, and standalone mode is where
+that showed. `2 kg apples` was read by the server and by nothing else, so the row
+was drawn with the line as typed on the understanding that the server would send
+back what it had made of it. With no server, nothing came back, and the
+placeholder *was* the item — an entry literally called "2 kg apples", with no
+amount and no unit.
+
+The parser is now compiled into the clients rather than written again in each of
+them. `web/parsing` is a crate with an empty dependency list holding `quick_add`
+and `fuzzy` — both were already pure — and `quickadd-ffi` wraps it in two C
+functions. The alternative was three implementations of a hundred lines of unit
+matching and number formats agreeing with each other for ever, which was never
+going to happen; the first time they disagreed, somebody's two kilograms would
+quietly have become two litres.
+
+The units and aisles themselves come from the same place, for the same reason:
+`reference/reference.json` is bundled by the clients and guarded against the
+migrations by a test, so the ids in it are the ids the server means.
 
 ## What the outbox does today
 
