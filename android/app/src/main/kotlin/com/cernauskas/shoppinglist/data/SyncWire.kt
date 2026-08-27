@@ -57,6 +57,12 @@ data class AppliedOperation(
     val id: String,
     val outcome: String,
     val item: Item? = null,
+    /**
+     * The list a `make_list` produced. Absent on every other operation — a device that
+     * made a list offline knows what it called it and not what the server does, and
+     * this is where it finds out.
+     */
+    val list: ShoppingList? = null,
     val why: String? = null,
 ) {
     val landed: Boolean get() = outcome == APPLIED || outcome == ALREADY_APPLIED

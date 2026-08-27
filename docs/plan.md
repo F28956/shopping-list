@@ -129,15 +129,18 @@ the plan stops here it has delivered the thing that started this conversation.
    decides App Store review. Also the first step of P3, which is the argument for
    doing it here rather than arguing about 4.2 with a demo instance.
 
-   *The server half is done*: `make_list` is a sync operation, so a list started with
-   no signal arrives with its items when one turns up. What is left is the clients —
-   letting a list be made before there is anywhere to send it, which means the caches
-   keying off `uuid` where they use the server's integer `id`.
+   ~~*The server half is done*.~~ **Done, both halves, both platforms.** `make_list`
+   is a sync operation; a list made here gets a negative id swapped for the server's
+   when it answers; and "use this device only" is offered on the first screen. The
+   shape it took is in [self-hosting.md](self-hosting.md)'s S1 — no server turned out
+   to be the same state as no signal, which the app has known how to be in since the
+   offline work.
 3. **ATS** — S4's client half. Small, and currently a silent failure for anybody
    typing an address that is not `localhost`.
 4. **The demo instance and the listing** — S5 and S6.
 
-**Off-ramp:** TestFlight needs 1 to 3 and none of 4. If the store turns out not to
+**Off-ramp:** TestFlight needs 1 to 3 and none of 4. Only 3 and 4 are left; 4 is
+yours rather than mine. If the store turns out not to
 be worth a permanent demo server, stop after item 2 and distribute that way — which
 [self-hosting.md](self-hosting.md)'s Open already suspects is the right answer.
 

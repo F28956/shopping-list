@@ -48,6 +48,8 @@ fun ListsScreen(
      * refused in the service layer to anybody else. */
     isOwner: Boolean,
     onManageServer: () -> Unit,
+    /** There is no server, because somebody said so on the first screen. */
+    onDeviceOnly: Boolean,
 ) {
     val state by model.state.collectAsState()
     val snackbars = remember { SnackbarHostState() }
@@ -79,7 +81,11 @@ fun ListsScreen(
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        StatusDot(waiting = state.waiting, offline = state.offline)
+                        StatusDot(
+                            waiting = state.waiting,
+                            offline = state.offline,
+                            onDeviceOnly = onDeviceOnly,
+                        )
                         Text("Lists")
                     }
                 },
@@ -146,7 +152,10 @@ fun ListsScreen(
             // emptiness it had never verified. `fresh` is the only thing that earns
             // the empty state, and only the server can set it; losing signal
             // afterwards does not unsay what the server already said.
-            state.lists.isEmpty() && !state.fresh -> Unreachable(
+            // Except on a device kept to itself, where there is no server to have
+            // checked with and this device is the only thing that could know. There,
+            // empty means empty.
+            state.lists.isEmpty() && !state.fresh && !onDeviceOnly -> Unreachable(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 offline = state.offline,
                 what = "Your lists",
@@ -160,7 +169,7 @@ fun ListsScreen(
             )
 
             else -> Column(Modifier.fillMaxSize().padding(padding)) {
-                OfflineNote(state.offline)
+                OfflineNote(state.offline, onDeviceOnly = onDeviceOnly)
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),

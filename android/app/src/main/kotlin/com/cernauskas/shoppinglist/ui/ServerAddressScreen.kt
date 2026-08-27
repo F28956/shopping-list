@@ -32,7 +32,15 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ServerAddressScreen(onAccepted: (ServerAddress, ServerDirectory.About) -> Unit) {
+fun ServerAddressScreen(
+    onAccepted: (ServerAddress, ServerDirectory.About) -> Unit,
+    /**
+     * What to do when somebody says they have no server. `null` hides the offer, which
+     * is right when this screen is reached from settings — a device that already has
+     * lists on a server is not choosing for the first time.
+     */
+    onDeclined: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -118,6 +126,21 @@ fun ServerAddressScreen(onAccepted: (ServerAddress, ServerDirectory.About) -> Un
             Icon(Icons.Default.Link, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("I have a share link")
+        }
+
+        onDeclined?.let { decline ->
+            // S1. The app has to be useful before it has a server, and this is where
+            // somebody says they do not want one. It is not a lesser mode: lists made
+            // here work exactly as lists made with no signal do, and attaching a
+            // server later sends them.
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                TextButton(onClick = decline) { Text("Use this device only") }
+                Text(
+                    "Your lists stay on this phone. You can add a server later.",
+                    style = MaterialTheme.typography.labelSmall,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
 
         problem?.let {

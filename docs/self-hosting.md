@@ -106,7 +106,7 @@ ever been, must not offer to sign out somebody who never signed in, and must not
 an orange dot nagging about a connection somebody deliberately declined. Four places
 said something false, and each is now branched on a single honest question.
 
-**Still to do on Android.**
+**Done on Android too**, to the same design and with the same copy.
 
 ## S2 · The address is asked for, never compiled in
 

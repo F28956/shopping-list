@@ -79,6 +79,52 @@ interface CacheDao {
     @Query("DELETE FROM lists")
     suspend fun forgetLists()
 
+    /**
+     * Everything the server has heard of.
+     *
+     * Lists this device made and has not managed to send have negative ids and keep
+     * their rows: the server has never heard of them, so it cannot mention them, and
+     * deleting everything it did not mention would take somebody's shopping away for
+     * the crime of having been written down offline.
+     */
+    @Query("DELETE FROM lists WHERE id >= 0")
+    suspend fun forgetKnownLists()
+
+    @Query("SELECT min(id) FROM lists")
+    suspend fun lowestListId(): Long?
+
+    @Query("SELECT count(*) FROM lists")
+    suspend fun listCount(): Int
+
+    @Query("UPDATE lists SET id = :real, owner_id = :owner WHERE id = :local")
+    suspend fun renumberList(local: Long, real: Long, owner: Long)
+
+    @Query("UPDATE items SET list_id = :real WHERE list_id = :local")
+    suspend fun renumberItems(local: Long, real: Long)
+
+    @Query("UPDATE reference SET list_id = :real WHERE list_id = :local")
+    suspend fun renumberReference(local: Long, real: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putList(row: CachedList)
+
+    /**
+     * Gives a locally-made list the id the server gave it.
+     *
+     * Everything keyed by the old id moves with it. Missing one of those would leave
+     * rows pointing at a list id that no longer exists, which reads on screen as a
+     * list that lost its items the moment it was first synced.
+     *
+     * The `uuid` does not change and never has — it is what the server was told, and
+     * what every queued operation names. Only this device's own numbering moves.
+     */
+    @Transaction
+    suspend fun adoptList(local: Long, real: Long, owner: Long) {
+        renumberList(local, real, owner)
+        renumberItems(local, real)
+        renumberReference(local, real)
+    }
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putLists(rows: List<CachedList>)
 
@@ -91,7 +137,7 @@ interface CacheDao {
      */
     @Transaction
     suspend fun replaceLists(rows: List<CachedList>) {
-        forgetLists()
+        forgetKnownLists()
         putLists(rows)
     }
 
@@ -247,6 +293,49 @@ class Cache(context: Context) {
         )
     }
 
+    /**
+     * Makes a list here, with no server involved.
+     *
+     * The id is negative and minted locally, which is the same trick items already use
+     * for rows created offline: it is a key for this device's own tables and never goes
+     * on the wire, where the `uuid` is the only name. When the server finally hears
+     * about it, [adopt] swaps the one for the other.
+     *
+     * Counting down from the lowest already used, so two lists made in the same second
+     * cannot collide.
+     */
+    suspend fun makeListHere(name: String, ownedBy: Long): ShoppingList {
+        val list = ShoppingList(
+            id = minOf(dao.lowestListId() ?: 0L, 0L) - 1,
+            uuid = java.util.UUID.randomUUID().toString(),
+            name = name,
+            ownerId = ownedBy,
+            role = Role.OWNER,
+        )
+
+        write {
+            dao.putList(
+                CachedList(
+                    id = list.id,
+                    uuid = list.uuid,
+                    name = list.name,
+                    ownerId = list.ownerId,
+                    role = list.role.name,
+                    position = dao.listCount(),
+                )
+            )
+        }
+
+        return list
+    }
+
+    /** Gives a locally-made list the id the server gave it. See [CacheDao.adoptList]. */
+    suspend fun adopt(local: ShoppingList, real: ShoppingList) = write {
+        if (isLocal(local) && !isLocal(real)) {
+            dao.adoptList(local.id, real.id, real.ownerId)
+        }
+    }
+
     suspend fun items(list: ShoppingList): List<Item> = read {
         dao.items(list.id).map {
             Item(
@@ -346,12 +435,18 @@ class Cache(context: Context) {
         }
     }
 
-    private companion object {
-        const val UNITS = "unit"
-        const val TAGS = "tag"
+    companion object {
+        /**
+         * Whether this list exists only here — see [makeListHere]. Public because the
+         * screens ask; the rest of this object is not.
+         */
+        fun isLocal(list: ShoppingList): Boolean = list.id < 0
+
+        private const val UNITS = "unit"
+        private const val TAGS = "tag"
 
         /** `list_id` for rows that belong to no list. Units are the same everywhere,
          * so they are cached once rather than once per list. */
-        const val GLOBAL = 0L
+        private const val GLOBAL = 0L
     }
 }

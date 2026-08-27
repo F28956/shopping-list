@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.Button
@@ -38,8 +39,14 @@ fun OfflineNote(
      * is worth colouring: the other two heal on their own and this one does not. */
     refused: Boolean = false,
     modifier: Modifier = Modifier,
+    /**
+     * There is no server. Nothing is stale and nothing is waiting for a connection
+     * that is coming, so there is nothing to say — and a line apologising for one
+     * somebody declined is worse than silence.
+     */
+    onDeviceOnly: Boolean = false,
 ) {
-    AnimatedVisibility(visible = offline || waiting > 0 || refused) {
+    AnimatedVisibility(visible = !onDeviceOnly && (offline || waiting > 0 || refused)) {
         Row(
             modifier = modifier
                 .fillMaxWidth()
@@ -90,34 +97,62 @@ fun OfflineNote(
 }
 
 @Composable
-fun Unreachable(modifier: Modifier, offline: Boolean, what: String, onRetry: () -> Unit) {
+fun Unreachable(
+    modifier: Modifier,
+    offline: Boolean,
+    what: String,
+    onRetry: () -> Unit,
+    /**
+     * There is no server to have failed. Nobody has written anything yet, which is not
+     * a failure and must not be reported as one.
+     */
+    onDeviceOnly: Boolean = false,
+) {
     Column(
         modifier = modifier.padding(32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
-            if (offline) Icons.Outlined.CloudOff else Icons.Outlined.ErrorOutline,
+            when {
+                onDeviceOnly -> Icons.Outlined.Checklist
+                offline -> Icons.Outlined.CloudOff
+                else -> Icons.Outlined.ErrorOutline
+            },
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            if (offline) "Can't reach the server" else "Couldn't load $what",
+            when {
+                // Three different emptinesses, and they are not the same news. On a
+                // device kept to itself nothing is wrong at all -- nobody has written
+                // a list yet -- and saying "can't reach the server" there would be
+                // reporting a failure that did not happen and could not.
+                onDeviceOnly -> "Nothing here yet"
+                offline -> "Can't reach the server"
+                else -> "Couldn't load $what"
+            },
             style = MaterialTheme.typography.titleMedium,
         )
         Text(
-            // Deliberately does not say the list is empty. Nobody knows whether it is
-            // -- which is the difference between a failed load and a verified answer.
-            if (offline) {
-                "$what will appear as soon as there is a connection."
-            } else {
-                "Whether there is anything is not known yet."
+            // Deliberately does not say the list is empty when a load failed. Nobody
+            // knows whether it is -- which is the difference between a failed load and
+            // a verified answer.
+            when {
+                onDeviceOnly -> "Make one with the button below. It stays on this phone."
+                offline -> "$what will appear as soon as there is a connection."
+                else -> "Whether there is anything is not known yet."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-        Button(onClick = onRetry) { Text("Try again") }
+        // Nothing to try again on a device with no server: the button would run a
+        // request that fails by design, and offering it invites somebody to press it
+        // repeatedly hoping.
+        if (!onDeviceOnly) {
+            Button(onClick = onRetry) { Text("Try again") }
+        }
     }
 }
 

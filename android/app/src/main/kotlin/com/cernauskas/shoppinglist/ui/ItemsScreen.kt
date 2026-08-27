@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cernauskas.shoppinglist.data.Item
+import com.cernauskas.shoppinglist.data.ServerDirectory
 import com.cernauskas.shoppinglist.data.Tag
 import com.cernauskas.shoppinglist.data.mark
 import com.cernauskas.shoppinglist.data.measure
@@ -64,7 +65,11 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
                     // The dot beside the name rather than among the actions: it is a
                     // fact about this screen, not another control to press.
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        StatusDot(waiting = state.waiting, offline = state.offline)
+                        StatusDot(
+                            waiting = state.waiting,
+                            offline = state.offline,
+                            onDeviceOnly = ServerDirectory.isOnDeviceOnly,
+                        )
                         Text(model.list.name)
                     }
                 },
@@ -124,7 +129,11 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
 
         // Nothing cached and a load that failed: this screen does not know whether
         // the list is empty, so it does not say it is.
-        if (state.outstanding.isEmpty() && state.done.isEmpty() && !state.fresh) {
+        // Except on a device kept to itself, where there is no server to have checked
+        // with and this device is the only thing that could know.
+        if (state.outstanding.isEmpty() && state.done.isEmpty() && !state.fresh &&
+            !ServerDirectory.isOnDeviceOnly
+        ) {
             Unreachable(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 offline = state.offline,
@@ -135,7 +144,12 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
         }
 
         Column(Modifier.fillMaxSize().padding(padding)) {
-            OfflineNote(state.offline, state.waiting, state.refused)
+            OfflineNote(
+                state.offline,
+                state.waiting,
+                state.refused,
+                onDeviceOnly = ServerDirectory.isOnDeviceOnly,
+            )
 
             LazyColumn(
             modifier = Modifier.fillMaxSize(),

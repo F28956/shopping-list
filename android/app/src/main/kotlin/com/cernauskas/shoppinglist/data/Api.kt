@@ -378,6 +378,15 @@ class Api(
 
     private suspend fun attempt(method: String, path: String, body: String?, bearer: String?): String =
         withContext(Dispatchers.IO) {
+            // Nowhere to send anything, because somebody chose to keep this device to
+            // itself. A transport failure before a socket is opened, which is not a
+            // workaround but the design: "no server" and "no signal" are the same
+            // state, and the app has known how to be in one of them since the offline
+            // work.
+            if (server().isEmpty()) {
+                throw ApiError.Transport(IOException("This device is not using a server."))
+            }
+
             val bearer = bearer ?: throw noToken()
 
             val request = Request.Builder()

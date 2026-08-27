@@ -67,6 +67,11 @@ data class QueuedOperation(
     val at: Long,
 ) {
     companion object {
+        /**
+         * Make the list itself. Queued when a list is written down with nowhere to
+         * send it — no signal, or no server at all.
+         */
+        const val MAKE_LIST = "make_list"
         const val ADD = "add"
         const val SET_DONE = "set_done"
         const val UPDATE = "update"
@@ -110,6 +115,19 @@ data class Drained(
     val lost: List<String> = emptyList(),
     /** Something was refused. The one state of the three that interrupts. */
     val refused: Boolean = false,
+    /**
+     * Lists this device made offline, and the rows the server made for them, paired by
+     * the `uuid` that never changed. The caller swaps this device's own numbering for
+     * the server's — see `Cache.adopt`.
+     */
+    val adopted: List<Adopted> = emptyList(),
+)
+
+/** A list this device made offline, and the row the server made for it. */
+data class Adopted(
+    /** The name that never changed, and the only one both ends agree on. */
+    val uuid: String,
+    val real: ShoppingList,
 )
 
 /** The queue, in the app's own vocabulary. */
@@ -118,6 +136,21 @@ class Outbox(private val dao: OutboxDao) {
     private val json = Json { ignoreUnknownKeys = true }
 
     // ------------------------------------------------------------------ queueing
+
+    /**
+     * Says a list exists, under the name this device has been calling it by.
+     *
+     * Names no item, which is why the uuid is empty — the wire drops it, and the
+     * list's own `uuid` is the only name this operation needs.
+     */
+    suspend fun makeList(list: ShoppingList) =
+        queue(
+            QueuedOperation.MAKE_LIST,
+            "",
+            list.id,
+            list,
+            buildJsonObject { put("name", list.name) },
+        )
 
     /** Puts something on the list, under a name this device mints now. */
     suspend fun add(uuid: String, localId: Long, line: String, list: ShoppingList) =
@@ -258,10 +291,19 @@ class Outbox(private val dao: OutboxDao) {
         var sent = 0
         val lost = mutableListOf<String>()
         var refused = false
+        val adopted = mutableListOf<Adopted>()
 
         for (answer in answers) {
             when {
                 answer.landed -> {
+                    // A list this device made has just been given its real id.
+                    // Collected rather than applied here, because the cache is the
+                    // caller's and this type deliberately knows nothing about it.
+                    val made = answer.list
+                    val queuedRow = queued.firstOrNull { it.id == answer.id }
+                    if (made != null && queuedRow != null) {
+                        adopted += Adopted(queuedRow.listUuid, made)
+                    }
                     dao.forget(answer.id)
                     sent++
                 }
@@ -278,6 +320,7 @@ class Outbox(private val dao: OutboxDao) {
             waiting = runCatching { dao.waiting() }.getOrDefault(0),
             lost = lost,
             refused = refused,
+            adopted = adopted,
         )
     }
 

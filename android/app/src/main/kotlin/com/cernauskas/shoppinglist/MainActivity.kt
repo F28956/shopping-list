@@ -61,10 +61,35 @@ class MainActivity : ComponentActivity() {
                 if (!addressed) {
                     // Before sign-in and never after (C1). A debug build has an address
                     // from BuildConfig, so this screen does not appear there at all.
-                    ServerAddressScreen { address, _ ->
-                        ServerDirectory.remember(address)
-                        addressed = true
-                    }
+                    ServerAddressScreen(
+                        onAccepted = { address, _ ->
+                            ServerDirectory.remember(address)
+                            addressed = true
+                        },
+                        onDeclined = {
+                            ServerDirectory.onlyThisDevice()
+                            addressed = true
+                        },
+                    )
+                    return@ShoppingTheme
+                }
+
+                // S1. No server means nobody to sign in to, so there is no sign-in.
+                // The app runs exactly as it does with no signal -- which is not a
+                // compromise but the point: `Api` fails every call as a transport
+                // error, the cache answers, and the outbox keeps what was written
+                // down until there is somewhere to send it.
+                if (ServerDirectory.isOnDeviceOnly) {
+                    Shopping(
+                        api = api,
+                        cache = cache,
+                        onSignedOut = {},
+                        onLeaveServer = {
+                            scope.launch { cache.forgetEverything() }
+                            ServerDirectory.forget()
+                            addressed = false
+                        },
+                    )
                     return@ShoppingTheme
                 }
 
@@ -202,6 +227,7 @@ private fun Shopping(
                 onLeaveServer = onLeaveServer,
                 isOwner = isOwner,
                 onManageServer = { managingServer = true },
+                onDeviceOnly = ServerDirectory.isOnDeviceOnly,
             )
         }
 

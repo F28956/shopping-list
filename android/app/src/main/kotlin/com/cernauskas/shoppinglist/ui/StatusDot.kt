@@ -27,8 +27,21 @@ import androidx.compose.ui.unit.dp
  *   the last look at the server failed and this is from memory.
  */
 @Composable
-fun StatusDot(waiting: Int, offline: Boolean, modifier: Modifier = Modifier) {
-    val inStep = waiting == 0 && !offline
+fun StatusDot(
+    waiting: Int,
+    offline: Boolean,
+    modifier: Modifier = Modifier,
+    /**
+     * There is no server, because somebody said so.
+     *
+     * Green, not orange. Nothing is waiting and nothing has failed — a device kept to
+     * itself is exactly as in step as it will ever be, and an orange dot nagging about
+     * a connection somebody deliberately declined is the app arguing with a decision
+     * it was handed.
+     */
+    onDeviceOnly: Boolean = false,
+) {
+    val inStep = onDeviceOnly || (waiting == 0 && !offline)
 
     androidx.compose.foundation.layout.Box(
         modifier
@@ -40,7 +53,7 @@ fun StatusDot(waiting: Int, offline: Boolean, modifier: Modifier = Modifier) {
                 if (inStep) Color(0xFF34C759) else Color(0xFFFF9500),
                 CircleShape,
             )
-            .semantics { contentDescription = said(waiting, offline) },
+            .semantics { contentDescription = said(waiting, offline, onDeviceOnly) },
     )
 }
 
@@ -48,7 +61,8 @@ fun StatusDot(waiting: Int, offline: Boolean, modifier: Modifier = Modifier) {
  * Spoken in full, because what makes a dot right at a glance is exactly what makes it
  * useless to somebody reading by ear.
  */
-private fun said(waiting: Int, offline: Boolean): String = when {
+private fun said(waiting: Int, offline: Boolean, onDeviceOnly: Boolean): String = when {
+    onDeviceOnly -> "On this device only"
     !offline && waiting == 0 -> "Up to date"
     waiting == 0 -> "Offline. Showing what was last loaded."
     waiting == 1 -> "1 change waiting to be sent"

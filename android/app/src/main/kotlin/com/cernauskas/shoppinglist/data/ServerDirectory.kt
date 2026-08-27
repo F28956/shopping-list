@@ -45,8 +45,34 @@ object ServerDirectory {
     val current: ServerAddress?
         get() {
             val stored = prefs.getString(KEY, null) ?: return built
+            if (stored == ON_DEVICE_ONLY) return null
             return ServerAddress.parse(stored, allowingCleartext = true).getOrNull()
         }
+
+    /**
+     * The reserved value for "this device on its own". A fourth state on the same key
+     * rather than a second key, because it is the same question with another answer.
+     */
+    private const val ON_DEVICE_ONLY = "local"
+
+    /**
+     * Records that this device is on its own.
+     *
+     * The app then works exactly as it does with no signal, which is not a
+     * coincidence: everything queues to the outbox and shows from the cache, and
+     * attaching a server later drains the queue into it. "No server" and "no signal"
+     * are the same state, and the app already knew how to be in one of them.
+     */
+    fun onlyThisDevice() {
+        prefs.edit().putString(KEY, ON_DEVICE_ONLY).apply()
+    }
+
+    /**
+     * Whether this device has no server *and has said so*, as opposed to not having
+     * been asked.
+     */
+    val isOnDeviceOnly: Boolean
+        get() = prefs.getString(KEY, null) == ON_DEVICE_ONLY
 
     /**
      * What the build was pointed at.
@@ -58,9 +84,12 @@ object ServerDirectory {
     private val built: ServerAddress?
         get() = ServerAddress.parse(BuildConfig.API_BASE_URL, allowingCleartext = true).getOrNull()
 
-    /** Whether anybody has to be asked. False on a debug build, which has one. */
+    /**
+     * Whether anybody has to be asked. False on a debug build, which has one, and
+     * false once somebody has said "this device only".
+     */
     val needsAnAddress: Boolean
-        get() = current == null
+        get() = current == null && !isOnDeviceOnly
 
     /**
      * Records an address that has been checked, and says whether it is a *different*

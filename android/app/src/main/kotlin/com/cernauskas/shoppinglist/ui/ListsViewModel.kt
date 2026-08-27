@@ -132,8 +132,23 @@ class ListsViewModel(
             // Here as well as on the list screen, because the app opens here: a phone
             // that came out of a shop and went into a pocket would otherwise hold its
             // changes until somebody happened to open the list they were made on.
-            cache.outbox.drain(api)
-            _state.update { it.copy(waiting = cache.outbox.waiting()) }
+            val drained = cache.outbox.drain(api)
+
+            // Lists made here have just been given the server's own ids. Done before
+            // anything is shown, so the screen never has the same list twice — once
+            // under this device's numbering and once under the server's.
+            for (adopted in drained.adopted) {
+                cache.lists().firstOrNull { it.uuid == adopted.uuid }?.let { local ->
+                    cache.adopt(local, adopted.real)
+                }
+            }
+
+            _state.update {
+                it.copy(
+                    waiting = cache.outbox.waiting(),
+                    lists = if (drained.adopted.isEmpty()) it.lists else cache.lists(),
+                )
+            }
         } catch (e: ApiError.Transport) {
             // Not reported. Being out of signal is a state, not an event: a phone in a
             // basement would raise this every few seconds, and a message for each is
@@ -153,7 +168,38 @@ class ListsViewModel(
         }
     }
 
-    fun create(name: String) = act { api.createList(name) }
+    /**
+     * Makes a list, wherever it can.
+     *
+     * The server first, because a list made online should arrive with an id and no
+     * queue behind it. A transport failure is not an error here and never shows one:
+     * no signal and no server are the same state, and writing the list down locally is
+     * what the person asked for either way. It is queued, and the queue is what carries
+     * it to a server if one ever appears.
+     *
+     * This is S1 — the app is useful before it has anywhere to send anything.
+     */
+    fun create(name: String) = viewModelScope.launch {
+        try {
+            api.createList(name)
+            load()
+        } catch (e: ApiError.Transport) {
+            // Zero, because with no server there is no account. It is only ever
+            // compared with itself on this device — the server decides ownership from
+            // who sent the operation, not from what the device claimed.
+            val made = cache.makeListHere(name, ownedBy = 0L)
+            cache.outbox.makeList(made)
+            _state.update {
+                it.copy(
+                    lists = cache.lists(),
+                    waiting = cache.outbox.waiting(),
+                    offline = true,
+                )
+            }
+        } catch (e: ApiError) {
+            report(e)
+        }
+    }
     fun rename(list: ShoppingList, name: String) = act { api.rename(list, name) }
     fun delete(list: ShoppingList) = act { api.delete(list) }
     fun join(token: String) = act { api.join(token) }
