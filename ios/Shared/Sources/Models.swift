@@ -344,3 +344,27 @@ extension Item {
         }
     }
 }
+
+/// One line this list remembers, as the server keeps it.
+///
+/// The device stores these and resolves against them — see `QuickAdd.resolve`. What
+/// makes that safe is that both ends are now reading the same memory: a phone with a
+/// copy of this reaches the server's answer for the same words, rather than its own.
+struct RememberedEntry: Decodable {
+    /// The key: trimmed and lowercased.
+    let name: String
+    /// The spelling last used, for showing back.
+    let display: String
+    let unitID: Int64?
+    let amount: Double?
+    let tags: [Int64]
+    let uses: Int64
+    /// Unix seconds.
+    let lastUsedAt: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case name, display, amount, tags, uses
+        case unitID = "unit_id"
+        case lastUsedAt = "last_used_at"
+    }
+}

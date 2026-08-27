@@ -261,6 +261,44 @@ final class Cache: @unchecked Sendable {
         }
     }
 
+
+    /// Takes the server's memory as this device's own.
+    ///
+    /// A replace, like the item cache: what the server holds is the household's memory
+    /// and this device's copy is a copy. Anything added here that has not drained yet
+    /// is not lost by it -- the operation is still in the outbox, and the server will
+    /// record it and send it back next time.
+    ///
+    /// Kept rather than merged for that reason. Merging would mean deciding whose
+    /// count and whose last-used wins, which is a conflict rule for something that has
+    /// an authority: the server has one memory per list and this is it.
+    func adopt(history entries: [RememberedEntry], on list: List) {
+        write { db in
+            try db.execute(
+                sql: "DELETE FROM history WHERE list_id = ?",
+                arguments: [list.id]
+            )
+            for entry in entries {
+                try db.execute(
+                    sql: """
+                    INSERT INTO history
+                        (list_id, name, unit_id, amount, tag_ids, uses, last_used_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        list.id,
+                        entry.name.lowercased(),
+                        entry.unitID,
+                        entry.amount,
+                        entry.tags.map(String.init).joined(separator: ","),
+                        entry.uses,
+                        entry.lastUsedAt,
+                    ]
+                )
+            }
+        }
+    }
+
     /// Forgets one remembered line -- the way back from a typo, as the server has.
     func forget(_ name: String, on list: List) {
         write { db in

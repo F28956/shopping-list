@@ -401,10 +401,14 @@ struct MacItemsView: View {
             guard let alike = items.first(where: { $0.uuid == uuid }) else { return }
             // A fresh uuid, not the row's: handing the server its own would take the
             // early return in `create` and skip the putting-back.
+            // Its own name and amount, not the typed line: this is the row the
+            // shared rule chose, and saying so leaves the server nothing to choose.
             cache.outbox.add(
                 uuid: UUID().uuidString.lowercased(),
                 localID: alike.id,
-                line: typed,
+                name: alike.name,
+                amount: alike.amount,
+                unitID: alike.unitID,
                 on: list
             )
             cache.remember(alike, on: list, isNew: true)
@@ -426,7 +430,21 @@ struct MacItemsView: View {
                 tagIDs: row.tagIDs
             )
             cache.remember(local, on: list, isNew: true)
-            cache.outbox.add(uuid: uuid, localID: local.id, line: typed, on: list)
+            cache.outbox.add(
+                uuid: uuid,
+                localID: local.id,
+                name: local.name,
+                amount: local.amount,
+                unitID: local.unitID,
+                on: list
+            )
+            // Where the history said it belongs, said out loud. The add itself has no
+            // field for tags, and the server's own filing step only runs when it is
+            // given a line -- so this is how what was drawn here becomes what is
+            // stored there. Behind the add in an ordered queue, so the row exists.
+            for tagID in local.tagIDs {
+                cache.outbox.tag(local, on: list, tagID: tagID, attached: true)
+            }
             show { $0 + [local] }
         }
 

@@ -119,7 +119,14 @@ struct OutboxTests {
         // Measured, so the `seen` fields have something to carry that is not a default.
         let measured = item(1, "Milk", amount: 2, unit: 3)
 
-        cache.outbox.add(uuid: "new-1", localID: -99, line: "2 kg apples", on: list)
+        cache.outbox.add(
+            uuid: "new-1",
+            localID: -99,
+            name: "apples",
+            amount: 2,
+            unitID: 19,
+            on: list
+        )
         cache.outbox.setDone(milk, on: list, done: true)
         cache.outbox.update(measured, on: list, name: "Whole milk", amount: 3, unitID: 4)
         cache.outbox.delete(milk, on: list)
@@ -129,7 +136,13 @@ struct OutboxTests {
         #expect(wire.map(\.kind) == ["add", "set_done", "update", "delete", "clear_done"])
 
         #expect(wire[0].item == "new-1")
-        #expect(wire[0].line == "2 kg apples")
+        // Resolved, not typed. The device read the line against the list's memory
+        // before queueing, so there is nothing left for the server to work out —
+        // and nothing it could work out differently.
+        #expect(wire[0].line == nil)
+        #expect(wire[0].name == "apples")
+        #expect(wire[0].amount == 2)
+        #expect(wire[0].unitID == 19)
 
         #expect(wire[1].done == true)
 
@@ -180,7 +193,14 @@ struct OutboxTests {
     @Test func aRowMadeOfflineTravelsUnderItsUuid() {
         let cache = Cache.inMemory()
 
-        cache.outbox.add(uuid: "minted", localID: -1234, line: "Bread", on: list)
+        cache.outbox.add(
+            uuid: "minted",
+            localID: -1234,
+            name: "Bread",
+            amount: 1,
+            unitID: nil,
+            on: list
+        )
 
         let queued = cache.outbox.all()[0]
         #expect(queued.itemID == -1234)

@@ -146,8 +146,29 @@ final class Outbox: @unchecked Sendable {
     }
 
     /// Puts something on the list, under a name this device mints now.
-    func add(uuid: String, localID: Int64, line: String, on list: List) {
-        queue(Kind.add, uuid, localID, list, ["line": line])
+    /// Puts something on the list, as this device has already read it.
+    ///
+    /// The **resolved** fields rather than the line somebody typed. Both are accepted
+    /// by the sync route, and this used to send the line and let the server work it
+    /// out again -- which meant the same words were read twice, once here to draw the
+    /// row and once there to store it, and the two could reach different answers from
+    /// different memories. They cannot now: the history is the list's and this device
+    /// has a copy, so both ends read the same words against the same memory. Sending
+    /// what was already decided is the shorter way to say that.
+    ///
+    /// Tags are not here -- the route has no field for them, and the caller queues an
+    /// `attach_tag` behind this instead. The queue is ordered, so it lands after.
+    func add(
+        uuid: String,
+        localID: Int64,
+        name: String,
+        amount: Double,
+        unitID: Int64?,
+        on list: List
+    ) {
+        var fields: [String: Any] = ["name": name, "amount": amount]
+        if let unitID { fields["unit_id"] = unitID }
+        queue(Kind.add, uuid, localID, list, fields)
     }
 
     /// Crosses something off, or puts it back.

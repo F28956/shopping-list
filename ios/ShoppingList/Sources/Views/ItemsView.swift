@@ -473,10 +473,14 @@ struct ItemsView: View {
             // row's own uuid takes the early return in `create` and skips the putting
             // back.
             guard let alike = items.first(where: { $0.uuid == uuid }) else { return }
+            // Its own name and amount, not the typed line: this is the row the
+            // shared rule chose, and saying so leaves the server nothing to choose.
             cache.outbox.add(
                 uuid: UUID().uuidString.lowercased(),
                 localID: alike.id,
-                line: typed,
+                name: alike.name,
+                amount: alike.amount,
+                unitID: alike.unitID,
                 on: list
             )
             cache.remember(alike, on: list, isNew: true)
@@ -496,7 +500,21 @@ struct ItemsView: View {
                 // Where the history says it belongs, so a re-added item files itself.
                 tagIDs: row.tagIDs
             )
-            cache.outbox.add(uuid: uuid, localID: local.id, line: typed, on: list)
+            cache.outbox.add(
+                uuid: uuid,
+                localID: local.id,
+                name: local.name,
+                amount: local.amount,
+                unitID: local.unitID,
+                on: list
+            )
+            // Where the history said it belongs, said out loud. The add itself has no
+            // field for tags, and the server's own filing step only runs when it is
+            // given a line -- so this is how what was drawn here becomes what is
+            // stored there. Behind the add in an ordered queue, so the row exists.
+            for tagID in local.tagIDs {
+                cache.outbox.tag(local, on: list, tagID: tagID, attached: true)
+            }
             cache.remember(local, on: list, isNew: true)
             show { $0 + [local] }
         }
@@ -901,10 +919,22 @@ struct ItemsView: View {
         do {
             async let units = api.units()
             async let tags = api.tags(orderedFor: list)
+            // Alongside them, and for the same reason: it is what this screen needs to
+            // read a typed line the way the server would. It changes when somebody
+            // shops, not when somebody ticks something off, so it belongs here rather
+            // than in `load` -- see `Cache.adopt(history:on:)`.
+            async let remembered = api.history(on: list)
             let (fetchedUnits, fetchedTags) = try await (units, tags)
             cache.remember(units: fetchedUnits)
             cache.remember(tags: fetchedTags, on: list)
             (self.units, self.tags) = (fetchedUnits, fetchedTags)
+
+            // After the two above, and allowed to fail on its own: a server that
+            // predates this route still gives units and aisles, and a device without
+            // the memory resolves lines a little less well rather than not at all.
+            if let remembered = try? await remembered {
+                cache.adopt(history: remembered, on: list)
+            }
         } catch {
             // Not shown: without these, rows lose their measure and their grouping,
             // which is a poorer list rather than no list. `load()` reports what

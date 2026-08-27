@@ -181,6 +181,17 @@ actor API {
         return try await get("/api/lists/\(list.id)/history?q=\(query)")
     }
 
+    /// The whole of what this list remembers.
+    ///
+    /// Not the same question as `suggestions`, which asks what to offer for some
+    /// letters and answers with names. This is what the device needs to resolve a
+    /// typed line the way the server would: the unit, how much, and where it is filed.
+    /// Kept, so the answer is the same with or without a connection — and so the
+    /// memory is the household's rather than each device's.
+    func history(on list: List) async throws -> [RememberedEntry] {
+        try await get("/api/lists/\(list.id)/history/entries")
+    }
+
     // MARK: - Writing
 
     // MARK: - Sharing
