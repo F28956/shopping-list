@@ -53,6 +53,11 @@ class MainActivity : ComponentActivity() {
                 // Re-read after settings change the answer, because `ServerDirectory`
                 // is storage and nothing observes storage.
                 var hasServer by remember { mutableStateOf(ServerDirectory.hasServer) }
+                /**
+                 * Changing the address from the sign-in screen rather than from
+                 * settings, which is behind it. See [SignIn].
+                 */
+                var correctingServer by remember { mutableStateOf(false) }
 
                 // Only when there is somewhere to sign in to. Restoring asks Google,
                 // and Google asks the person -- which is a sign-in sheet in front of
@@ -79,11 +84,43 @@ class MainActivity : ComponentActivity() {
                 when (val current = state) {
                     Identity.State.Unknown -> Splash()
 
-                    is Identity.State.SignedOut -> SignIn(
-                        configured = identity.isConfigured,
-                        problem = current.problem,
-                        onSignIn = { scope.launch { state = identity.signIn() } },
-                    )
+                    is Identity.State.SignedOut -> if (correctingServer) {
+                        ServerAddressScreen(
+                            onAccepted = { address, _ ->
+                                // C4, and only when it applies: a different server
+                                // mints different ids, so what the last one put in the
+                                // cache cannot stay. Retyping the address already
+                                // configured is a correction rather than a move, and
+                                // `remember` is what tells the two apart.
+                                if (ServerDirectory.remember(address)) {
+                                    identity.signOut()
+                                    scope.launch { cache.forgetEverything() }
+                                }
+                                correctingServer = false
+                                hasServer = ServerDirectory.hasServer
+                            },
+                            onCancel = { correctingServer = false },
+                        )
+                    } else {
+                        SignIn(
+                            configured = identity.isConfigured,
+                            problem = current.problem,
+                            server = ServerDirectory.current?.origin,
+                            onSignIn = { scope.launch { state = identity.signIn() } },
+                            onChangeServer = { correctingServer = true },
+                            onlyThisDevice = {
+                                // C4. The lists after this belong to no server, and
+                                // rows keyed by ids one minted would be its lists under
+                                // nobody's name. Unlike a sign-out this is not somebody
+                                // handing the phone on, but the cache goes either way:
+                                // there is nothing left that could make sense of it.
+                                identity.signOut()
+                                scope.launch { cache.forgetEverything() }
+                                ServerDirectory.onlyThisDevice()
+                                hasServer = ServerDirectory.hasServer
+                            },
+                        )
+                    }
 
                     is Identity.State.SignedIn -> Shopping(
                         api = api,
@@ -120,8 +157,31 @@ private fun Splash() {
     }
 }
 
+/**
+ * Signing in to the server this device has been pointed at.
+ *
+ * It leads back out as well as in, and it has to. This screen used to be the whole app:
+ * somebody who went into settings to see what "Use a server" said arrived here, found a
+ * Google button and nothing else, and the settings that had put them there were now
+ * behind sign-in. A mistyped address could not be corrected and a change of mind could
+ * not be acted on; reinstalling was the way out. A screen somebody cannot leave is a
+ * screen that has taken the phone off them.
+ */
 @Composable
-private fun SignIn(configured: Boolean, problem: String?, onSignIn: () -> Unit) {
+private fun SignIn(
+    configured: Boolean,
+    problem: String?,
+    /** Which server, because neither way out means anything to somebody who cannot see
+     * what they are leaving. */
+    server: String?,
+    onSignIn: () -> Unit,
+    /** The address was wrong. */
+    onChangeServer: () -> Unit,
+    /** A server was never wanted. */
+    onlyThisDevice: () -> Unit,
+) {
+    var leaving by remember { mutableStateOf(false) }
+
     Surface(Modifier.fillMaxSize()) {
         Column(
             Modifier.fillMaxSize().padding(32.dp),
@@ -135,6 +195,15 @@ private fun SignIn(configured: Boolean, problem: String?, onSignIn: () -> Unit) 
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
+
+            server?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
 
             if (configured) {
                 Button(onClick = onSignIn) { Text("Sign in with Google") }
@@ -160,7 +229,38 @@ private fun SignIn(configured: Boolean, problem: String?, onSignIn: () -> Unit) 
                     color = MaterialTheme.colorScheme.error,
                 )
             }
+
+            // The two ways out, and they are the two mistakes anybody makes here.
+            // Below the sign-in button rather than beside it: this screen is still for
+            // signing in, and most people who reach it mean to.
+            TextButton(onClick = onChangeServer) { Text("Use a different server") }
+            TextButton(onClick = { leaving = true }) { Text("Use this device only") }
         }
+    }
+
+    // Said out loud rather than done quietly, in the same words settings uses, because
+    // it is the same act.
+    if (leaving) {
+        AlertDialog(
+            onDismissRequest = { leaving = false },
+            title = { Text("Use this device only?") },
+            text = {
+                Text(
+                    "Your lists will stay on this phone and nothing will be synced. " +
+                        "This removes everything stored on this device, including " +
+                        "anything still waiting to be sent. You can add a server " +
+                        "again in settings."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { leaving = false; onlyThisDevice() }) {
+                    Text("Use this device only")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { leaving = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 
