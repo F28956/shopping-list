@@ -91,6 +91,13 @@ The server becomes a thing you can hand to a person who is not you.
 2. **The address at runtime** — [configuration.md](configuration.md) C1–C7. The
    single change that makes one binary serve everybody. Client work, on both
    platforms, and the only part of P1 that is not the server.
+
+   *Started.* `GET /api/server` names the software, its version and whether it is
+   open, closed or unclaimed, so C2 can validate an address by asking it. On iOS
+   `ServerAddress` parses and normalises one, which is where C3's trap lives. What
+   is left is the screens, the storage, clearing the cache on a change (C4), pushing
+   the address to the watch (C5), and the join link offering its own origin (C7) —
+   then all of it again on Android.
 3. ~~**Admission and ownership as data**~~ **Done.** A1–A7: rows read on every
    request, `ALLOWED_EMAILS` demoted to a seed, a claim code printed at boot, and the
    last-owner rule in the service layer with tests from three directions.
