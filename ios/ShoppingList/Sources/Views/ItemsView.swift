@@ -772,6 +772,29 @@ struct ItemsView: View {
             // Not shown: without these, rows lose their measure and their grouping,
             // which is a poorer list rather than no list. `load()` reports what
             // actually stops the screen working.
+            //
+            // But "poorer" is not good enough on a device that has no server and never
+            // will: there every list would have no units and no aisles for ever. So
+            // what the server would have said is bundled, and used when it cannot be
+            // asked and the cache has nothing either.
+            seedReference()
+        }
+    }
+
+    /// Falls back to the reference set that shipped with the app.
+    ///
+    /// Written to the cache as well as used, so the next screen finds it without
+    /// asking — and so that a device which later gains a server simply overwrites it
+    /// with that server's answer, ids and all. The ids are the same ids; see
+    /// `Reference`.
+    private func seedReference() {
+        if units.isEmpty {
+            units = Reference.units
+            cache.remember(units: units)
+        }
+        if tags.isEmpty {
+            tags = Reference.tags
+            cache.remember(tags: tags, on: list)
         }
     }
 

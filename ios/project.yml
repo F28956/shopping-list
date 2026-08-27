@@ -41,6 +41,10 @@ targets:
     sources:
       - path: ShoppingList/Sources
       - path: Shared/Sources
+      # The units and tags a device with no server still needs. Shared with the
+      # server, which guards it against drifting -- see domain::reference.
+      - path: ../reference/reference.json
+        buildPhase: resources
       - path: Auth/Sources
       - path: UI/Sources
       - path: Store/Sources
@@ -100,6 +104,8 @@ targets:
     sources:
       - path: ShoppingListWatch/Sources
       - path: Shared/Sources
+      - path: ../reference/reference.json
+        buildPhase: resources
       # The watch is not read-only: it crosses things off, which is the one thing
       # somebody does with a hand on a trolley. So it needs the same cache and the
       # same outbox as the phones -- a tick made in a shop with no signal is a
@@ -154,6 +160,8 @@ targets:
     sources:
       - path: Mac/Sources
       - path: Shared/Sources
+      - path: ../reference/reference.json
+        buildPhase: resources
       - path: Auth/Sources
       # Views the phone and the Mac both use. Not the watch: it has no keyboard
       # shortcuts, no bordered text fields, and nothing here it could show.
