@@ -1897,3 +1897,109 @@ async fn making_a_list_over_somebody_elses_uuid(#[future(awt)] pool: SqlitePool)
     let (_, items) = send(&app, req("GET", &format!("/api/lists/{id}/items"), &me(), None)).await;
     assert_eq!(items["items"].as_array().unwrap().len(), 0, "somebody wrote to my list");
 }
+
+/// A phone with no signal files something under an aisle, and the filing arrives.
+///
+/// The shape of the JSON is the point. The clients build these two operations by hand,
+/// so this is the one place the wire between them and the route is actually exercised
+/// -- `tag_id` and not `tag`, at the top level and not inside a payload.
+#[rstest]
+#[tokio::test]
+async fn a_tag_filed_offline_arrives(
+    // The aisles have to exist for a device to name one.
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+
+    // A list and an item, made the same way a phone with no signal would.
+    let (status, replies) = send(
+        &app,
+        req("POST", "/api/sync", &me(), Some(json!({"operations": [
+            {"id": "aaaaaaaa-0001-4000-8000-000000000001", "at": "2026-08-27T10:00:00Z", "list": "11111111-1111-4111-8111-111111111111",
+             "kind": "make_list", "name": "Camping"},
+            {"id": "aaaaaaaa-0002-4000-8000-000000000002", "at": "2026-08-27T10:00:01Z", "list": "11111111-1111-4111-8111-111111111111",
+             "kind": "add", "item": "22222222-2222-4222-8222-222222222222",
+             "name": "potatoes", "amount": 2},
+        ]}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replies}");
+    let list_id = replies["operations"][0]["list"]["id"].as_i64().unwrap();
+
+    // A real tag from the seeded reference data -- the same ids the clients bundle.
+    let (_, tags) = send(&app, req("GET", "/api/tags?order_by=name", &me(), None)).await;
+    let tag_id = tags["items"][0]["id"].as_i64().expect("no seeded tags");
+
+    let (status, replies) = send(
+        &app,
+        req("POST", "/api/sync", &me(), Some(json!({"operations": [
+            {"id": "aaaaaaaa-0003-4000-8000-000000000003", "at": "2026-08-27T10:00:02Z", "list": "11111111-1111-4111-8111-111111111111",
+             "kind": "attach_tag", "item": "22222222-2222-4222-8222-222222222222", "tag_id": tag_id},
+        ]}))),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{replies}");
+    assert_eq!(replies["operations"][0]["outcome"], "applied", "{replies}");
+
+    let (_, items) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}/items"), &me(), None),
+    )
+    .await;
+    assert_eq!(items["items"][0]["tag_ids"][0], tag_id, "not filed: {items}");
+}
+
+/// And taking it off again, which is the same wire with the other kind.
+#[rstest]
+#[tokio::test]
+async fn a_tag_taken_off_offline_arrives(
+    // The aisles have to exist for a device to name one.
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let app = app(pool);
+    let (_, replies) = send(
+        &app,
+        req("POST", "/api/sync", &me(), Some(json!({"operations": [
+            {"id": "bbbbbbbb-0001-4000-8000-000000000001", "at": "2026-08-27T10:00:00Z", "list": "11111111-1111-4111-8111-111111111111",
+             "kind": "make_list", "name": "Camping"},
+            {"id": "bbbbbbbb-0002-4000-8000-000000000002", "at": "2026-08-27T10:00:01Z", "list": "11111111-1111-4111-8111-111111111111",
+             "kind": "add", "item": "22222222-2222-4222-8222-222222222222",
+             "name": "potatoes", "amount": 2},
+        ]}))),
+    )
+    .await;
+    let list_id = replies["operations"][0]["list"]["id"].as_i64().unwrap();
+
+    let (_, tags) = send(&app, req("GET", "/api/tags?order_by=name", &me(), None)).await;
+    let tag_id = tags["items"][0]["id"].as_i64().unwrap();
+
+    let (status, replies) = send(
+        &app,
+        req("POST", "/api/sync", &me(), Some(json!({"operations": [
+            {"id": "bbbbbbbb-0003-4000-8000-000000000003", "at": "2026-08-27T10:00:02Z", "list": "11111111-1111-4111-8111-111111111111",
+             "kind": "attach_tag", "item": "22222222-2222-4222-8222-222222222222", "tag_id": tag_id},
+            {"id": "bbbbbbbb-0004-4000-8000-000000000004", "at": "2026-08-27T10:00:03Z", "list": "11111111-1111-4111-8111-111111111111",
+             "kind": "detach_tag", "item": "22222222-2222-4222-8222-222222222222", "tag_id": tag_id},
+        ]}))),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{replies}");
+    assert_eq!(replies["operations"][1]["outcome"], "applied", "{replies}");
+
+    let (_, items) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}/items"), &me(), None),
+    )
+    .await;
+    assert_eq!(
+        items["items"][0]["tag_ids"].as_array().unwrap().len(),
+        0,
+        "still filed: {items}"
+    );
+}
