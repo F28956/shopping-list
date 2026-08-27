@@ -146,7 +146,7 @@ async fn a_batch_is_applied_in_order(
 
     // The row the device created is handed back, which is the only way it can learn
     // the id it did not have when it made the row.
-    let Outcome::Applied { item: Some(added) } = &answers[0].outcome else {
+    let Outcome::Applied { item: Some(added), .. } = &answers[0].outcome else {
         panic!("no row came back for the add");
     };
     assert_eq!(added.uuid, named, "the device's name for it was kept");
@@ -287,7 +287,7 @@ async fn deleting_what_has_already_gone_is_success(#[future(awt)] pool: SqlitePo
     .await
     .unwrap();
 
-    assert_eq!(answers[0].outcome, Outcome::Applied { item: None });
+    assert_eq!(answers[0].outcome, Outcome::Applied { item: None, list: None });
 }
 
 // ------------------------------------------------------------------- add is idempotent
@@ -452,7 +452,7 @@ async fn a_rename_against_a_changed_row_splits_it(#[future(awt)] pool: SqlitePoo
     .await
     .unwrap();
 
-    let Outcome::Applied { item: Some(renamed) } = &answers[0].outcome else {
+    let Outcome::Applied { item: Some(renamed), .. } = &answers[0].outcome else {
         panic!("the rename did not apply");
     };
     assert_ne!(renamed.id, milk.id);

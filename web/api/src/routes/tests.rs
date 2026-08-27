@@ -1788,3 +1788,112 @@ async fn closing_an_account_forgets_the_address(#[future(awt)] pool: SqlitePool)
         "the address outlived the account: {listed}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A list made with no signal at all
+// ---------------------------------------------------------------------------
+
+/// S1. The whole point: a list and its first item can be made offline, in one batch,
+/// and arrive as a list with an item on it.
+///
+/// Nothing else in the sync protocol had to change for this, because every operation
+/// already names its list by `uuid` rather than by an id the device could not have.
+#[rstest]
+#[tokio::test]
+async fn a_list_made_offline_arrives_with_its_items(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+
+    let (status, replies) = send(
+        &app,
+        req("POST", "/api/sync", &me(), Some(json!({"operations": [
+            {"id": "aaaaaaaa-0001-4000-8000-000000000001", "at": "2026-08-27T10:00:00Z", "list": "11111111-1111-4111-8111-111111111111",
+             "kind": "make_list", "name": "Camping"},
+            {"id": "aaaaaaaa-0002-4000-8000-000000000002", "at": "2026-08-27T10:00:01Z", "list": "11111111-1111-4111-8111-111111111111",
+             // Named rather than typed as a line: what this test is about is the
+             // list arriving with its items, and the fixture seeds no units, so a
+             // typed "2 kg potatoes" would be about unit parsing instead.
+             "kind": "add", "item": "22222222-2222-4222-8222-222222222222",
+             "name": "potatoes", "amount": 2},
+        ]}))),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{replies}");
+    let outcomes = replies["operations"].as_array().unwrap();
+    assert_eq!(outcomes[0]["outcome"], "applied", "{replies}");
+    assert_eq!(outcomes[0]["list"]["name"], "Camping");
+    assert_eq!(outcomes[1]["outcome"], "applied", "{replies}");
+
+    // The id the device could not have known, handed back so the next batch can use it.
+    let id = outcomes[0]["list"]["id"].as_i64().unwrap();
+    let (status, items) = send(&app, req("GET", &format!("/api/lists/{id}/items"), &me(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    // Capitalised on the way in, as every other route does.
+    assert_eq!(items["items"][0]["name"], "Potatoes");
+    assert_eq!(items["items"][0]["amount"], 2.0);
+}
+
+/// A queue never expires and a reply can be lost, so the same batch arriving twice is
+/// ordinary. It must not make two lists.
+#[rstest]
+#[tokio::test]
+async fn making_the_same_list_twice_makes_one(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+    let batch = json!({"operations": [
+        {"id": "aaaaaaaa-0001-4000-8000-000000000001", "at": "2026-08-27T10:00:00Z", "list": "11111111-1111-4111-8111-111111111111",
+         "kind": "make_list", "name": "Camping"},
+    ]});
+
+    let (_, first) = send(&app, req("POST", "/api/sync", &me(), Some(batch.clone()))).await;
+    let (_, again) = send(&app, req("POST", "/api/sync", &me(), Some(batch))).await;
+
+    assert_eq!(first["operations"][0]["outcome"], "applied");
+    assert_eq!(again["operations"][0]["outcome"], "already_applied");
+    // Answered with the list either way, because the device still does not know what
+    // the server calls it — a lost reply is exactly why it is resending.
+    assert_eq!(
+        again["operations"][0]["list"]["id"],
+        first["operations"][0]["list"]["id"]
+    );
+
+    let (_, listed) = send(&app, req("GET", "/api/lists", &me(), None)).await;
+    assert_eq!(listed["items"].as_array().unwrap().len(), 1, "{listed}");
+}
+
+/// Guessing a uuid is not a way into anybody's shopping: the list is found, it is not
+/// theirs, and they are told it is gone.
+#[rstest]
+#[tokio::test]
+async fn making_a_list_over_somebody_elses_uuid(#[future(awt)] pool: SqlitePool) {
+    let app = app(pool);
+
+    send(
+        &app,
+        req("POST", "/api/sync", &me(), Some(json!({"operations": [
+            {"id": "aaaaaaaa-0001-4000-8000-000000000001", "at": "2026-08-27T10:00:00Z", "list": "11111111-1111-4111-8111-111111111111",
+             "kind": "make_list", "name": "Mine"},
+        ]}))),
+    )
+    .await;
+
+    // Somebody else claims the same uuid, then tries to write to it.
+    let (_, theirs) = send(
+        &app,
+        req("POST", "/api/sync", &them(), Some(json!({"operations": [
+            {"id": "aaaaaaaa-0002-4000-8000-000000000002", "at": "2026-08-27T10:00:00Z", "list": "11111111-1111-4111-8111-111111111111",
+             "kind": "make_list", "name": "Theirs"},
+            {"id": "aaaaaaaa-0003-4000-8000-000000000003", "at": "2026-08-27T10:00:01Z", "list": "11111111-1111-4111-8111-111111111111",
+             "kind": "add", "item": "33333333-3333-4333-8333-333333333333", "line": "spying"},
+        ]}))),
+    )
+    .await;
+
+    // The list is found and is not theirs, so the write that follows is refused.
+    assert_eq!(theirs["operations"][1]["outcome"], "refused", "{theirs}");
+
+    let (_, mine) = send(&app, req("GET", "/api/lists", &me(), None)).await;
+    assert_eq!(mine["items"][0]["name"], "Mine", "the name was taken over");
+    let id = mine["items"][0]["id"].as_i64().unwrap();
+    let (_, items) = send(&app, req("GET", &format!("/api/lists/{id}/items"), &me(), None)).await;
+    assert_eq!(items["items"].as_array().unwrap().len(), 0, "somebody wrote to my list");
+}

@@ -262,7 +262,20 @@ Offline handling is mostly a communication problem:
    and detaching tags is the last one without: it stays online-only and says so.
 5. ~~**`POST /api/sync`** and batch replay.~~ **Done.** Every operation, named by
    uuid, carrying the device's clock, answered one by one.
-6. **The "what changed" note**, once there is something worth telling. Half of it
+6. ~~**Making a list offline.**~~ **Done**, and it was not on this list — it arrived
+   from [self-hosting.md](self-hosting.md)'s S1, which needs the app to be useful
+   before it has a server at all. `make_list` is the seventh operation and the only
+   one that does not name an item, nor need its list to exist. Nothing else had to
+   change: every operation already names its list by `uuid` rather than by an id a
+   device could not have, which is the payoff for a decision made in step 2.
+
+   Two things it has to get right, and both have tests. Making the same list twice
+   makes one, because a queue never expires and a reply can be lost. And a `uuid` that
+   belongs to somebody else's list is refused by not being theirs — the lookup finds
+   it, the ownership check does not match, and the device is told the list is gone.
+   Guessing a uuid is not a way into anybody's shopping.
+
+7. **The "what changed" note**, once there is something worth telling. Half of it
    exists: a refusal reaches the screen as the sentence for it, and the state
    that says so is the one of the three that interrupts. What is missing is the
    summary after a long time away.

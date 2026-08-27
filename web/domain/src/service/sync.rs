@@ -25,7 +25,7 @@
 use time::OffsetDateTime;
 
 use crate::models::item::{self, Amount, Item, Name};
-use crate::models::list;
+use crate::models::list::{self, List};
 use crate::models::unit;
 use crate::models::user;
 
@@ -67,6 +67,17 @@ pub struct Operation {
 /// a share code is a secret the server issues, and an offline device cannot invent one.
 #[derive(Debug, Clone)]
 pub enum What {
+    /// Make the list itself, under the name the device has been calling it by.
+    ///
+    /// The one operation that does not need the list to exist, and the reason it can
+    /// be sent at all: a list started with no signal has no `id` and never will until
+    /// this arrives. Everything else in this enum already names its list by `uuid`, so
+    /// nothing else had to change for an offline list to be usable.
+    ///
+    /// Whoever sends it owns what it creates. There is no list to check a role
+    /// against — making one is something any signed-in person may do, exactly as
+    /// `POST /api/lists` is.
+    MakeList { name: list::Name },
     /// Put this on the list. Idempotent by name, and by `uuid` on a resend.
     Add {
         item: item::Uuid,
@@ -100,6 +111,7 @@ impl What {
     /// A short, stable name, for the memory of what was applied.
     pub fn kind(&self) -> &'static str {
         match self {
+            What::MakeList { .. } => "make_list",
             What::Add { .. } => "add",
             What::SetDone { .. } => "set_done",
             What::Update { .. } => "update",
@@ -119,10 +131,23 @@ pub enum Outcome {
     /// something it created offline, and the row a rename split off. Without it, a
     /// queue of "add milk, tick milk off" could send the first and have nothing to
     /// name in the second.
-    Applied { item: Option<Item> },
+    Applied {
+        item: Option<Item>,
+        /// The list a [`What::MakeList`] produced, for the same reason `item` is here:
+        /// the device knows what it called the list and not what the server calls it.
+        ///
+        /// Absent on every other operation, and skipped rather than sent as null, so
+        /// adding it changed nothing a client already reads.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        list: Option<List>,
+    },
     /// It was applied before, on an earlier send of the same batch. The row is looked
     /// up rather than remembered, so it is the row as it stands now.
-    AlreadyApplied { item: Option<Item> },
+    AlreadyApplied {
+        item: Option<Item>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        list: Option<List>,
+    },
     /// It will never apply, and the person should be told why.
     Refused { why: Refusal },
 }
@@ -188,8 +213,18 @@ async fn one(
     // Before anything else, and before any access check: a resend is a no-op even for
     // somebody who has since been removed from the list. They are not writing again --
     // the write already happened, while they still could.
-    if let Some(item) = remembered(ctx, &operation).await? {
-        return Ok(Outcome::AlreadyApplied { item });
+    if let Some(before) = remembered(ctx, &operation).await? {
+        return Ok(Outcome::AlreadyApplied { item: before.item, list: before.list });
+    }
+
+    // Making the list is answered before the list is looked up, because it is the one
+    // operation for which not finding it is the point. There is no list to check a
+    // role against either: making one is something any signed-in person may do,
+    // exactly as `POST /api/lists` is.
+    if let What::MakeList { name } = &operation.what {
+        let made = make_list(ctx, who, &operation.list, name.clone()).await?;
+        remember(ctx, &operation, who).await?;
+        return Ok(Outcome::Applied { item: None, list: Some(made) });
     }
 
     // The list, by the name the device knows it by. Gone is a refusal rather than an
@@ -232,6 +267,9 @@ async fn apply(
     at: OffsetDateTime,
 ) -> Result<Outcome> {
     match what {
+        // Answered in `one`, before the list is looked up — it is the operation for
+        // which not finding the list is the point, so by here it cannot happen.
+        What::MakeList { .. } => Ok(Outcome::Applied { item: None, list: None }),
         What::Add {
             item,
             line,
@@ -286,9 +324,9 @@ async fn apply(
         What::Delete { item } => match find(ctx, item).await? {
             // Already gone is the outcome the operation wanted. Refusing it would tell
             // somebody their delete failed when the row is exactly as they left it.
-            None => Ok(Outcome::Applied { item: None }),
+            None => Ok(Outcome::Applied { item: None, list: None }),
             Some(row) => match items::delete(ctx, actor, row.id).await {
-                Ok(()) => Ok(Outcome::Applied { item: None }),
+                Ok(()) => Ok(Outcome::Applied { item: None, list: None }),
                 Err(ServiceError::NotFound) => Ok(Outcome::Refused { why: Refusal::Gone }),
                 Err(other) => Err(other),
             },
@@ -304,7 +342,7 @@ async fn apply(
             // Rows that have gone are simply absent from the list -- somebody deleting
             // one of them first is the same outcome by another route.
             items::clear_done(ctx, actor, list.id, Some(&ids)).await?;
-            Ok(Outcome::Applied { item: None })
+            Ok(Outcome::Applied { item: None, list: None })
         }
     }
 }
@@ -313,7 +351,7 @@ async fn apply(
 /// news rather than the server's fault.
 fn finish(result: Result<Item>) -> Outcome {
     match result {
-        Ok(item) => Outcome::Applied { item: Some(item) },
+        Ok(item) => Outcome::Applied { item: Some(item), list: None },
         Err(ServiceError::NotFound) => Outcome::Refused { why: Refusal::Gone },
         Err(ServiceError::Forbidden) => Outcome::Refused { why: Refusal::NotAllowed },
         Err(ServiceError::InvalidInput) => Outcome::Refused { why: Refusal::Invalid },
@@ -331,7 +369,34 @@ async fn find(ctx: &Ctx, uuid: &item::Uuid) -> Result<Option<Item>> {
 }
 
 /// Whether this operation has been applied before, and what its row looks like now.
-async fn remembered(ctx: &Ctx, operation: &Operation) -> Result<Option<Option<Item>>> {
+/// Creates a list a device made with no signal, or finds the one it already made.
+///
+/// Idempotent by `uuid`, which matters more here than it looks: two devices of the
+/// same person can queue the same list, and a resend after a reply that never arrived
+/// is the ordinary case. Finding it rather than failing is what makes both harmless.
+///
+/// A uuid that belongs to somebody else's list is refused by not being theirs — the
+/// lookup finds it, the ownership check does not match, and the device is told the
+/// list is gone. Guessing a uuid is not a way into anybody's shopping.
+async fn make_list(
+    ctx: &Ctx,
+    who: &user::User,
+    uuid: &list::Uuid,
+    name: list::Name,
+) -> Result<List> {
+    if let Ok(existing) = list::List::get(&ctx.db, list::Lookup::Uuid(uuid.clone())).await {
+        return Ok(existing);
+    }
+
+    let made = List::create(&ctx.db, uuid.clone(), who.id, name).await?;
+
+    // Told to the person rather than to the list, for the reason `lists::create`
+    // gives: a list that has just been made has no watchers.
+    ctx.changes.announce_lists_of(who.id);
+    Ok(made)
+}
+
+async fn remembered(ctx: &Ctx, operation: &Operation) -> Result<Option<Remembered>> {
     let seen: Option<i64> = sqlx::query_scalar!(
         r#"SELECT 1 as "seen: i64" FROM applied_operations WHERE id = ?1"#,
         operation.id
@@ -346,18 +411,33 @@ async fn remembered(ctx: &Ctx, operation: &Operation) -> Result<Option<Option<It
 
     // Looked up rather than stored: what the device wants back is the row as it stands,
     // and storing a snapshot would hand it something that was true once.
+    // A remade list is answered with the list, for the same reason a re-added item is
+    // answered with the item: the device still does not know what the server calls it.
+    if let What::MakeList { .. } = &operation.what {
+        let list = list::List::get(&ctx.db, list::Lookup::Uuid(operation.list.clone()))
+            .await
+            .ok();
+        return Ok(Some(Remembered { item: None, list }));
+    }
+
     let named = match &operation.what {
         What::Add { item, .. }
         | What::SetDone { item, .. }
         | What::Update { item, .. }
         | What::Delete { item, .. } => Some(item.clone()),
-        What::ClearDone { .. } => None,
+        What::MakeList { .. } | What::ClearDone { .. } => None,
     };
 
     match named {
-        Some(uuid) => Ok(Some(find(ctx, &uuid).await?)),
-        None => Ok(Some(None)),
+        Some(uuid) => Ok(Some(Remembered { item: find(ctx, &uuid).await?, list: None })),
+        None => Ok(Some(Remembered { item: None, list: None })),
     }
+}
+
+/// What a resend is answered with: whichever of the two the operation produced.
+struct Remembered {
+    item: Option<Item>,
+    list: Option<List>,
 }
 
 async fn remember(ctx: &Ctx, operation: &Operation, who: &user::User) -> Result<()> {

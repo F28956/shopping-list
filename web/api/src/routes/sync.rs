@@ -45,6 +45,12 @@ pub struct OperationInput {
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WhatInput {
+    /// Make the list itself. The only operation that does not name an item, and the
+    /// only one that does not need its list to exist — which is what lets a device
+    /// make a list with no signal at all.
+    MakeList {
+        name: String,
+    },
     Add {
         item: item::Uuid,
         /// One typed string, read the way a person means it -- `2 kg apples`. The
@@ -115,6 +121,9 @@ impl From<WhatInput> for What {
                 name: name.map(Name),
                 amount: Amount(amount),
                 unit: unit_id.map(unit::Id),
+            },
+            WhatInput::MakeList { name } => What::MakeList {
+                name: domain::models::list::Name(name),
             },
             WhatInput::SetDone { item, done } => What::SetDone { item, done },
             WhatInput::Update {

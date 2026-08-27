@@ -128,6 +128,11 @@ the plan stops here it has delivered the thing that started this conversation.
 2. **Local-only lists** — S1. The largest item in the first half, and the one that
    decides App Store review. Also the first step of P3, which is the argument for
    doing it here rather than arguing about 4.2 with a demo instance.
+
+   *The server half is done*: `make_list` is a sync operation, so a list started with
+   no signal arrives with its items when one turns up. What is left is the clients —
+   letting a list be made before there is anywhere to send it, which means the caches
+   keying off `uuid` where they use the server's integer `id`.
 3. **ATS** — S4's client half. Small, and currently a silent failure for anybody
    typing an address that is not `localhost`.
 4. **The demo instance and the listing** — S5 and S6.
