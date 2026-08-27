@@ -31,6 +31,8 @@ struct QueuedOperation: Identifiable, Equatable {
         static let update = "update"
         static let delete = "delete"
         static let clearDone = "clear_done"
+        static let attachTag = "attach_tag"
+        static let detachTag = "detach_tag"
     }
 
     // MARK: - Reading the payload
@@ -53,6 +55,8 @@ struct QueuedOperation: Identifiable, Equatable {
     var editedUnitID: Int64? { (fields["unit_id"] as? NSNumber)?.int64Value }
     /// The rows a queued ``Kind/clearDone`` named.
     var sweptUUIDs: Set<String> { Set(fields["items"] as? [String] ?? []) }
+    /// The aisle a queued ``Kind/attachTag`` or ``Kind/detachTag`` names.
+    var tagID: Int64? { (fields["tag_id"] as? NSNumber)?.int64Value }
 
     /// This operation as the route wants it.
     var onTheWire: SyncOperation {
@@ -75,7 +79,8 @@ struct QueuedOperation: Identifiable, Equatable {
                     unitID: ($0["unit_id"] as? NSNumber)?.int64Value
                 )
             },
-            done: kind == Kind.setDone ? done : nil
+            done: kind == Kind.setDone ? done : nil,
+            tagID: tagID
         )
     }
 }
@@ -164,6 +169,21 @@ final class Outbox: @unchecked Sendable {
         if let unitID { fields["unit_id"] = unitID }
 
         queue(Kind.update, item.uuid, item.id, list, fields)
+    }
+
+    /// Files something under an aisle, or stops filing it there.
+    ///
+    /// The tag travels as an id, and that is only safe because the ids are agreed in
+    /// advance: `reference.json` is the same file the server's seed is checked against,
+    /// so a device that has never met a server still means aisle 5 by 5.
+    func tag(_ item: Item, on list: List, tagID: Int64, attached: Bool) {
+        queue(
+            attached ? Kind.attachTag : Kind.detachTag,
+            item.uuid,
+            item.id,
+            list,
+            ["tag_id": tagID]
+        )
     }
 
     func delete(_ item: Item, on list: List) {

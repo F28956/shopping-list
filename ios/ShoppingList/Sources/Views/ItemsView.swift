@@ -503,6 +503,17 @@ struct ItemsView: View {
             amount: edit.amount,
             unitID: edit.unitID
         )
+        // Queued, not sent. Filing used to go straight to the network and fail if it
+        // could not get there, which offline lost the change and on a device with no
+        // server meant the aisle picker never worked at all.
+        let before = Set(target.attached.map(\.id))
+        for tag in tags where edit.tagIDs.contains(tag.id) && !before.contains(tag.id) {
+            cache.outbox.tag(target.item, on: list, tagID: tag.id, attached: true)
+        }
+        for tag in target.attached where !edit.tagIDs.contains(tag.id) {
+            cache.outbox.tag(target.item, on: list, tagID: tag.id, attached: false)
+        }
+
         show { rows in
             rows.map {
                 guard $0.uuid == target.item.uuid else { return $0 }
@@ -513,21 +524,14 @@ struct ItemsView: View {
                     amount: edit.amount,
                     unitID: edit.unitID,
                     doneAt: $0.doneAt,
-                    tagIDs: $0.tagIDs
+                    // What the editor was closed on. It used to keep the row's old
+                    // filing and wait for the server to send the new one back, which
+                    // on a device with no server was a wait that never ended.
+                    tagIDs: Array(edit.tagIDs)
                 )
             }
         }
         await drain()
-
-        // Tags are still online-only, and say so by failing rather than by pretending.
-        // They are the last operations without an offline path; see docs/offline.md.
-        let before = Set(target.attached.map(\.id))
-        for tag in tags where edit.tagIDs.contains(tag.id) && !before.contains(tag.id) {
-            try await api.attach(tag, to: target.item, on: list)
-        }
-        for tag in target.attached where !edit.tagIDs.contains(tag.id) {
-            try await api.detach(tag, from: target.item, on: list)
-        }
     }
 
     /// Crosses something off, or puts it back, whether or not there is a connection.
@@ -684,6 +688,24 @@ struct ItemsView: View {
 
             case QueuedOperation.Kind.clearDone:
                 rows = rows.filter { !operation.sweptUUIDs.contains($0.uuid) }
+
+            case QueuedOperation.Kind.attachTag, QueuedOperation.Kind.detachTag:
+                guard let tagID = operation.tagID else { break }
+                let attaching = operation.kind == QueuedOperation.Kind.attachTag
+                rows = rows.map { row in
+                    guard row.uuid == operation.itemUUID else { return row }
+                    var filed = row.tagIDs.filter { $0 != tagID }
+                    if attaching { filed.append(tagID) }
+                    return Item(
+                        id: row.id,
+                        uuid: row.uuid,
+                        name: row.name,
+                        amount: row.amount,
+                        unitID: row.unitID,
+                        doneAt: row.doneAt,
+                        tagIDs: filed
+                    )
+                }
 
             default:
                 break

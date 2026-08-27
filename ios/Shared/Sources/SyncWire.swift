@@ -29,10 +29,13 @@ struct SyncOperation: Encodable {
     /// between renaming a row and splitting one.
     var seen: SeenOn?
     var done: Bool?
+    /// The aisle an `attach_tag` or `detach_tag` names.
+    var tagID: Int64?
 
     enum CodingKeys: String, CodingKey {
         case id, at, list, kind, item, items, line, name, amount, seen, done
         case unitID = "unit_id"
+        case tagID = "tag_id"
     }
 }
 
