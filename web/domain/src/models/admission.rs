@@ -219,6 +219,39 @@ impl Server {
     }
 }
 
+impl Server {
+    /// Claims the server *and* makes this person its owner, or does neither.
+    ///
+    /// One transaction, because the two halves are the same fact. A server marked
+    /// claimed with nobody owning it is the state with no way back that does not
+    /// involve `sqlite3` on the host, and it is exactly what a failure between two
+    /// statements would produce.
+    ///
+    /// `false` means somebody else got there first.
+    pub async fn claim_for(pool: &sqlx::SqlitePool, user_id: user::Id) -> Result<bool> {
+        let mut tx = pool.begin().await?;
+
+        let claimed = sqlx::query!(
+            r#"UPDATE server SET claimed_at = unixepoch() WHERE id = 1 AND claimed_at IS NULL"#
+        )
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            > 0;
+
+        if !claimed {
+            return Ok(false);
+        }
+
+        sqlx::query!(r#"UPDATE users SET is_owner = 1 WHERE id = ?1"#, user_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(true)
+    }
+}
+
 /// Everybody who may administer this server.
 pub async fn owners(pool: &sqlx::SqlitePool) -> Result<Vec<user::Id>> {
     Ok(

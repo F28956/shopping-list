@@ -53,6 +53,13 @@ async fn main() -> anyhow::Result<()> {
     // `service::admission::seed`.
     domain::service::admission::seed(&ctx, admission()?.as_ref()).await?;
 
+    // Offered only while nobody owns this server. On a claimed one there is no code,
+    // so there is nothing to guess and nothing to leak in a log.
+    let ctx = match offer_claim(&ctx).await? {
+        Some(code) => ctx.awaiting_claim(code),
+        None => ctx,
+    };
+
     let api_state = ApiState {
         ctx: ctx.clone(),
         auth: AuthMode::Providers(providers()?),
@@ -73,6 +80,36 @@ async fn main() -> anyhow::Result<()> {
     }
     axum::serve(listener, app(api_state, web_state, sessions)).await?;
     Ok(())
+}
+
+/// The code that claims an unclaimed server, printed where its operator is looking.
+///
+/// A2's answer to the land grab: between starting a process and somebody claiming it,
+/// anybody who can reach the port would otherwise become the owner — and the person it
+/// happens to gets no warning, they are simply refused from their own server.
+///
+/// A log line rather than an environment variable, because a self-hoster starts the
+/// process and then opens the app, so they have the log in front of them; it works for
+/// a packaged install where nobody is setting variables; and it is the only answer of
+/// the three that is safe when the port is already public.
+///
+/// New on every restart, deliberately. It expires by the process ending, there is
+/// nothing to store, and a code read off last month's log is not a key.
+async fn offer_claim(ctx: &Ctx) -> anyhow::Result<Option<String>> {
+    if domain::models::admission::Server::is_claimed(&ctx.db).await? {
+        return Ok(None);
+    }
+
+    let code = domain::service::admission::new_claim_code();
+
+    // Deliberately unstructured and loud. This is the one log line whose whole job is
+    // to be read by a person, and a field buried in JSON is a field they will miss.
+    tracing::warn!("");
+    tracing::warn!("  Nobody owns this server yet.");
+    tracing::warn!("  Claim it when you sign in, with the code:  {code}");
+    tracing::warn!("");
+
+    Ok(Some(code))
 }
 
 /// The retention this process owes, on a timer.

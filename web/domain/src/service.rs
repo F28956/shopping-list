@@ -71,6 +71,18 @@ pub struct Ctx {
     /// Who to tell when a list changes. Clone a `Ctx` to share it; construct two and
     /// the transports are watching separate worlds.
     pub changes: changes::Changes,
+    /// What has to be presented to claim an unclaimed server, printed to the log at
+    /// boot and held only in memory.
+    ///
+    /// `None` means no claim is possible, which is the safe default and the state of
+    /// every server that has already been claimed. It is here rather than in a
+    /// transport because the rule it belongs to — only an unclaimed server, and only
+    /// with this code — is one rule, and D1 says rules live in one place.
+    ///
+    /// Not stored: a new code on every restart is a feature. It expires by the process
+    /// ending, there is no hash to keep, and the log a self-hoster is already looking
+    /// at has the current one.
+    pub claim_code: Option<String>,
 }
 
 impl Ctx {
@@ -83,6 +95,15 @@ impl Ctx {
         Self {
             db,
             changes: changes::Changes::new(),
+            claim_code: None,
+        }
+    }
+
+    /// The same context, willing to be claimed by whoever presents this code.
+    pub fn awaiting_claim(self, code: String) -> Self {
+        Self {
+            claim_code: Some(code),
+            ..self
         }
     }
 }

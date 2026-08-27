@@ -283,6 +283,102 @@ pub async fn set_open(ctx: &Ctx, actor: &Actor, open: bool) -> Result<()> {
     Ok(())
 }
 
+/// Claims an unclaimed server, making this person its first owner.
+///
+/// A1: an empty server admits its first caller and hands them the keys. A2: which
+/// makes the gap between starting the process and somebody claiming it a land grab, on
+/// a machine anybody can reach — and the person it happens to gets no warning at all,
+/// they are simply refused from their own server.
+///
+/// The code closes it. It is printed to the log at boot, which a self-hoster starting
+/// a process is already looking at, and it needs no configuration and no environment
+/// variable — which is the thing this whole design is trying to stop requiring.
+///
+/// Admission is deliberately not consulted. This is the one path where checking it
+/// would refuse everybody, there being nobody yet who could have admitted anyone.
+pub async fn claim(
+    ctx: &Ctx,
+    code: &str,
+    provider: &str,
+    sub: user::Sub,
+    name: Option<user::Name>,
+    email: Option<Email>,
+) -> Result<Actor> {
+    // Answered before the code is looked at, so that a claimed server tells a late
+    // arrival the same thing whatever they typed.
+    if Server::is_claimed(&ctx.db).await? {
+        tracing::warn!("a claim arrived for a server that is already claimed");
+        return Err(ServiceError::Forbidden);
+    }
+
+    let Some(expected) = ctx.claim_code.as_deref() else {
+        tracing::warn!("a claim arrived, and this process is not offering one");
+        return Err(ServiceError::Forbidden);
+    };
+
+    if !constant_time_eq(code, expected) {
+        tracing::warn!("a claim arrived with the wrong code");
+        return Err(ServiceError::Forbidden);
+    }
+
+    // The person first, because the claim below has to name them and a foreign key
+    // says so. A user created here and then beaten to the claim is left admitted by
+    // nobody, which means they cannot sign in — the stray row is harmless and the
+    // race is not.
+    let user = super::identity::create(ctx, provider, sub, name, email.clone()).await?;
+
+    if !Server::claim_for(&ctx.db, user.id).await? {
+        tracing::warn!("two claims raced and this one lost");
+        return Err(ServiceError::Forbidden);
+    }
+
+    // Only now: an address admitted before the claim was won would admit somebody who
+    // did not win it.
+    if let Some(email) = email {
+        Admitted::seed(&ctx.db, &email, Some(user.id)).await?;
+        Admitted::bind(&ctx.db, &email, user.id).await?;
+    } else {
+        // No address means nothing to admit by, and `admits_user` reads that table —
+        // so an owner with no address would be an owner who cannot sign in. Refused
+        // rather than left to be discovered on the next request.
+        tracing::error!(user = user.id.0, "claimed with no address to admit");
+        return Err(ServiceError::InvalidInput);
+    }
+
+    tracing::info!(user = user.id.0, "the server has been claimed");
+    Ok(Actor::User(user))
+}
+
+/// Compares without telling the caller how far it got.
+///
+/// A claim code is short enough to be guessed a character at a time if the comparison
+/// stops at the first difference and somebody can measure it. Unlikely over a home
+/// network and cheap to remove as a question.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// A code somebody can read off a log and type without a mistake.
+///
+/// No vowels, so it cannot spell anything; no `0`, `O`, `1`, `I` or `L`, which is
+/// where transcription actually goes wrong. Grouped, because a person is copying it
+/// from a terminal into a phone.
+pub fn new_claim_code() -> String {
+    use rand::RngExt;
+
+    const ALPHABET: &[u8] = b"23456789BCDFGHJKMNPQRSTVWXYZ";
+
+    let mut rng = rand::rng();
+    let mut pick = || ALPHABET[rng.random_range(0..ALPHABET.len())] as char;
+
+    let code: String = (0..8).map(|_| pick()).collect();
+    format!("{}-{}", &code[..4], &code[4..])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

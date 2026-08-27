@@ -2563,3 +2563,126 @@ async fn withdrawing_an_address_that_was_never_admitted(#[future(awt)] pool: Sql
         Some(ServiceError::NotFound)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Claiming a server nobody owns
+// ---------------------------------------------------------------------------
+
+/// A server as it arrives: closed, unclaimed, and offering the code from its log.
+fn unclaimed(pool: &SqlitePool, code: &str) -> Ctx {
+    Ctx::new(pool.clone()).awaiting_claim(code.to_string())
+}
+
+async fn make_it_fresh(ctx: &Ctx) {
+    sqlx::raw_sql("UPDATE server SET admits_anyone = 0, claimed_at = NULL")
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+}
+
+async fn claim_as(ctx: &Ctx, code: &str, who: &str) -> Result<Actor, ServiceError> {
+    use crate::models::user;
+    use crate::service::admission;
+
+    admission::claim(
+        ctx,
+        code,
+        "google",
+        user::Sub(who.into()),
+        None,
+        Some(user::Email(format!("{who}@example.com"))),
+    )
+    .await
+}
+
+/// A1: the first person through the door owns the server, and can then use it.
+#[rstest]
+#[tokio::test]
+async fn claiming_makes_the_first_person_the_owner(#[future(awt)] pool: SqlitePool) {
+    use crate::service::{admission, identity};
+
+    let ctx = unclaimed(&pool, "ABCD-2345");
+    make_it_fresh(&ctx).await;
+
+    let owner = claim_as(&ctx, "ABCD-2345", "me").await.unwrap();
+    let id = owner.person().unwrap().id;
+
+    assert!(admission::is_owner(&ctx, id).await.unwrap());
+    // Admitted too, or the owner is an owner who cannot sign in.
+    assert!(admission::admits_user(&ctx, id).await.unwrap());
+    assert!(
+        identity::from_session(&ctx, id.0).await.unwrap().is_some(),
+        "the owner could not use the server they just claimed"
+    );
+}
+
+/// A2, and the reason the code exists. Without it, anybody who can reach the port
+/// during the gap between starting the process and claiming it becomes the owner —
+/// and the person it happens to is simply refused from their own server.
+#[rstest]
+#[tokio::test]
+async fn the_wrong_code_claims_nothing(#[future(awt)] pool: SqlitePool) {
+    use crate::models::admission::Server;
+
+    let ctx = unclaimed(&pool, "ABCD-2345");
+    make_it_fresh(&ctx).await;
+
+    assert_eq!(
+        claim_as(&ctx, "WXYZ-9876", "stranger").await.err(),
+        Some(ServiceError::Forbidden)
+    );
+    assert!(!Server::is_claimed(&ctx.db).await.unwrap());
+}
+
+/// A process offering no code cannot be claimed at all, which is the safe default and
+/// the state of every server that already has an owner.
+#[rstest]
+#[tokio::test]
+async fn a_server_offering_no_code_cannot_be_claimed(#[future(awt)] pool: SqlitePool) {
+    let ctx = Ctx::new(pool.clone());
+    make_it_fresh(&ctx).await;
+
+    assert_eq!(
+        claim_as(&ctx, "ABCD-2345", "stranger").await.err(),
+        Some(ServiceError::Forbidden)
+    );
+}
+
+/// The code is not a way in twice. Somebody who reads it off a log later must not be
+/// able to take a server that already has an owner.
+#[rstest]
+#[tokio::test]
+async fn a_claimed_server_cannot_be_claimed_again(#[future(awt)] pool: SqlitePool) {
+    use crate::service::admission;
+
+    let ctx = unclaimed(&pool, "ABCD-2345");
+    make_it_fresh(&ctx).await;
+
+    let first = claim_as(&ctx, "ABCD-2345", "me").await.unwrap();
+
+    assert_eq!(
+        claim_as(&ctx, "ABCD-2345", "stranger").await.err(),
+        Some(ServiceError::Forbidden)
+    );
+    assert_eq!(
+        admission::listing(&ctx, &first).await.unwrap().len(),
+        1,
+        "the second claim admitted somebody anyway"
+    );
+}
+
+/// Codes differ between runs, so one read off an old log is not a key to a server
+/// that has since restarted.
+#[test]
+fn a_claim_code_is_readable_and_not_reused() {
+    use crate::service::admission::new_claim_code;
+
+    let code = new_claim_code();
+    assert_eq!(code.len(), 9, "{code}");
+    assert_eq!(code.chars().nth(4), Some('-'));
+    assert!(
+        code.chars().all(|c| c == '-' || "23456789BCDFGHJKMNPQRSTVWXYZ".contains(c)),
+        "a character that is easy to mistype: {code}"
+    );
+    assert_ne!(new_claim_code(), new_claim_code());
+}

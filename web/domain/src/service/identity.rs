@@ -93,6 +93,25 @@ pub async fn from_claims(
     Ok(Actor::User(user))
 }
 
+/// Creates the person behind a verified identity, asking nothing about admission.
+///
+/// Split out so that claiming an unclaimed server can use it — the claim is the one
+/// path where refusing an unadmitted address would refuse everybody, there being
+/// nobody yet to have admitted them. Every other caller goes through
+/// [`from_claims`], which checks first.
+pub(super) async fn create(
+    ctx: &Ctx,
+    provider: &str,
+    sub: Sub,
+    name: Option<Name>,
+    email: Option<Email>,
+) -> Result<User> {
+    let qualified = user::Sub(format!("{provider}|{}", sub.0));
+    let user = User::find_or_create(&ctx.db, qualified, name, email).await?;
+    User::attach_identity(&ctx.db, provider, &sub, user.id).await?;
+    Ok(user)
+}
+
 /// Resolves the person a session belongs to.
 ///
 /// `None` where the session outlived the user — a closed account, or a database
