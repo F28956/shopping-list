@@ -78,12 +78,20 @@ protocol Backend: Sendable {
 
     // MARK: - Somebody else changed something
 
-    /// Remote changes only. Changes made on this device reach the screen through the
-    /// database -- see `Cache.observe(list:)` -- so a conformer with no remote has
-    /// nothing to report here and should say so by never yielding, rather than by
-    /// failing.
+    /// The set of lists this person can see is not what they last read.
+    ///
+    /// A nudge and never the rows: a watcher told "something moved" and re-reading
+    /// cannot drift, while one sent the new rows becomes a second opinion about them.
     func listChanges() async throws -> AsyncThrowingStream<Void, Error>
-    func changes(on list: List) async throws -> AsyncThrowingStream<Void, Error>
+
+    /// This list is not what it was, and *what* about it changed.
+    ///
+    /// The kind matters because the answers cost different amounts. A tick means re-read
+    /// the rows; a category renamed in Settings means re-read the vocabulary, which is
+    /// thirty-one units and twenty-one categories. Told only that "something happened",
+    /// a screen has to do both -- which is three requests per tick against a server, and
+    /// is what this exists to stop.
+    func changes(on list: List) async throws -> AsyncThrowingStream<Nudge, Error>
 
     // MARK: - What a screen can ask about the backend itself
 
@@ -113,6 +121,15 @@ protocol Backend: Sendable {
     /// themselves do something that did not happen.
     @discardableResult
     func sync() async -> SyncReport
+}
+
+/// What moved.
+enum Nudge: Sendable {
+    /// What is on this list: something added, ticked off, corrected, filed or removed.
+    case rows
+    /// The categories themselves -- renamed, added, removed, or reordered for this
+    /// list. Global, and changed from a screen that belongs to no list.
+    case categories
 }
 
 /// What became of a queue.

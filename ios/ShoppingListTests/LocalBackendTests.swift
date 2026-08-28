@@ -367,4 +367,40 @@ struct LocalBackendTests {
         #expect(old.lists().map(\.name) == ["Home"], "the fallback was emptied")
         #expect(old.items(on: list).count == 1, "the fallback lost what was on the list")
     }
+
+    /// The gap the typed stream exposed: `domain` announces when a row is filed but
+    /// **not** when a category is created, renamed, removed or reordered -- a category
+    /// belongs to no list, so there is no channel for "the vocabulary moved".
+    ///
+    /// Without this a rename in Settings would not reach an open list on a device
+    /// answering for itself: the same bug that was fixed on the cached path, arriving
+    /// by a different road.
+    @Test("renaming a category tells an open list")
+    func aRenameReachesAnOpenList() async throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nudge-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: path) }
+        let backend = try #require(LocalBackend(at: path))
+
+        let list = try await backend.createList(named: "Household")
+        let dairy = try #require(try await backend.tags(orderedFor: list).first)
+        var nudges = try await backend.changes(on: list).makeAsyncIterator()
+
+        Task { _ = try? await backend.updateTag(dairy, named: "cheese counter", emoji: nil) }
+
+        let heard = try await withThrowingTaskGroup(of: Nudge?.self) { group in
+            group.addTask { try await nudges.next() }
+            group.addTask {
+                try await Task.sleep(for: .seconds(5))
+                return nil
+            }
+            let first = try await group.next()
+            group.cancelAll()
+            return first ?? nil
+        }
+
+        if case .categories = try #require(heard) {} else {
+            Issue.record("a rename was reported as \(String(describing: heard))")
+        }
+    }
 }

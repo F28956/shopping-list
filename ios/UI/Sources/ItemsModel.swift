@@ -422,19 +422,17 @@ final class ItemsModel {
             if reconnecting { await load() }
 
             do {
-                for try await _ in try await api.changes(on: list) {
-                    await load()
-                    // The categories too, and this is the one place the shape of the
-                    // stream costs something. A nudge does not say *what* changed, so
-                    // "a row moved" and "a category was renamed in Settings" arrive
-                    // identically and both have to be answered.
-                    //
-                    // Not re-reading them is how a category removed in Settings stayed
-                    // on the rows of every open list -- fixed once already today, and
-                    // it would have come back the moment the screen stopped watching
-                    // the cache for itself. The right fix is a stream that says which
-                    // it was; until then this is the correct answer and a request.
-                    await loadReference()
+                for try await nudge in try await api.changes(on: list) {
+                    // Answered by kind, which is the whole reason the stream is typed.
+                    // Told only that "something happened", this had to do both -- and
+                    // re-reading thirty-one units and twenty-one categories on every
+                    // tick is three requests where one would do.
+                    switch nudge {
+                    case .rows:
+                        await load()
+                    case .categories:
+                        await loadReference()
+                    }
                 }
             } catch let problem as APIError {
                 // A stream refused for want of a token is not a network hiccup, and

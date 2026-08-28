@@ -449,19 +449,51 @@ actor CachingBackend {
     /// Two sources again, for the same reason as ``listChanges()``: a change made on
     /// this device reaches the cache, a change made elsewhere reaches the server, and a
     /// screen wants to hear about both without knowing there are two.
-    func changes(on list: List) async throws -> AsyncThrowingStream<Void, Error> {
+    /// Two sources again, and now they say what they are about.
+    ///
+    /// The server's events are all `.rows` -- `domain` does not announce when a category
+    /// changes, so a rename made in a browser genuinely does not arrive. The local half
+    /// is what covers the case that matters here: a category edited in this app's own
+    /// Settings writes to the cache, and comparing the vocabulary against the last one
+    /// seen says which kind of nudge it was.
+    ///
+    /// Comparing rather than watching two tables: `Cache.observe(list:)` fetches items,
+    /// units and categories together for a reason -- a screen given new rows beside old
+    /// categories has a moment where a row is filed under an aisle that no longer
+    /// exists. Splitting it into two observations would reintroduce exactly that.
+    func changes(on list: List) async throws -> AsyncThrowingStream<Nudge, Error> {
         let remote = self.remote
         let cache = self.cache
 
         return AsyncThrowingStream { continuation in
             let fromServer = Task {
                 if let stream = try? await remote.changes(on: list) {
-                    for try await _ in stream { continuation.yield() }
+                    for try await nudge in stream { continuation.yield(nudge) }
                 }
             }
             let fromHere = Task {
                 guard let stream = cache.observe(list: list) else { return }
-                for try await _ in stream { continuation.yield() }
+                var seen: (tags: [Tag], units: [Unit])?
+
+                for try await contents in stream {
+                    defer { seen = (contents.tags, contents.units) }
+
+                    // The first value cannot be compared with anything, and guessing
+                    // wrong in either direction is a bug: called `.rows`, a category
+                    // change that landed before the watch started is never fetched;
+                    // called `.categories` every time, a screen pays a reference read
+                    // per tick. So the first is `.categories` and the rest are compared.
+                    //
+                    // That costs one reference read when a list opens, which the screen
+                    // does anyway. It is not a race that can be closed by reading the
+                    // vocabulary first: the change can land on either side of that read.
+                    guard let last = seen else {
+                        continuation.yield(.categories)
+                        continue
+                    }
+                    let moved = contents.tags != last.tags || contents.units != last.units
+                    continuation.yield(moved ? .categories : .rows)
+                }
             }
             continuation.onTermination = { _ in
                 fromServer.cancel()

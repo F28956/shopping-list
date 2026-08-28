@@ -450,8 +450,27 @@ actor API {
     /// Authorised once, when the connection opens. A token that expires mid-stream
     /// does not close it, and does not need to: the stream carries no list content,
     /// and every actual read still presents a fresh token.
-    func changes(on list: List) async throws -> AsyncThrowingStream<Void, Error> {
-        try await stream(at: "/api/lists/\(list.id)/events")
+    /// A server's per-list events, which are all about the rows.
+    ///
+    /// `domain` announces on this channel for items and for filing -- see
+    /// `service::tags::attach`. It does **not** announce when a category is created,
+    /// renamed, removed or reordered, so those do not arrive here and cannot be
+    /// reported as `.categories`. What covers that gap is the local half of
+    /// `CachingBackend.changes(on:)`, which sees this device's own edits, and
+    /// `LocalBackend`, which says so itself.
+    func changes(on list: List) async throws -> AsyncThrowingStream<Nudge, Error> {
+        let events = try await stream(at: "/api/lists/\(list.id)/events")
+        return AsyncThrowingStream { continuation in
+            let pump = Task {
+                do {
+                    for try await _ in events { continuation.yield(.rows) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in pump.cancel() }
+        }
     }
 
     /// Opens an event stream and yields once per event.

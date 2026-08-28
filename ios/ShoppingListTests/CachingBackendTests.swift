@@ -163,4 +163,57 @@ struct CachingBackendTests {
             "a row somebody else deleted came back"
         )
     }
+
+    // MARK: - Saying what moved, not merely that something did
+
+    /// The point of the typed stream. A nudge that does not say what it is about makes a
+    /// screen re-read everything: thirty-one units and twenty-one categories on every
+    /// tick, which is three requests where one would do.
+    @Test("a change to the rows is reported as rows")
+    func aRowChangeSaysRows() async throws {
+        let (backend, cache) = backend()
+        let list = list()
+        cache.remember(lists: [list])
+        cache.remember(units: [Unit(id: 1, name: "unit", bare: false)])
+        cache.remember(tags: [Tag(id: 900, name: "dairy", emoji: nil, sortOrder: 0)], on: list)
+
+        var nudges = try await backend.changes(on: list).makeAsyncIterator()
+        // The first is `.categories` by construction -- a screen opening re-reads them
+        // anyway, and it is the only honest answer when there is nothing to compare to.
+        #expect(try await nudges.next() != nil)
+
+        try await backend.add("milk", to: list)
+
+        let heard = try await nudges.next()
+        if case .rows = try #require(heard) {} else {
+            Issue.record("a row change was reported as \(String(describing: heard))")
+        }
+    }
+
+    /// And the case that would otherwise be missed entirely: a category renamed from a
+    /// screen that belongs to no list.
+    @Test("a change to the categories is reported as categories")
+    func aCategoryChangeSaysCategories() async throws {
+        let (backend, cache) = backend()
+        let list = list()
+        cache.remember(lists: [list])
+        cache.remember(
+            tags: [
+                Tag(id: 900, name: "dairy", emoji: nil, sortOrder: 0),
+                Tag(id: 901, name: "produce", emoji: nil, sortOrder: 1),
+            ],
+            on: list
+        )
+
+        var nudges = try await backend.changes(on: list).makeAsyncIterator()
+        _ = try await nudges.next()
+
+        // What the Categories screen does.
+        cache.rename(tag: 900, to: "cheese counter", emoji: nil)
+
+        let heard = try await nudges.next()
+        if case .categories = try #require(heard) {} else {
+            Issue.record("a category change was reported as \(String(describing: heard))")
+        }
+    }
 }

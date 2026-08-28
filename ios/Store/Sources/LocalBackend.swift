@@ -261,13 +261,16 @@ actor LocalBackend {
         let json = String(data: try JSONEncoder().encode(ids), encoding: .utf8) ?? "[]"
         try json.withCString { json in
             try nothing(embedded_set_tag_order(handle, list.id, json))
+        announceCategories()
         }
     }
 
     func createTag(named name: String, emoji: String?) async throws -> Tag {
         try name.withCString { name in
             try withOptionalCString(emoji) { emoji in
-                try answer(embedded_create_tag(handle, name, emoji))
+                let made: Tag = try answer(embedded_create_tag(handle, name, emoji))
+                announceCategories()
+                return made
             }
         }
     }
@@ -275,13 +278,16 @@ actor LocalBackend {
     func updateTag(_ tag: Tag, named name: String, emoji: String?) async throws -> Tag {
         try name.withCString { name in
             try withOptionalCString(emoji) { emoji in
-                try answer(embedded_update_tag(handle, tag.id, name, emoji))
+                let renamed: Tag = try answer(embedded_update_tag(handle, tag.id, name, emoji))
+                announceCategories()
+                return renamed
             }
         }
     }
 
     func deleteTag(_ tag: Tag) async throws {
         try nothing(embedded_delete_tag(handle, tag.id))
+        announceCategories()
     }
 
     // MARK: - Somebody else changed something
@@ -296,8 +302,54 @@ actor LocalBackend {
         try watching { embedded_watch_lists($0) }
     }
 
-    func changes(on list: List) async throws -> AsyncThrowingStream<Void, Error> {
-        try watching { embedded_watch_list($0, list.id) }
+    /// This list, and the categories it is walked by.
+    ///
+    /// Two sources, because `domain` only announces one of them. `service::tags::attach`
+    /// and `detach` announce on the list's channel -- those are rows. Creating,
+    /// renaming, removing or reordering a category announces **nothing**, because a
+    /// category belongs to no list and there is no channel for "the vocabulary moved".
+    ///
+    /// So this says it itself: every tag mutation on this backend tells whoever is
+    /// watching. Without that, renaming a category in Settings would not reach an open
+    /// list on a device answering for itself -- the same bug that was fixed on the
+    /// cached path this morning, arriving by a different road.
+    func changes(on list: List) async throws -> AsyncThrowingStream<Nudge, Error> {
+        let rows = try watching { embedded_watch_list($0, list.id) }
+        let (stream, continuation) = AsyncThrowingStream<Nudge, Error>.makeStream()
+
+        // Registered here, synchronously, on the actor -- not from inside a stream's
+        // build closure through a `Task`. That version lost the race with a category
+        // edited immediately after the watch began, which is precisely the case: a
+        // caller starts watching and then changes something.
+        let token = UUID()
+        categoryWatchers[token] = continuation
+
+        let fromRows = Task {
+            for try await _ in rows { continuation.yield(.rows) }
+            continuation.finish()
+        }
+        continuation.onTermination = { [weak self] _ in
+            fromRows.cancel()
+            Task { await self?.removeCategoryWatcher(token) }
+        }
+
+        return stream
+    }
+
+    /// Whoever is watching a list wants to know the vocabulary moved.
+    ///
+    /// Keyed so a screen that goes away stops being told; an unbounded, never-pruned
+    /// list of continuations is a leak that only shows up after somebody has opened
+    /// forty lists.
+    private var categoryWatchers: [UUID: AsyncThrowingStream<Nudge, Error>.Continuation] = [:]
+
+    private func removeCategoryWatcher(_ token: UUID) {
+        categoryWatchers[token] = nil
+    }
+
+    /// Says the vocabulary moved, to every list that is open.
+    private func announceCategories() {
+        for watcher in categoryWatchers.values { watcher.yield(.categories) }
     }
 
     /// Turns a blocking Rust watcher into a stream.
