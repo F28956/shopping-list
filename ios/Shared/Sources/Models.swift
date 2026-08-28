@@ -367,6 +367,72 @@ struct RememberedEntry: Decodable {
         case unitID = "unit_id"
         case lastUsedAt = "last_used_at"
     }
+
+    /// Hand-written for one field, and it was hiding a bug.
+    ///
+    /// The server sends `last_used_at` as an RFC 3339 **string** -- `domain`'s
+    /// `timestamp!` macro serialises every timestamp `with = "time::serde::rfc3339"`,
+    /// and the history route answers with the model type unchanged. This decoded it as
+    /// `Int64`, so every entry failed, so the whole array failed.
+    ///
+    /// Nothing said so, because the one caller wraps the request in `try?` -- see
+    /// `ItemsModel.loadReference`, where a server too old to have the route is the case
+    /// that was being tolerated. The result is that synced history has never once
+    /// arrived from a real server: the device kept resolving lines against its own
+    /// memory, which is the exact divergence the route was added to close.
+    ///
+    /// Seconds are kept as the stored form, because that is what the cache column and
+    /// `parsing::history_rank` both use. A number is still accepted so that anything
+    /// already written down in that shape still reads.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        display = try c.decode(String.self, forKey: .display)
+        unitID = try c.decodeIfPresent(Int64.self, forKey: .unitID)
+        amount = try c.decodeIfPresent(Double.self, forKey: .amount)
+        tags = try c.decodeIfPresent([Int64].self, forKey: .tags) ?? []
+        uses = try c.decode(Int64.self, forKey: .uses)
+
+        if let seconds = try? c.decode(Int64.self, forKey: .lastUsedAt) {
+            lastUsedAt = seconds
+        } else {
+            let stamp = try c.decode(String.self, forKey: .lastUsedAt)
+            guard let when = RememberedEntry.instant(from: stamp) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .lastUsedAt,
+                    in: c,
+                    debugDescription: "not a timestamp: \(stamp)"
+                )
+            }
+            lastUsedAt = Int64(when.timeIntervalSince1970)
+        }
+    }
+
+    /// With fractional seconds and without, because the server sends both.
+    ///
+    /// `time`'s RFC 3339 writer omits the fraction when it is zero, so
+    /// `...T12:31:48Z` and `...T09:15:02.123456789Z` both arrive from the same route.
+    /// `ISO8601DateFormatter` matches one shape per configuration and returns nil for
+    /// the other, so a single reader refuses about half of what it is sent -- which is
+    /// the second version of this bug, and how it was found.
+    private static func instant(from stamp: String) -> Date? {
+        for reader in [withFraction, withoutFraction] {
+            if let when = reader.date(from: stamp) { return when }
+        }
+        return nil
+    }
+
+    private static let withFraction: ISO8601DateFormatter = {
+        let reader = ISO8601DateFormatter()
+        reader.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return reader
+    }()
+
+    private static let withoutFraction: ISO8601DateFormatter = {
+        let reader = ISO8601DateFormatter()
+        reader.formatOptions = [.withInternetDateTime]
+        return reader
+    }()
 }
 
 /// The one key a name is remembered under.

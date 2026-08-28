@@ -157,4 +157,57 @@ struct MeasureTests {
     @Test func anUnknownUnitIsOmittedRatherThanGuessed() {
         #expect(item(amount: 2, unit: 999).measure(units: units) == "2")
     }
+
+    /// The bug that hid behind a `try?` for as long as synced history has existed.
+    ///
+    /// `domain` serialises every timestamp as RFC 3339 through its `timestamp!` macro,
+    /// and the history route answers with the model type unchanged -- so the wire has
+    /// always carried a string here. The client decoded `Int64`, so every entry failed,
+    /// so the array failed, and `ItemsModel.loadReference` swallowed it. A device went
+    /// on resolving typed lines against its own memory instead of the list's, which is
+    /// the divergence that route was added to close.
+    @Test func aRememberedEntryReadsTheServersTimestamp() throws {
+        // Copied from what the server sends, fractional seconds and all.
+        let wire = Data("""
+            [{"name":"milk","display":"Milk","unit_id":19,"amount":2.0,
+              "tags":[5],"uses":3,"last_used_at":"2026-08-28T09:15:02.123456789Z"}]
+            """.utf8)
+
+        let entries = try JSONDecoder().decode([RememberedEntry].self, from: wire)
+
+        let milk = try #require(entries.first)
+        #expect(milk.name == "milk")
+        #expect(milk.display == "Milk")
+        #expect(milk.uses == 3)
+        #expect(milk.lastUsedAt > 0, "the timestamp did not survive")
+        // 2026-08-28T09:15:02Z, to the second -- which is the resolution the cache
+        // column and `history_rank` both work in.
+        #expect(milk.lastUsedAt == 1_787_908_502, "the wrong instant: \(milk.lastUsedAt)")
+    }
+
+    /// Without the fraction, which the same route also sends: `time`'s RFC 3339 writer
+    /// omits it when it is zero. A reader configured for one shape returns nil for the
+    /// other, so a single formatter refuses about half of what arrives -- which is the
+    /// second version of this bug, found by the first fix failing.
+    @Test func aRememberedEntryReadsATimestampWithNoFraction() throws {
+        let wire = Data("""
+            [{"name":"milk","display":"Milk","tags":[],"uses":1,
+              "last_used_at":"2026-08-28T09:15:02Z"}]
+            """.utf8)
+
+        let entries = try JSONDecoder().decode([RememberedEntry].self, from: wire)
+
+        #expect(entries.first?.lastUsedAt == 1_787_908_502)
+    }
+
+    /// And the shape already written into caches, which must keep reading.
+    @Test func aRememberedEntryStillReadsSeconds() throws {
+        let wire = Data("""
+            [{"name":"milk","display":"Milk","tags":[],"uses":1,"last_used_at":1787908502}]
+            """.utf8)
+
+        let entries = try JSONDecoder().decode([RememberedEntry].self, from: wire)
+
+        #expect(entries.first?.lastUsedAt == 1_787_908_502)
+    }
 }
