@@ -12,6 +12,22 @@ import Foundation
 /// is exactly the standalone case, which is what these are about.
 @MainActor
 struct ItemsModelTests {
+    /// Waits for the observation to deliver, or gives up and lets the expectation fail.
+    ///
+    /// A poll rather than a single `Task.yield()`, because the update is genuinely
+    /// asynchronous now: a write wakes `ValueObservation`, which re-runs its fetch on
+    /// the database's own queue and hands the result back on the main one. Two hops. A
+    /// test that yields once is testing the scheduler, not the behaviour.
+    private func until(
+        _ settled: () -> Bool,
+        within seconds: Double = 2
+    ) async {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !settled() && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     private func model(_ cache: Cache = .inMemory()) -> (ItemsModel, Cache, List) {
         let list = List(id: -1, uuid: "list-1", name: "Shop", ownerID: 0, role: .owner)
         cache.remember(lists: [list])
@@ -202,7 +218,7 @@ struct ItemsModelTests {
         // What the Categories screen does, and nothing more. No reload is asked for
         // here: the point is that the model hears about it by itself.
         cache.removeTag(901)
-        await Task.yield()
+        await until { !model.tags.map(\.name).contains("dairy") }
 
         #expect(
             !model.tags.map(\.name).contains("dairy"),
@@ -222,8 +238,50 @@ struct ItemsModelTests {
         model.reloadFromCache()
 
         cache.rename(tag: 900, to: "cheese counter", emoji: "🧀")
-        await Task.yield()
+        await until { model.tags.first { $0.id == 900 }?.name == "cheese counter" }
 
         #expect(model.tags.first { $0.id == 900 }?.name == "cheese counter")
+    }
+
+    /// Where the observation stops seeing, written down so it is a known limit rather
+    /// than a later surprise.
+    ///
+    /// A `DatabaseQueue` observes writes made through *itself*. A second `Cache` over
+    /// the same file is a second connection, and this one never hears about it. The app
+    /// is safe because it opens exactly one -- `Cache.shared`, which every screen, the
+    /// watch link and the outbox go through -- and this test exists to fail loudly if
+    /// somebody ever assumes more than that.
+    ///
+    /// If a share extension, a widget or a background refresh is ever added, this is the
+    /// test that says what has to change: a `DatabasePool` and cross-process
+    /// notification, not another hand-posted `cacheChanged`.
+    @Test("a second connection is not observed, and that is the known limit")
+    func aSecondConnectionIsNotObserved() async {
+        let path = NSTemporaryDirectory() + "observe-\(UUID().uuidString).sqlite"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let mine = Cache(path: path)
+        let (model, _, list) = model(mine)
+        mine.remember(
+            tags: [
+                Tag(id: 900, name: "produce", emoji: nil, sortOrder: 0),
+                Tag(id: 901, name: "dairy", emoji: nil, sortOrder: 1),
+            ],
+            on: list
+        )
+        await until { model.tags.count == 2 }
+
+        // A different object over the same database, as another part of the app is.
+        let elsewhere = Cache(path: path)
+        elsewhere.removeTag(901)
+
+        // Deliberately asserting the limit. If this ever starts failing because the
+        // screen *did* catch up, the comment above is out of date and the restriction on
+        // opening a second cache can be lifted.
+        await until({ model.tags.count == 1 }, within: 0.5)
+        #expect(
+            model.tags.map(\.name) == ["produce", "dairy"],
+            "a second connection is now observed -- see the note on Cache.observe(list:)"
+        )
     }
 }

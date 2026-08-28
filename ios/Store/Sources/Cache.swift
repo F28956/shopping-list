@@ -562,23 +562,27 @@ final class Cache: @unchecked Sendable {
     }
 
     func items(on list: List) -> [Item] {
-        read { db in
-            try Row.fetchAll(
-                db,
-                sql: "SELECT * FROM items WHERE list_id = ? ORDER BY position",
-                arguments: [list.id]
-            ).map { row in
-                let tags: String = row["tag_ids"]
-                return Item(
-                    id: row["id"],
-                    uuid: row["uuid"],
-                    name: row["name"],
-                    amount: row["amount"],
-                    unitID: row["unit_id"],
-                    doneAt: row["done_at"],
-                    tagIDs: tags.split(separator: ",").compactMap { Int64($0) }
-                )
-            }
+        read { db in try Self.fetchItems(db, on: list) }
+    }
+
+    /// The fetch itself, so that a one-shot read and an observation of the same rows
+    /// cannot come out different. Everything below `observe(list:)` reuses these.
+    fileprivate static func fetchItems(_ db: Database, on list: List) throws -> [Item] {
+        try Row.fetchAll(
+            db,
+            sql: "SELECT * FROM items WHERE list_id = ? ORDER BY position",
+            arguments: [list.id]
+        ).map { row in
+            let tags: String = row["tag_ids"]
+            return Item(
+                id: row["id"],
+                uuid: row["uuid"],
+                name: row["name"],
+                amount: row["amount"],
+                unitID: row["unit_id"],
+                doneAt: row["done_at"],
+                tagIDs: tags.split(separator: ",").compactMap { Int64($0) }
+            )
         }
     }
 
@@ -604,8 +608,15 @@ final class Cache: @unchecked Sendable {
     // MARK: - Units and tags
 
     func units() -> [Unit] {
-        reference(kind: Kind.unit, listID: Kind.global)
-            .map { Unit(id: $0.id, name: $0.name, bare: $0.bare) }
+        read { db in try Self.fetchUnits(db) }
+    }
+
+    fileprivate static func fetchUnits(_ db: Database) throws -> [Unit] {
+        try Row.fetchAll(
+            db,
+            sql: "SELECT * FROM reference WHERE kind = ? AND list_id = ? ORDER BY position",
+            arguments: [Kind.unit, Kind.global]
+        ).map { Unit(id: $0["id"], name: $0["name"], bare: $0["bare"]) }
     }
 
     func remember(units: [Unit]) {
@@ -627,18 +638,20 @@ final class Cache: @unchecked Sendable {
     /// position already holds the order this person resolved, and a stored zero would
     /// read as a tie everywhere downstream.
     func tags(on list: List) -> [Tag] {
-        read { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT t.id, t.name, t.emoji
-                      FROM tags t
-                      LEFT JOIN list_tag_order o ON o.tag_id = t.id AND o.list_id = ?
-                     ORDER BY COALESCE(o.position, t.position), t.id
-                    """,
-                arguments: [list.id]
-            )
-        }
+        read { db in try Self.fetchTags(db, on: list) }
+    }
+
+    fileprivate static func fetchTags(_ db: Database, on list: List) throws -> [Tag] {
+        try Row.fetchAll(
+            db,
+            sql: """
+                SELECT t.id, t.name, t.emoji
+                  FROM tags t
+                  LEFT JOIN list_tag_order o ON o.tag_id = t.id AND o.list_id = ?
+                 ORDER BY COALESCE(o.position, t.position), t.id
+                """,
+            arguments: [list.id]
+        )
         .enumerated()
         .map { at, row in
             Tag(id: row["id"], name: row["name"], emoji: row["emoji"], sortOrder: Int64(at))
@@ -895,6 +908,73 @@ final class Cache: @unchecked Sendable {
         guard let queue else { return }
         try? queue.write(work)
         announce()
+    }
+
+    // MARK: - Watching
+
+    /// Everything one list's screen reads, in one answer.
+    ///
+    /// One struct rather than three observations, and that is the point: a screen given
+    /// new items and old categories has a moment where a row is filed under an aisle
+    /// that no longer exists. Fetched in a single read, so there is no such moment.
+    struct ListContents: Equatable, Sendable {
+        var items: [Item]
+        var units: [Unit]
+        var tags: [Tag]
+    }
+
+    /// The same answer, once, for a caller that wants it in this turn rather than on
+    /// the observation's next one -- a view appearing, or a test.
+    func contents(of list: List) -> ListContents? {
+        readOne { db in
+            ListContents(
+                items: try Self.fetchItems(db, on: list),
+                units: try Self.fetchUnits(db),
+                tags: try Self.fetchTags(db, on: list)
+            )
+        }
+    }
+
+    /// One list's screen, for as long as somebody is looking at it.
+    ///
+    /// This is what the app should have been doing all along. A screen used to hold a
+    /// copy taken when it loaded, and staying level with the database was a protocol
+    /// somebody had to follow by hand: write, remember to announce, remember to listen,
+    /// remember to re-read the right things. Four steps, each skippable in silence, and
+    /// removing a category skipped three of them at once.
+    ///
+    /// `ValueObservation` removes the protocol rather than documenting it. It knows
+    /// which tables the fetch below touched, and re-runs it when any of them changes --
+    /// whoever wrote, without being told. There is nothing for a new writer to remember
+    /// and nothing for a new screen to subscribe to.
+    ///
+    /// **The boundary is this connection.** A `DatabaseQueue` observes writes made
+    /// through itself, not every write to the file, so a second `Cache` over the same
+    /// path is invisible to this one. That is sound here only because there is exactly
+    /// one -- see `shared`, and the reason given there -- and every screen, the watch
+    /// link and the outbox all go through it. It stops being sound the day something
+    /// outside this process writes: a share extension, a widget, a background refresh.
+    /// The fix then is a `DatabasePool` and cross-process notification, not another
+    /// hand-posted `cacheChanged`. `aSecondConnectionIsNotObserved` pins this.
+    ///
+    /// The first value arrives immediately, so a caller does not need a separate read to
+    /// put something on screen.
+    func observe(list: List) -> AsyncValueObservation<ListContents>? {
+        guard let queue else { return nil }
+
+        return ValueObservation
+            .tracking { db in
+                ListContents(
+                    items: try Self.fetchItems(db, on: list),
+                    units: try Self.fetchUnits(db),
+                    tags: try Self.fetchTags(db, on: list)
+                )
+            }
+            // Identical values are not news. Ticking one row off rewrites that list's
+            // rows, and without this every such write would push an unchanged set of
+            // categories at the screen as well.
+            .removeDuplicates()
+            .values(in: queue)
     }
 
     /// Says the cache changed, because it is a database and nothing observes a

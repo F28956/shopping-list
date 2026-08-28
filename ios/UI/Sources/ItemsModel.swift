@@ -86,36 +86,72 @@ final class ItemsModel {
         let attached: [Tag]
         var id: Int64 { item.id }
     }
-
-    /// The subscription that keeps this screen level with the database.
+    /// What keeps this screen level with the database.
     ///
-    /// Here rather than in the views, and that is the point. It was one `.onReceive` in
-    /// `ItemsView` and nowhere else, so the Mac's copy of this screen never heard about
-    /// a change at all and the phone's heard only about items. A model that owns state
-    /// read out of the cache should be the thing that notices the cache moved -- then
-    /// every screen built on it inherits that, including ones written later.
-    /// `nonisolated(unsafe)` because `deinit` is not on the main actor and this has to
-    /// be read there to unsubscribe. Safe by construction: it is written once, in
-    /// `init`, and read once, in `deinit` -- there is no moment when two things could
-    /// touch it.
-    nonisolated(unsafe) private var watching: (any NSObjectProtocol)?
+    /// Not a notification any more. That protocol -- write, announce, listen, re-read
+    /// the right things -- was four steps, each skippable in silence, and removing a
+    /// category skipped three of them at once: four of the six writers never announced,
+    /// the one listener re-read only the items, and three screens of four were not
+    /// listening at all.
+    ///
+    /// `ValueObservation` removes the protocol instead of documenting it. It knows which
+    /// tables the fetch read and re-runs it when any of them changes, whoever changed
+    /// them and from wherever. There is nothing for a writer to remember, nothing for a
+    /// screen to subscribe to, and no list of properties here to keep in step with the
+    /// ones the fetch returns -- because the fetch returns all of them.
+    ///
+    /// Started here rather than left to a `.task` in a view, for the reason the last
+    /// version of this went wrong: three screens of four forgot to ask.
+    ///
+    /// `nonisolated(unsafe)` because `deinit` is not on the main actor and has to cancel
+    /// this. Safe by construction: written once in `init`, read once in `deinit`.
+    nonisolated(unsafe) private var watching: Task<Void, Never>?
 
     init(list: List, api: API, cache: Cache = .shared) {
         self.list = list
         self.api = api
         self.cache = cache
 
-        watching = NotificationCenter.default.addObserver(
-            forName: .cacheChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reloadFromCache() }
+        watching = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let stream = cache.observe(list: list) else { return }
+                do {
+                    for try await contents in stream {
+                        guard let self else { return }
+                        self.adopt(contents)
+                    }
+                    // Ended without erroring: the database is gone, and nothing will
+                    // change again. Restarting would spin.
+                    return
+                } catch {
+                    // An observation that stops is a screen that quietly stops updating
+                    // -- exactly the failure this whole change exists to remove, and
+                    // worse than the old notification because it would look like it was
+                    // still working. So it is started again rather than given up on.
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
         }
     }
 
     deinit {
-        if let watching { NotificationCenter.default.removeObserver(watching) }
+        watching?.cancel()
+    }
+
+    /// What the database currently says, put on screen.
+    ///
+    /// The guards are about emptiness rather than staleness: a cache not filled yet must
+    /// not blank a screen the server has already answered. Once there is anything there
+    /// it wins, because this only runs when something wrote.
+    private func adopt(_ contents: Cache.ListContents) {
+        if !contents.items.isEmpty || items.isEmpty {
+            items = contents.items
+            if !fresh { total = Int64(contents.items.count) }
+        }
+        if !contents.units.isEmpty { units = contents.units }
+        if !contents.tags.isEmpty { tags = contents.tags }
+        if !items.isEmpty { loaded = true }
+        refreshUnsent()
     }
 
     /// The rows to show, in the order the shop is walked.
@@ -165,29 +201,14 @@ final class ItemsModel {
     /// Safe against the writes this screen makes itself: re-reading is idempotent and
     /// does not write back, so `show` → cache → here → `items` settles in one pass with
     /// nothing to announce.
-    /// Re-reads everything this screen holds, because the cache says it changed.
+    /// Re-reads everything this screen holds.
     ///
-    /// **Everything**, not just the items. This read the items and nothing else, so a
-    /// category renamed or removed in Settings stayed on the rows of every list that
-    /// was already open -- the database was right and the screen was months behind it,
-    /// for as long as somebody left the list up.
-    ///
-    /// The rule is that what is on screen is a function of what is in the database. Any
-    /// state here that is not re-read on this path is state that can drift, so this
-    /// list should gain a line whenever the model gains a stored property.
+    /// Kept for the tests, which drive it directly rather than waiting on an
+    /// observation. In the app nothing calls it: the observation started in `init` does
+    /// this whenever the database moves, which is the whole point of the change.
     func reloadFromCache() {
-        let remembered = cache.items(on: list)
-        if !remembered.isEmpty || items.isEmpty {
-            items = remembered
-        }
-
-        let known = cache.units()
-        if !known.isEmpty { units = known }
-
-        let filed = cache.tags(on: list)
-        if !filed.isEmpty { tags = filed }
-
-        refreshUnsent()
+        guard let contents = cache.contents(of: list) else { return }
+        adopt(contents)
     }
 
 
@@ -737,22 +758,13 @@ final class ItemsModel {
 
     /// Puts the list up as it was last seen, before asking anything.
     ///
-    /// Units and tags in the same breath: an item read out of the cache with no unit
-    /// and no category is a bare name in no aisle, which is a worse answer than the
-    /// one the shop actually needs.
+    /// The observation's first value does this on its own, immediately, so a screen is
+    /// never blank while a request is in flight without anybody arranging it. This
+    /// remains because the callers read better for saying it, and because it is
+    /// synchronous: a view appearing wants the rows in the same turn, not one hop later.
     func showWhatWeHave() {
         guard !fresh else { return }
-
-        let rememberedUnits = cache.units()
-        let rememberedTags = cache.tags(on: list)
-        if !rememberedUnits.isEmpty { units = rememberedUnits }
-        if !rememberedTags.isEmpty { tags = rememberedTags }
-
-        let remembered = cache.items(on: list)
-        guard !remembered.isEmpty else { return }
-        items = remembered
-        total = Int64(remembered.count)
-        loaded = true
+        reloadFromCache()
     }
 
     func load() async {
