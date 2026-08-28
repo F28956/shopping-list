@@ -150,14 +150,11 @@ final class ItemsModel {
     /// shop with no signal is missing exactly when somebody is typing one-handed.
     func suggest(_ typed: String) {
         suggestions.update(typed: typed) { [self] wanted in
-            guard !ServerDirectory.isOnDeviceOnly else {
-                return await (try? api.suggestions(matching: wanted, on: list)) ?? []
-            }
-            do {
-                return try await api.suggestions(matching: wanted, on: list)
-            } catch {
-                return await (try? api.suggestions(matching: wanted, on: list)) ?? []
-            }
+            // One call. This had a guard on the mode with three branches that all did
+            // this, left behind when the backend took over the asking -- `LocalBackend`
+            // reads the device's memory and `CachingBackend` reads the cache, so
+            // neither fails and neither needs a fallback.
+            await (try? api.suggestions(matching: wanted, on: list)) ?? []
         }
     }
 

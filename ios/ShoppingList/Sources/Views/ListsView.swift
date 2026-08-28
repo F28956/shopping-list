@@ -25,7 +25,7 @@ struct ListsView: View {
     @State private var joining = false
     /// There is no server, because somebody said so on the first screen. Read once:
     /// it only changes by leaving this screen entirely.
-    private let onDeviceOnly = ServerDirectory.isOnDeviceOnly
+    @Environment(\.capabilities) private var capabilities
 
     /// `standalone` is the device answering for itself, and nil means the old path.
     ///
@@ -72,7 +72,7 @@ struct ListsView: View {
             // Sharing is the mirror of joining: a share link names a server, and with
             // no server there is no link to make. Absent rather than present and
             // failing.
-            if !onDeviceOnly {
+            if capabilities.sharing {
                 Button("Share…", systemImage: "person.badge.plus") { sharing = list }
             }
             if list.role >= .owner {
@@ -84,7 +84,7 @@ struct ListsView: View {
             }
         }
         .swipeActions(edge: .leading) {
-            if !onDeviceOnly {
+            if capabilities.sharing {
                 Button {
                     sharing = list
                 } label: {
@@ -133,7 +133,7 @@ struct ListsView: View {
             Group {
                 if !model.loaded {
                     ProgressView()
-                } else if model.lists.isEmpty && !model.fresh && !onDeviceOnly {
+                } else if model.lists.isEmpty && !model.fresh && capabilities.syncing {
                     // Before the empty state, and the order is the point: this app
                     // used to say "No lists" whenever a load failed and there was
                     // nothing cached -- an emptiness it had never verified. `fresh`
@@ -167,14 +167,14 @@ struct ListsView: View {
                         Label("No lists", systemImage: "cart")
                     } description: {
                         Text(
-                            onDeviceOnly
+                            !capabilities.syncing
                                 ? "Make one with the button below. It stays on this phone."
                                 : "Make one with the button below to get started."
                         )
                     }
                 } else {
                     SwiftUI.List {
-                        if model.offline && !onDeviceOnly {
+                        if model.offline && capabilities.syncing {
                             OfflineNote()
                         }
 
@@ -202,7 +202,7 @@ struct ListsView: View {
                 // The item and not just its contents: a toolbar item draws its own
                 // background on iOS 26, so an empty dot would leave a chip with
                 // nothing in it.
-                if !onDeviceOnly {
+                if capabilities.sharing {
                     ToolbarItem(placement: .topBarLeading) {
                         StatusDot(waiting: model.waiting, offline: model.offline)
                     }
@@ -212,7 +212,7 @@ struct ListsView: View {
                     // nobody to sign out. Offering it would be a button that throws
                     // away somebody's only copy of their shopping and calls it
                     // leaving.
-                    if !onDeviceOnly {
+                    if capabilities.sharing {
                         Button("Sign out") {
                             // What is cached belongs to whoever is signing out. The
                             // next person to use this device is a different person.

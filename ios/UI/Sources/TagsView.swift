@@ -14,7 +14,16 @@ struct TagsView: View {
     let cache: Cache
     let api: API
     /// There is no server, so the edits are this device's own and go no further.
+    ///
+    /// **A data-path decision, not a capability**, which is why it is still a parameter
+    /// while the wording below reads `capabilities`. This screen has not been moved to
+    /// `Backend` yet: it writes through `Cache` and `API` by hand, and this flag picks
+    /// which. Once it takes a backend the flag goes -- `LocalBackend` and
+    /// `CachingBackend` already answer `createTag` and the rest, and neither needs
+    /// asking which mode it is.
     let onDeviceOnly: Bool
+
+    @Environment(\.capabilities) private var capabilities
 
     @Environment(\.dismiss) private var dismiss
 
@@ -62,7 +71,7 @@ struct TagsView: View {
                     }
                 } footer: {
                     Text(
-                        onDeviceOnly
+                        !capabilities.syncing
                             ? "Items are grouped by these, in the order each list walks them. They stay on this device."
                             : "Items are grouped by these, in the order each list walks them. Everyone on this server shares them."
                     )

@@ -18,13 +18,13 @@ struct OfflineNote: View {
     var refused: Bool = false
     /// There is no server. Nothing is stale and nothing is waiting, so there is
     /// nothing to say — see `body`.
-    var onDeviceOnly: Bool = false
+    @Environment(\.capabilities) private var capabilities
 
     var body: some View {
         // Nothing at all on a device kept to itself. "Showing what was last loaded"
         // is false there — this is the only copy there has ever been — and a line
         // apologising for a connection somebody declined is worse than silence.
-        if !onDeviceOnly {
+        if capabilities.syncing {
             Label(said, systemImage: symbol)
                 .font(.footnote)
                 .foregroundStyle(refused ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))

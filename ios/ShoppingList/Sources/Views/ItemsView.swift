@@ -10,6 +10,7 @@ struct ItemsView: View {
     let list: List
     @Environment(Identity.self) private var identity
     @Environment(\.scenePhase) private var phase
+    @Environment(\.capabilities) private var capabilities
 
     /// Everything about the list itself — see `ItemsModel`, which the Mac shares.
     @State private var model: ItemsModel
@@ -35,7 +36,7 @@ struct ItemsView: View {
             // Nothing to say on a device kept to itself: nothing is stale, nothing is
             // waiting for a connection that is coming, and a line apologising for one
             // somebody declined is worse than silence.
-            if (model.offline || model.waiting > 0 || model.refused) && !ServerDirectory.isOnDeviceOnly {
+            if (model.offline || model.waiting > 0 || model.refused) && capabilities.syncing {
                 Section { OfflineNote(offline: model.offline, waiting: model.waiting, refused: model.refused) }
             }
 
@@ -50,7 +51,7 @@ struct ItemsView: View {
             // Except on a device kept to itself, where there is no server to have
             // checked with and this device is the only thing that could know. There,
             // empty means empty.
-            if model.items.isEmpty && model.loaded && !model.fresh && !ServerDirectory.isOnDeviceOnly {
+            if model.items.isEmpty && model.loaded && !model.fresh && capabilities.syncing {
                 Section {
                     Text(
                         model.offline
@@ -100,7 +101,6 @@ struct ItemsView: View {
                     StatusDot(
                         waiting: model.waiting,
                         offline: model.offline,
-                        onDeviceOnly: ServerDirectory.isOnDeviceOnly
                     )
                 }
             }
@@ -118,7 +118,7 @@ struct ItemsView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 // A share link names a server. With no server there is no link to
                 // make, so the button is absent rather than present and failing.
-                if !ServerDirectory.isOnDeviceOnly {
+                if capabilities.sharing {
                     Button {
                         sharing = true
                     } label: {

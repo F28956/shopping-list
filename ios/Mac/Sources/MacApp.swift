@@ -43,6 +43,14 @@ struct MacRootView: View {
     /// rather than observable state and nothing would otherwise tell SwiftUI.
     @State private var hasServer = !ServerDirectory.isOnDeviceOnly
 
+    /// What this app can offer, supplied once for every screen below.
+    ///
+    /// Held as state rather than read where it is used, so that choosing a server in
+    /// Settings changes what is offered without relaunching -- the same reason
+    /// `hasServer` is state. Every screen reads it from the environment; none of them
+    /// reads `ServerDirectory`.
+    @State private var capabilities = Capabilities.current
+
     var body: some View {
         Group {
             if hasServer {
@@ -56,8 +64,10 @@ struct MacRootView: View {
                 shopping
             }
         }
+        .environment(\.capabilities, capabilities)
         .onReceive(NotificationCenter.default.publisher(for: .serverChanged)) { _ in
             hasServer = !ServerDirectory.isOnDeviceOnly
+            capabilities = .current
         }
     }
 

@@ -20,6 +20,7 @@ struct SettingsView: View {
     let joinAList: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.capabilities) private var capabilities
     @Environment(Identity.self) private var identity
 
     @State private var choosing = false
@@ -57,7 +58,7 @@ struct SettingsView: View {
                 // change; with none there is no household, so anybody using the app
                 // may. Absent rather than refusing for somebody who may not -- the
                 // service hides the routes from them anyway.
-                if ServerDirectory.isOnDeviceOnly || isOwner {
+                if !capabilities.accounts || isOwner {
                     Section {
                         Button("Categories", systemImage: "tag") { managingTags = true }
                             .accessibilityIdentifier("manage-tags")

@@ -15,7 +15,7 @@ struct MacItemsView: View {
     @State private var model: ItemsModel
 
     /// There is no server. The default — see `ServerDirectory`.
-    @State private var onDeviceOnly = ServerDirectory.isOnDeviceOnly
+    @Environment(\.capabilities) private var capabilities
 
     // What is genuinely this window's: which sheet is open.
     @State private var confirmingClear = false
@@ -65,21 +65,21 @@ struct MacItemsView: View {
             // Not on a Mac with no server: everything is queued there and nothing
             // ever leaves, so a permanent "2 changes waiting to be sent" would be
             // reporting the arrangement rather than a problem.
-            if (model.offline || model.waiting > 0 || model.refused) && !onDeviceOnly {
+            if (model.offline || model.waiting > 0 || model.refused) && capabilities.syncing {
                 OfflineNote(offline: model.offline, waiting: model.waiting, refused: model.refused)
             }
 
             // "Nothing on this list yet" is a claim, and after a load that failed
             // with nothing cached it is a claim nobody has checked.
-            if model.items.isEmpty && model.loaded && !model.fresh && !onDeviceOnly {
+            if model.items.isEmpty && model.loaded && !model.fresh && capabilities.syncing {
                 Text(
                     model.offline
                         ? "Can't reach the server. This list will appear as soon as there is a connection."
-                        : "Couldn't model.load this list. What is on it is not known yet."
+                        : "Couldn't load this list. What is on it is not known yet."
                 )
                 .foregroundStyle(.secondary)
             } else if model.outstanding.isEmpty {
-                Text(model.items.isEmpty ? "Nothing on this list yet." : "All model.done.")
+                Text(model.items.isEmpty ? "Nothing on this list yet." : "All done.")
                     .foregroundStyle(.secondary)
             }
 
@@ -90,7 +90,7 @@ struct MacItemsView: View {
                     ForEach(model.done) { row($0) }
                 } header: {
                     HStack {
-                        Text("\(model.done.count) model.done")
+                        Text("\(model.done.count) done")
                         Spacer()
                         if list.mayEdit {
                             Button("Clear") { confirmingClear = true }
@@ -136,7 +136,7 @@ struct MacItemsView: View {
             // answer, see `StatusDot`. The whole item goes rather than its contents,
             // for the same reason the background is hidden below: an empty item is
             // still a shape.
-            if !onDeviceOnly {
+            if capabilities.sharing {
                 if #available(macOS 26.0, *) {
                     ToolbarItem(placement: .primaryAction) {
                         StatusDot(waiting: model.waiting, offline: model.offline)
@@ -167,7 +167,6 @@ struct MacItemsView: View {
         }
         // Settings changes this under our feet, and storage is not observable state.
         .onReceive(NotificationCenter.default.publisher(for: .serverChanged)) { _ in
-            onDeviceOnly = ServerDirectory.isOnDeviceOnly
         }
         .task { await model.loadReference() }
         .task {
@@ -196,7 +195,7 @@ struct MacItemsView: View {
             }
         }
         .confirmationDialog(
-            "Clear \(model.done.count) model.done \(model.done.count == 1 ? "item" : "model.items")?",
+            "Clear \(model.done.count) done \(model.done.count == 1 ? "item" : "items")?",
             isPresented: $confirmingClear
         ) {
             Button("Clear", role: .destructive) { Task { await model.clearDone() } }

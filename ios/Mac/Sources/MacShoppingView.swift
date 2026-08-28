@@ -27,7 +27,7 @@ struct MacShoppingView: View {
     @State private var joining = false
     /// There is no server. The default -- see `ServerDirectory`. Re-read when settings
     /// change the answer, because storage is not observable state.
-    @State private var onDeviceOnly = ServerDirectory.isOnDeviceOnly
+    @Environment(\.capabilities) private var capabilities
 
     /// `standalone` is the device answering for itself; nil means a server.
     ///
@@ -49,7 +49,7 @@ struct MacShoppingView: View {
             Group {
                 if !model.loaded {
                     ProgressView()
-                } else if model.lists.isEmpty && !model.fresh && !onDeviceOnly {
+                } else if model.lists.isEmpty && !model.fresh && capabilities.syncing {
                     // Before the empty state: after any failed load with nothing
                     // cached, "No lists" is an emptiness nobody has verified. Only a
                     // server that answered can earn the empty state.
@@ -73,7 +73,7 @@ struct MacShoppingView: View {
                         "No lists",
                         systemImage: "cart",
                         description: Text(
-                            onDeviceOnly
+                            !capabilities.syncing
                                 ? "Make one with the button above. It stays on this Mac."
                                 : "Make one in the browser and it appears here."
                         )
@@ -82,7 +82,7 @@ struct MacShoppingView: View {
                     SwiftUI.List(selection: $chosen) {
                         // Nothing to say on a Mac with no server: nothing is stale,
                         // because there is nowhere it could have gone stale against.
-                        if model.offline && !onDeviceOnly {
+                        if model.offline && capabilities.syncing {
                             OfflineNote()
                         }
 
@@ -104,7 +104,7 @@ struct MacShoppingView: View {
                                 // A share link names a server. With none there is no
                                 // link to make, so the option is absent rather than
                                 // present and failing.
-                                if !onDeviceOnly {
+                                if capabilities.sharing {
                                     Button("Share…") { sharing = list }
                                     Divider()
                                 }
@@ -152,7 +152,7 @@ struct MacShoppingView: View {
             // unsent changes looked exactly like one that was in step. It hides itself
             // with no server -- see `StatusDot` for why a permanent green light for a
             // connection that does not exist is worse than none.
-            if !onDeviceOnly {
+            if capabilities.sharing {
                 ToolbarItem(placement: .navigation) {
                     StatusDot(waiting: model.waiting, offline: model.offline)
                 }
@@ -169,7 +169,7 @@ struct MacShoppingView: View {
             // Joining is somebody else's list on somebody's server, and signing out
             // needs somebody signed in. With no server there is neither, so both are
             // absent rather than present and refusing.
-            if !onDeviceOnly {
+            if capabilities.sharing {
                 ToolbarItem(placement: .navigation) {
                     Button {
                         joining = true
@@ -243,7 +243,6 @@ struct MacShoppingView: View {
         // Settings is the only thing that changes this, and it changes it under our
         // feet, so the answer is re-read rather than remembered from launch.
         .onReceive(NotificationCenter.default.publisher(for: .serverChanged)) { _ in
-            onDeviceOnly = ServerDirectory.isOnDeviceOnly
         }
         // One place that decides what is selected, rather than a line in each of the
         // two functions that can change the lists. A selection pointing at a list that
