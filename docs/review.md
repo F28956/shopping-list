@@ -6,7 +6,7 @@ more than a memory of them. Ordered by what would hurt most.
 Anything fixed should be struck here with the commit that did it, rather than deleted:
 the reason something was a problem is usually the reason it comes back.
 
-## 1. iOS and the Mac duplicate their whole domain layer — **being fixed**
+## ~~1. iOS and the Mac duplicate their whole domain layer~~ — fixed, `db13b88` and `fa0cf9d`
 
 `ItemsView` (1140 lines) and `MacItemsView` (757) hold the same logic. Comparing
 bodies with comments stripped:
@@ -27,10 +27,23 @@ fixed on the phone and not the Mac:
 | Suggestions from the device's own memory | yes | no |
 | Unit and amount defaulted on an edit | yes | no |
 
-**The cause is structural.** Android has `ItemsViewModel` and `ListsViewModel`; the
-Apple clients have none, so the logic lives inside SwiftUI `View` structs. Which is
-also why nothing tests it: no test in `ShoppingListTests` mentions `withUnsent`,
-`drain` or `apply`, because reaching them means hosting a view.
+**The cause was structural.** Android has `ItemsViewModel` and `ListsViewModel`; the
+Apple clients had none, so the logic lived inside SwiftUI `View` structs. Which is
+also why nothing tested it: no test in `ShoppingListTests` mentioned `withUnsent`,
+`drain` or `apply`, because reaching them meant hosting a view.
+
+**Fixed.** `ItemsModel` holds it and both views share it. `ItemsView` went from 1140
+lines to 490, `MacItemsView` from 757 to 383, and the only function left in both is
+`row` — the platform's own list row, which is the one thing that should differ. All
+four divergences above closed with it, because the Mac now runs the same code.
+
+There are twelve tests on that logic now, which is twelve more than there were: what a
+typed line becomes, that adding the same thing twice makes one row, that a crossed-off
+row comes back, that a queued tick survives a reload, that a row somebody else deleted
+does not return as a ghost.
+
+**`ListsView` and `MacShoppingView` still hold their own copies** of the smaller list
+logic — loading, joining, renaming, deleting. Same argument, not yet done.
 
 ## 2. An invitation token travels in the URL path
 
