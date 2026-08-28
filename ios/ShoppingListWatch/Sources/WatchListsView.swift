@@ -59,7 +59,7 @@ struct WatchListsView: View {
                 }
             }
             .navigationDestination(for: List.self) { list in
-                WatchItemsView(list: list)
+                WatchItemsView(list: list, store: store)
             }
             .task {
                 showWhatWeHave()

@@ -1,4 +1,14 @@
-// See `LocalServer` for why this is absent on the watch.
+// Not on the watch, and the reason is a toolchain one rather than a design one.
+//
+// This needs `QuickAdd` -- it reads a typed line and ranks suggestions -- which is the
+// Rust parser's Swift face. A watchOS *device* build asks for `arm64` and `arm64_32`,
+// and Rust has no `arm64_32-apple-watchos` on stable: it is tier three and needs
+// `-Z build-std` on nightly. So the shared parser cannot ship to a real Apple Watch,
+// and a backend that needs it cannot either.
+//
+// The simulator target does exist (`aarch64-apple-watchos-sim`, and it builds), so this
+// is one missing architecture rather than a wall. Until then the watch keeps its own
+// path -- see `WatchItemsModel`, which is at least no longer a view.
 #if !os(watchOS)
 
 import Foundation
