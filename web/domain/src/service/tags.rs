@@ -31,7 +31,7 @@ pub async fn create(
     colour: Option<Colour>,
     emoji: Option<Emoji>,
 ) -> Result<Tag> {
-    writable(actor)?;
+    writable(ctx, actor).await?;
     Ok(Tag::create(&ctx.db, name, colour, emoji).await?)
 }
 
@@ -43,12 +43,12 @@ pub async fn update(
     colour: Option<Colour>,
     emoji: Option<Emoji>,
 ) -> Result<Tag> {
-    writable(actor)?;
+    writable(ctx, actor).await?;
     Ok(Tag::update(&ctx.db, id, name, colour, emoji).await?)
 }
 
 pub async fn delete(ctx: &Ctx, actor: &Actor, id: tag::Id) -> Result<()> {
-    writable(actor)?;
+    writable(ctx, actor).await?;
     Ok(Tag::delete(&ctx.db, id).await?)
 }
 
@@ -180,12 +180,25 @@ pub async fn detach(ctx: &Ctx, actor: &Actor, item_id: item::Id, tag_id: tag::Id
     Ok(())
 }
 
-fn writable(actor: &Actor) -> Result<()> {
+/// Who may change the aisles.
+///
+/// The system, which seeds them, and whoever owns the server. Nobody else: a tag is
+/// not one person's, it is the vocabulary every list on this server files things
+/// under, so an editor renaming `dairy` renames it for everybody's shopping.
+///
+/// It used to be the system alone, which meant nobody could change them at all --
+/// twenty-one aisles chosen once, in a migration, for every household that ever runs
+/// this. A server's owner is exactly who should decide what its shelves are called.
+///
+/// Refused as hidden rather than forbidden, as everywhere else here: somebody who may
+/// not administer a server should not learn what it would let them do.
+async fn writable(ctx: &Ctx, actor: &Actor) -> Result<()> {
     if actor.is_system() {
         return Ok(());
     }
-    if let Ok(person) = actor.person() {
-        return Err(ServiceError::hidden("tag (write)", person));
+    let person = actor.person()?;
+    if super::admission::is_owner(ctx, person.id).await? {
+        return Ok(());
     }
-    Err(ServiceError::Unauthenticated)
+    Err(ServiceError::hidden("tag (write)", &person))
 }

@@ -252,25 +252,23 @@ async fn another_persons_list_and_items_are_invisible(#[future(awt)] pool: Sqlit
     );
 }
 
-/// Reference data is readable by anyone signed in, and writable by nobody: the write
-/// routes do not exist rather than existing and always refusing.
+/// Units are readable by anyone signed in and writable by nobody: the write route does
+/// not exist rather than existing and always refusing.
+///
+/// Tags used to be in here too and deliberately are not any more -- a server's owner
+/// decides what its aisles are called. See `an_owner_may_make_rename_and_remove_an_aisle`
+/// for that, and for who is refused.
 #[rstest]
-#[case::units("/api/units")]
-#[case::tags("/api/tags")]
 #[tokio::test]
-async fn reference_data_is_read_only(#[future(awt)] pool: SqlitePool, #[case] path: &str) {
+async fn units_are_read_only(#[future(awt)] pool: SqlitePool) {
     let app = app(pool);
 
-    let (status, _) = send(
-        &app,
-        req("GET", &format!("{path}?order_by=id"), &me(), None),
-    )
-    .await;
+    let (status, _) = send(&app, req("GET", "/api/units?order_by=id", &me(), None)).await;
     assert_eq!(status, StatusCode::OK);
 
     let (status, _) = send(
         &app,
-        req("POST", path, &me(), Some(json!({"name": "mine"}))),
+        req("POST", "/api/units", &me(), Some(json!({"name": "mine"}))),
     )
     .await;
     assert_eq!(
@@ -2085,4 +2083,96 @@ async fn the_history_is_the_lists_and_not_the_worlds(#[future(awt)] pool: Sqlite
     .await;
 
     assert_eq!(status, StatusCode::NOT_FOUND, "somebody else read the memory");
+}
+
+// ------------------------------------------------------------------ the aisles
+
+/// Whoever owns the server decides what its shelves are called.
+///
+/// Twenty-one aisles chosen once in a migration is not a decision to make on behalf of
+/// every household that runs this.
+#[rstest]
+#[tokio::test]
+async fn an_owner_may_make_rename_and_remove_an_aisle(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let app = a_claimed_server(&pool).await;
+
+    let (status, made) = send(
+        &app,
+        req("POST", "/api/tags", &me(), Some(json!({"name": "butcher", "emoji": "🥩"}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let id = made["id"].as_i64().unwrap();
+    assert_eq!(made["name"], "butcher");
+    assert_eq!(made["emoji"], "🥩");
+
+    let (status, renamed) = send(
+        &app,
+        req(
+            "PATCH",
+            &format!("/api/tags/{id}"),
+            &me(),
+            Some(json!({"name": "the butcher", "emoji": "🍖"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["name"], "the butcher");
+    assert_eq!(renamed["emoji"], "🍖");
+
+    let (status, _) = send(&app, req("DELETE", &format!("/api/tags/{id}"), &me(), None)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, listed) = send(&app, req("GET", "/api/tags?order_by=name", &me(), None)).await;
+    let names: Vec<&str> = listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(!names.contains(&"the butcher"), "it is still there: {listed}");
+}
+
+/// Somebody who merely uses the server does not get to rename everybody's aisles.
+///
+/// A tag is not one person's: it is the vocabulary every list on this server is filed
+/// under, so an editor renaming `dairy` renames it for all of somebody else's shopping.
+#[rstest]
+#[tokio::test]
+async fn somebody_who_is_not_an_owner_may_not_change_the_aisles(
+    #[with(fixtures::TAGS)]
+    #[future(awt)]
+    pool: SqlitePool,
+) {
+    let app = a_claimed_server(&pool).await;
+    // Admitted, but not an owner -- otherwise this would be refused for being a
+    // stranger and would pass without testing anything about aisles.
+    sqlx::raw_sql("UPDATE server SET admits_anyone = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (status, listed) = send(&app, req("GET", "/api/tags?order_by=name", &them(), None)).await;
+    assert_eq!(status, StatusCode::OK, "they cannot even read the aisles: {listed}");
+    let id = listed["items"][0]["id"].as_i64().expect("no seeded tags");
+
+    for (method, body) in [
+        ("POST", Some(json!({"name": "theirs"}))),
+        ("PATCH", Some(json!({"name": "renamed"}))),
+        ("DELETE", None),
+    ] {
+        let path = if method == "POST" {
+            "/api/tags".to_string()
+        } else {
+            format!("/api/tags/{id}")
+        };
+        let (status, body) = send(&app, req(method, &path, &them(), body)).await;
+        // Hidden rather than forbidden: somebody who may not administer a server
+        // should not learn what it would let them do.
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path} answered {status}: {body}");
+    }
 }
