@@ -45,6 +45,9 @@ use std::path::Path;
 
 use std::sync::Arc;
 
+pub mod ffi;
+
+use domain::models::item::{self, Item};
 use domain::models::list::{self, List, Name};
 use domain::models::user;
 use domain::models::user::{Email, Name as UserName, Sub};
@@ -198,6 +201,106 @@ impl Local {
         }
     }
 
+    // MARK: what is on a list
+
+    /// What is on one list, in the order the shop is walked.
+    pub fn items(&self, list_id: i64) -> Result<Vec<Item>, Error> {
+        self.runtime.block_on(async {
+            let page = Paging {
+                number: 1,
+                size: i64::MAX,
+            };
+            let order = OrderBy {
+                field: item::Field::CreatedAt,
+                direction: Direction::Ascending,
+            };
+
+            domain::service::items::for_list(&self.ctx, &self.me, list::Id(list_id), page, order)
+                .await
+                .map(|listing| listing.items)
+                .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    /// Adds what somebody typed.
+    ///
+    /// The whole line, read by `items::quick_add` -- which is the server's own reading
+    /// of it, against the server's own units and this list's own history. That is the
+    /// thing this crate exists for: `pint milk` became one pint of milk on the server
+    /// and `pint milk`, one unit, on the phone, because the two read the line
+    /// separately. There is now one reader.
+    ///
+    /// `uuid` is the client's if it has one -- a row it has already drawn keeps the
+    /// name it was drawn under.
+    pub fn add(&self, list_id: i64, line: &str, uuid: Option<String>) -> Result<Item, Error> {
+        self.runtime.block_on(async {
+            domain::service::items::quick_add(
+                &self.ctx,
+                &self.me,
+                list::Id(list_id),
+                uuid.map(item::Uuid),
+                line,
+            )
+            .await
+            .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    /// Crosses something off, or puts it back.
+    pub fn set_done(&self, item_id: i64, done: bool) -> Result<Item, Error> {
+        self.runtime.block_on(async {
+            domain::service::items::set_done(&self.ctx, &self.me, item::Id(item_id), done)
+                .await
+                .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    /// Corrects a row: what it is called, how much, and in what.
+    pub fn update(
+        &self,
+        item_id: i64,
+        name: &str,
+        amount: f64,
+        unit_id: Option<i64>,
+    ) -> Result<Item, Error> {
+        self.runtime.block_on(async {
+            domain::service::items::update(
+                &self.ctx,
+                &self.me,
+                item::Id(item_id),
+                item::Name(name.to_string()),
+                item::Amount(amount),
+                unit_id.map(domain::models::unit::Id),
+                // `seen` is how the server tells a plain rename from somebody
+                // correcting a row two people had both been editing. A device with one
+                // user has no such case, and passing what this device last drew would
+                // be inventing evidence about a disagreement that cannot happen.
+                None,
+            )
+            .await
+            .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    pub fn delete_item(&self, item_id: i64) -> Result<(), Error> {
+        self.runtime.block_on(async {
+            domain::service::items::delete(&self.ctx, &self.me, item::Id(item_id))
+                .await
+                .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    /// Takes everything crossed off, off.
+    pub fn clear_done(&self, list_id: i64) -> Result<u64, Error> {
+        self.runtime.block_on(async {
+            // All of them, not a chosen few: the screen's button is "clear done", and
+            // the narrowing exists for a caller that has a selection.
+            domain::service::items::clear_done(&self.ctx, &self.me, list::Id(list_id), None)
+                .await
+                .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
     /// A runtime for one watcher. No I/O and no timers, so no threads and no reactor.
     fn watching_runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()
@@ -315,7 +418,10 @@ impl Watcher {
     ///
     /// `None` means stopped and never means "nothing happened" -- a caller that treats
     /// it as the latter would spin.
-    pub fn next(&mut self) -> Option<Change> {
+    ///
+    /// Named `wait` rather than `next` because it is not an iterator step: it parks the
+    /// calling thread, which is the opposite of what `next` leads a reader to expect.
+    pub fn wait(&mut self) -> Option<Change> {
         use tokio::sync::broadcast::error::RecvError;
 
         loop {
@@ -504,7 +610,7 @@ mod tests {
         let mut watching = local.watch_lists();
 
         std::thread::scope(|threads| {
-            let watcher = threads.spawn(move || watching.next());
+            let watcher = threads.spawn(move || watching.wait());
 
             // While that thread is parked, the app carries on reading and writing. This
             // is a phone with a list on screen: the watch never stops, and every tap
@@ -532,7 +638,7 @@ mod tests {
         let mut watching = local.watch_list(made.id.0);
 
         std::thread::scope(|threads| {
-            let watcher = threads.spawn(move || watching.next());
+            let watcher = threads.spawn(move || watching.wait());
             std::thread::sleep(std::time::Duration::from_millis(50));
             local.rename_list(made.id.0, "Home").unwrap();
 
@@ -554,7 +660,7 @@ mod tests {
         let stopper = watching.stopper();
 
         std::thread::scope(|threads| {
-            let watcher = threads.spawn(move || watching.next());
+            let watcher = threads.spawn(move || watching.wait());
 
             std::thread::sleep(std::time::Duration::from_millis(50));
             local.rename_list(other.id.0, "Dinghy").unwrap();
@@ -582,7 +688,7 @@ mod tests {
         let stopper = watching.stopper();
 
         std::thread::scope(|threads| {
-            let watcher = threads.spawn(move || watching.next());
+            let watcher = threads.spawn(move || watching.wait());
             std::thread::sleep(std::time::Duration::from_millis(50));
             stopper.stop();
 
@@ -604,7 +710,7 @@ mod tests {
         watching.stopper().stop();
 
         assert_eq!(
-            watching.next(),
+            watching.wait(),
             None,
             "a stop that arrived first was dropped"
         );
@@ -626,7 +732,7 @@ mod tests {
         let stopper = watching.stopper();
 
         std::thread::scope(|threads| {
-            let watcher = threads.spawn(move || watching.next());
+            let watcher = threads.spawn(move || watching.wait());
             std::thread::sleep(std::time::Duration::from_millis(50));
             stopper.stop();
             assert_eq!(watcher.join().unwrap(), None, "an old change was replayed");

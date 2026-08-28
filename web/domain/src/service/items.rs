@@ -10,8 +10,6 @@ use crate::models::user::User;
 use crate::models::{OffsetPage, OrderBy, Paging, list, tag, unit};
 
 use super::{Actor, Ctx, Result, ServiceError, lists};
-use crate::fuzzy;
-use crate::history_rank::{self, Candidate};
 use crate::quick_add;
 
 /// Loads an item on a list the actor owns, or reports it missing.
