@@ -214,12 +214,14 @@ actor LocalBackend {
         }
     }
 
-    func setDone(_ item: Item, on list: List, done: Bool) async throws {
-        try nothing(embedded_set_done(handle, item.id, done))
+    func setDone(_ item: Item, on list: List, done: Bool, at: Date) async throws {
+        try nothing(embedded_set_done(handle, item.id, done, Int64(at.timeIntervalSince1970)))
     }
 
     func setDone(itemID: Int64, listID: Int64, done: Bool) async throws {
-        try nothing(embedded_set_done(handle, itemID, done))
+        // Zero for now: this form is for a caller holding a queued operation rather than
+        // a row, and the one that carries a time uses the other.
+        try nothing(embedded_set_done(handle, itemID, done, 0))
     }
 
     func update(

@@ -84,13 +84,11 @@ enum WatchTicks {
         // this phone talks to. Either way a tick that arrived from the wrist is this
         // household's change and reaches wherever the phone's own ticks reach.
         //
-        // What is lost by going through the backend is the watch's own clock: the tick
-        // may have been made in a shop an hour before the two came back into range, and
-        // that is the moment the ordering rules should run on -- docs/offline.md. The
-        // protocol has no `at`, so this records it as now. It is a smaller wrong than
-        // the change vanishing, and it is the reason `setDone` should grow one.
+        // The watch's clock, not this one: the tick may have been made in a shop an
+        // hour before the two came back into range, and that is the moment the ordering
+        // rules run on -- docs/offline.md.
         do {
-            try await backend.setDone(item, on: list, done: done)
+            try await backend.setDone(item, on: list, done: done, at: operation.at)
         } catch {
             return WatchLink.Outcome(id: operation.id, outcome: "refused", why: "not_allowed")
         }

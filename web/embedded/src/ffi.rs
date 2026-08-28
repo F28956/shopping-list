@@ -159,12 +159,24 @@ pub unsafe extern "C" fn embedded_add(
 ///
 /// `handle` must be live.
 #[unsafe(no_mangle)]
+/// Crosses something off, or puts it back.
+///
+/// `at_seconds` is when the tick happened, or zero for now -- a watch's tick may be an
+/// hour old by the time the two devices are in range, and the ordering rules run on when
+/// somebody decided rather than when the news arrived.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_set_done(
     handle: *const Local,
     item_id: i64,
     done: bool,
+    at_seconds: i64,
 ) -> *mut c_char {
-    answering(handle, |local| local.set_done(item_id, done))
+    let at = if at_seconds == 0 {
+        None
+    } else {
+        Some(at_seconds)
+    };
+    answering(handle, move |local| local.set_done(item_id, done, at))
 }
 
 /// `unit_id` of zero means none, because C has no optional and the units are counted
@@ -601,7 +613,7 @@ mod tests {
         let listed = unsafe { read(embedded_items(handle, list_id)) };
         assert_eq!(listed["ok"].as_array().unwrap().len(), 1);
 
-        let ticked = unsafe { read(embedded_set_done(handle, item_id, true)) };
+        let ticked = unsafe { read(embedded_set_done(handle, item_id, true, 0)) };
         assert!(
             !ticked["ok"]["done_at"].is_null(),
             "ticking off did not stick"
@@ -932,6 +944,46 @@ mod tests {
                 .any(|n| n == "Milk"),
             "autocomplete forgot what the device knew: {offered}"
         );
+
+        unsafe { embedded_close(handle) };
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A tick that happened an hour ago keeps its hour. The watch is out of range in a
+    /// shop and comes back with a queue; the ordering rules run on when somebody
+    /// decided, not when the news arrived.
+    #[test]
+    fn a_tick_keeps_the_moment_it_was_made() {
+        let path = scratch();
+        let handle = unsafe { embedded_open(c(path.to_str().unwrap()).as_ptr()) };
+        let list_id =
+            unsafe { read(embedded_make_list(handle, c("Household").as_ptr())) }["ok"]["id"]
+                .as_i64()
+                .unwrap();
+        let item_id = unsafe {
+            read(embedded_add(
+                handle,
+                list_id,
+                c("milk").as_ptr(),
+                std::ptr::null(),
+            ))
+        }["ok"]["id"]
+            .as_i64()
+            .unwrap();
+
+        let an_hour_ago = 1_787_908_502i64;
+        let ticked = unsafe { read(embedded_set_done(handle, item_id, true, an_hour_ago)) };
+
+        let stamped = ticked["ok"]["done_at"].as_str().expect("no done_at");
+        assert!(
+            stamped.starts_with("2026-08-28T09:15:02"),
+            "the tick was stamped now rather than when it was made: {stamped}"
+        );
+
+        // And zero still means now, which is what a tap on this device means.
+        unsafe { read(embedded_set_done(handle, item_id, false, 0)) };
+        let again = unsafe { read(embedded_set_done(handle, item_id, true, 0)) };
+        assert!(!again["ok"]["done_at"].is_null());
 
         unsafe { embedded_close(handle) };
         let _ = std::fs::remove_file(&path);

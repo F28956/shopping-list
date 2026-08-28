@@ -35,7 +35,10 @@ char *embedded_items(const EmbeddedLocal *handle, int64_t list_id);
 /// `uuid` may be NULL, for a caller that has not already drawn the row.
 char *embedded_add(const EmbeddedLocal *handle, int64_t list_id, const char *line,
                    const char *uuid);
-char *embedded_set_done(const EmbeddedLocal *handle, int64_t item_id, bool done);
+/// `at_seconds` is when the tick happened, or 0 for now -- a watch's tick may be an hour
+/// old by the time the devices are in range.
+char *embedded_set_done(const EmbeddedLocal *handle, int64_t item_id, bool done,
+                        int64_t at_seconds);
 /// `unit_id` of zero means none: C has no optional, and the units are counted from one.
 char *embedded_update_item(const EmbeddedLocal *handle, int64_t item_id, const char *name,
                            double amount, int64_t unit_id);

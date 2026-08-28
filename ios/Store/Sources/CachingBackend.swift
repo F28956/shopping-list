@@ -306,8 +306,8 @@ actor CachingBackend {
     ///
     /// This is how `ItemsModel` has always worked. It lives here now because *why* it
     /// works this way -- a far end that can fail -- is this type's business.
-    func setDone(_ item: Item, on list: List, done: Bool) async throws {
-        cache.outbox.setDone(item, on: list, done: done)
+    func setDone(_ item: Item, on list: List, done: Bool, at: Date) async throws {
+        cache.outbox.setDone(item, on: list, done: done, at: at)
         remembering(on: list) { rows in
             rows.map { $0.uuid == item.uuid ? $0.withDone(done) : $0 }
         }

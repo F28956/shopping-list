@@ -244,6 +244,28 @@ final class PhoneLink: NSObject, WCSessionDelegate {
         }
     }
 
+    /// A batch that arrived out of range, delivered by the system later.
+    ///
+    /// The other half of `PhoneDestination`'s fallback: no reply is possible, so the
+    /// watch has not forgotten these and will offer them again when it can talk
+    /// properly. Applying them now is what makes the phone right in the meantime, and
+    /// applying them twice is the same as applying them once.
+    nonisolated func session(
+        _ session: WCSession,
+        didReceiveUserInfo userInfo: [String: Any]
+    ) {
+        guard let request = WatchLink.decode(userInfo, as: WatchLink.SyncRequest.self) else {
+            return
+        }
+
+        Task { @MainActor in
+            guard let backend = await PhoneLink.shared.backend?() else { return }
+            _ = await WatchTicks.replay(request.operations, through: backend)
+            // The watch's picture is now out of date by exactly what it just sent.
+            PhoneLink.shared.push()
+        }
+    }
+
     /// The credential, when there is a server.
     ///
     /// Request and reply rather than pushed: a session token is not something to leave

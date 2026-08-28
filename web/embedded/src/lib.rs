@@ -303,9 +303,18 @@ impl Local {
     }
 
     /// Crosses something off, or puts it back.
-    pub fn set_done(&self, item_id: i64, done: bool) -> Result<Item, Error> {
+    ///
+    /// `at` is when it *happened*, which is not always now: a tick made on a watch
+    /// reaches the phone whenever the two are next in range, and the ordering rules run
+    /// on the moment somebody decided rather than the moment the news arrived. None
+    /// means now, which is what a tap on this device means.
+    pub fn set_done(&self, item_id: i64, done: bool, at: Option<i64>) -> Result<Item, Error> {
         self.runtime.block_on(async {
-            domain::service::items::set_done(&self.ctx, &self.me, item::Id(item_id), done)
+            let when = at
+                .and_then(|seconds| time::OffsetDateTime::from_unix_timestamp(seconds).ok())
+                .unwrap_or_else(time::OffsetDateTime::now_utc);
+
+            domain::service::items::set_done_at(&self.ctx, &self.me, item::Id(item_id), done, when)
                 .await
                 .map_err(|e| Error::Refused(e.to_string()))
         })

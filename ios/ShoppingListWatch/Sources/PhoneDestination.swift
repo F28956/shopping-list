@@ -20,7 +20,23 @@ struct PhoneDestination: Destination {
 
     func sync(_ operations: [SyncOperation]) async throws -> [AppliedOperation] {
         let session = WCSession.default
-        guard session.activationState == .activated, session.isReachable else {
+        guard session.activationState == .activated else { throw OutOfReach() }
+
+        guard session.isReachable else {
+            // Not in range, so hand it to the system instead of only keeping it.
+            //
+            // `transferUserInfo` is queued by watchOS and delivered whenever the two
+            // devices next find each other -- with **neither app running**, waking the
+            // phone in the background to take it. Without this a tick made in a shop
+            // waits for somebody to open the watch app again while the phone is near,
+            // because that is the only thing that drains the queue.
+            //
+            // The operations stay queued here all the same. There is no reply to a
+            // transfer, so nothing can be forgotten on the strength of it; the phone
+            // answers `already_applied` when the watch next reaches it properly, which
+            // is what clears them. Applying a crossing-off twice is the same as
+            // applying it once, which is what makes sending it twice safe.
+            session.transferUserInfo(WatchLink.encode(WatchLink.SyncRequest(operations: operations)))
             throw OutOfReach()
         }
 

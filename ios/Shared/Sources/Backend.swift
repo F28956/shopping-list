@@ -53,7 +53,17 @@ protocol Backend: Sendable {
     // MARK: - What is on one
 
     func add(_ line: String, to list: List) async throws
-    func setDone(_ item: Item, on list: List, done: Bool) async throws
+    /// `at` is when it *happened*, which is not always now.
+    ///
+    /// A tick made on a watch in a shop reaches the phone whenever the two are next in
+    /// range, and the ordering rules run on the moment somebody decided rather than the
+    /// moment the news arrived -- docs/offline.md. It defaults to now, which is what a
+    /// tap on this device means.
+    ///
+    /// Not every conformer can honour it. `API`'s direct route is a bare POST to
+    /// `.../done` with no body and nowhere to put a time; the *sync* route has one, and
+    /// that is the path a queued tick actually takes.
+    func setDone(_ item: Item, on list: List, done: Bool, at: Date) async throws
     /// By id, for a caller holding a queued operation rather than a row -- see the
     /// watch, which ticks things off it has only ever seen as numbers.
     func setDone(itemID: Int64, listID: Int64, done: Bool) async throws
@@ -144,6 +154,11 @@ struct SyncReport: Sendable {
 }
 
 extension Backend {
+    /// Now, for the ordinary case: somebody tapping a row in front of them.
+    func setDone(_ item: Item, on list: List, done: Bool) async throws {
+        try await setDone(item, on: list, done: done, at: Date())
+    }
+
     /// True, for a backend that is its own far end.
     ///
     /// `LocalBackend` cannot be out of reach of the device it is on, so the default is

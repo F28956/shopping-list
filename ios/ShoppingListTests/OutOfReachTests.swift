@@ -116,4 +116,27 @@ struct OutOfReachTests {
 
         #expect(phone.heard.count == 1, "a change that had landed was sent again")
     }
+
+    /// A tick keeps the moment it was made, all the way through the queue.
+    ///
+    /// The watch is in a shop with nothing in range; the two devices meet an hour later.
+    /// What the far end is told is when somebody decided, not when the news arrived --
+    /// otherwise an hour of ticks all land at once and the ordering rules run on a
+    /// fiction. See docs/offline.md.
+    @Test("a tick made an hour ago still says so when it is sent")
+    func aTickKeepsItsMoment() async {
+        let cache = Cache.inMemory(sending: { true })
+        cache.remember(lists: [list])
+        let inTheShop = Date(timeIntervalSince1970: 1_787_908_502)
+
+        cache.outbox.setDone(item(1, "Milk"), on: list, done: true, at: inTheShop)
+
+        let phone = BackInReach()
+        _ = await cache.outbox.drain(through: phone)
+
+        #expect(
+            phone.heard.first?.at == inTheShop,
+            "the tick was stamped when it was sent rather than when it was made"
+        )
+    }
 }

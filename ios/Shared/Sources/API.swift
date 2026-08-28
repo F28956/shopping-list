@@ -396,7 +396,10 @@ actor API {
         _ = try await send("POST", "/api/lists/\(list.id)/items", ["line": line])
     }
 
-    func setDone(_ item: Item, on list: List, done: Bool) async throws {
+    /// `at` is accepted and not sent: the route is a bare POST with no body. A queued
+    /// tick carries its time through the sync route instead -- see `SyncOperation.at` --
+    /// and that is the path a tick made out of signal actually takes.
+    func setDone(_ item: Item, on list: List, done: Bool, at: Date) async throws {
         try await setDone(itemID: item.id, listID: list.id, done: done)
     }
 
