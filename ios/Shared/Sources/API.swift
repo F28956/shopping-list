@@ -56,11 +56,22 @@ actor API {
     /// Whether there is anywhere to send anything.
     ///
     /// False on a device somebody chose to keep to itself. Every call then fails as a
-    /// transport error before a socket is opened — which is not a workaround but the
+    /// transport error before a socket is opened -- which is not a workaround but the
     /// design: "no server" and "no signal" are the same state, and the app has known
     /// how to be in one of them since the offline work. The cache answers, the outbox
     /// fills, and attaching a server later drains it.
-    private var reachable: Bool { ServerDirectory.current != nil }
+    ///
+    /// **Asked of this instance rather than of a global**, and that distinction was a
+    /// bug. It read `ServerDirectory.current`, which is *this device's* stored choice --
+    /// right for the phone and the Mac, and wrong for the watch, which is handed an
+    /// address by its phone and does not store one of its own. A watch told about a
+    /// server therefore built an `API` pointed straight at it and then refused every
+    /// request with "This device is not using a server", holding a perfectly good
+    /// address the whole time. On a list whose rows were cached the error was invisible;
+    /// on an empty one it was the entire screen.
+    private let hasSomewhereToSend: @Sendable () -> Bool
+
+    private var reachable: Bool { hasSomewhereToSend() }
     private let session: URLSession
     private let token: () async -> String?
     /// Whether somebody is signed in on this device, whether or not there is a token to
@@ -80,19 +91,34 @@ actor API {
         token: @escaping () async -> String?,
         remembered: @escaping () -> Bool = { false }
     ) {
-        self.init(server: { baseURL }, token: token, remembered: remembered)
+        // This device's own choice, which is what a fixed address means: the phone and
+        // the Mac are pointed at `Config.apiBaseURL` whether or not anybody has asked
+        // for a server, so something has to say which.
+        self.init(
+            server: { baseURL },
+            token: token,
+            remembered: remembered,
+            hasSomewhereToSend: { ServerDirectory.current != nil }
+        )
     }
 
-    /// An address that may not be known yet — the watch, which learns it from its
+    /// An address that may not be known yet -- the watch, which learns it from its
     /// phone.
+    ///
+    /// `hasSomewhereToSend` defaults to true here, and that is the point of the
+    /// separate initialiser: a caller that supplies an address has one. A watch with no
+    /// server does not build one of these at all -- see `WatchStore.destination`, which
+    /// answers the phone instead.
     init(
         server: @escaping @Sendable () -> URL,
         token: @escaping () async -> String?,
-        remembered: @escaping () -> Bool = { false }
+        remembered: @escaping () -> Bool = { false },
+        hasSomewhereToSend: @escaping @Sendable () -> Bool = { true }
     ) {
         self.server = server
         self.token = token
         self.remembered = remembered
+        self.hasSomewhereToSend = hasSomewhereToSend
 
         let configuration = URLSessionConfiguration.default
         #if DEBUG
