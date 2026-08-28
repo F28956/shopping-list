@@ -123,6 +123,12 @@ targets:
     sources:
       - path: ShoppingListWatch/Sources
       - path: Shared/Sources
+      # The units and categories a watch with no server still needs. It reads them
+      # exactly as the phones do -- see `Reference` -- and without them
+      # `WatchItemsModel.seedReference` trips that type's own assertion, which is a
+      # crash on the first list opened on a watch that has no server.
+      - path: ../reference/reference.json
+        buildPhase: resources
       # The watch keeps its own cache and its own outbox, and has to: it must be
       # usable with the phone left at home, which means a list it can read and a
       # queue it can add to without anything else being awake. What differs between
