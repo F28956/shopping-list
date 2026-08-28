@@ -43,9 +43,12 @@
 
 use std::path::Path;
 
-use domain::models::{Direction, OrderBy, Paging};
+use std::sync::Arc;
+
 use domain::models::list::{self, List, Name};
+use domain::models::user;
 use domain::models::user::{Email, Name as UserName, Sub};
+use domain::models::{Direction, OrderBy, Paging};
 use domain::service::{Actor, Ctx, identity, lists};
 
 /// How the one local person is identified.
@@ -123,8 +126,14 @@ impl Local {
             // Everything, in the order a list screen shows them. The page exists for a
             // server answering over a network; a device reading its own file has no
             // reason to withhold the second hundred.
-            let page = Paging { number: 1, size: i64::MAX };
-            let order = OrderBy { field: list::Field::UpdatedAt, direction: Direction::Descending };
+            let page = Paging {
+                number: 1,
+                size: i64::MAX,
+            };
+            let order = OrderBy {
+                field: list::Field::UpdatedAt,
+                direction: Direction::Descending,
+            };
 
             lists::for_user(&self.ctx, &self.me, page, order)
                 .await
@@ -161,12 +170,210 @@ impl Local {
         })
     }
 
+    /// Watches one list: what is on it, and what it is called.
+    pub fn watch_list(&self, id: i64) -> Watcher {
+        Watcher {
+            want: Want::List(list::Id(id), self.ctx.changes.watch()),
+            stop: Arc::new(tokio::sync::Notify::new()),
+            stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            runtime: Self::watching_runtime(),
+        }
+    }
+
+    /// Watches which lists this person can see.
+    ///
+    /// A separate question from the one above, and the reason is in `domain`: a list
+    /// that has just been made has no watchers at all, so its own channel cannot carry
+    /// the news that it exists.
+    pub fn watch_lists(&self) -> Watcher {
+        let who = match &self.me {
+            Actor::User(user) => user.id,
+            _ => user::Id(0),
+        };
+        Watcher {
+            want: Want::Lists(who, self.ctx.changes.watch_lists()),
+            stop: Arc::new(tokio::sync::Notify::new()),
+            stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            runtime: Self::watching_runtime(),
+        }
+    }
+
+    /// A runtime for one watcher. No I/O and no timers, so no threads and no reactor.
+    fn watching_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a runtime that starts no threads")
+    }
+
     /// This person's id. Exposed because the client stores rows keyed by owner, and a
     /// local row's owner is a real user id here rather than the zero it used to invent.
     pub fn me(&self) -> i64 {
         match &self.me {
             Actor::User(user) => user.id.0,
             _ => 0,
+        }
+    }
+}
+
+/// Something to re-read.
+///
+/// Deliberately not the change itself -- the same reasoning as `domain::service::changes`,
+/// which see. A watcher told "something moved" and re-reading cannot drift; a watcher
+/// sent the new rows becomes a second opinion about them, and the two disagree the
+/// first time an event is dropped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Change {
+    /// What is on this list.
+    List(i64),
+    /// Which lists this person can see -- one made, renamed, deleted or joined.
+    Lists,
+}
+
+/// What one turn of the wait produced.
+enum Heard {
+    Something(Change),
+    /// A change, but not to what this watcher was asked about.
+    SomethingElse,
+    Stopped,
+}
+
+/// What one watcher is waiting for.
+enum Want {
+    List(
+        list::Id,
+        tokio::sync::broadcast::Receiver<domain::service::changes::Changed>,
+    ),
+    Lists(
+        user::Id,
+        tokio::sync::broadcast::Receiver<domain::service::changes::ListsChanged>,
+    ),
+}
+
+/// Waits for the next thing worth re-reading.
+///
+/// Blocking, and meant to be called on a thread of the client's own. That is the shape
+/// the boundary wants: a callback would mean Rust calling into Swift or attaching to a
+/// JVM thread, and a poll would be the two-second timer this project has just finished
+/// deleting.
+///
+/// **It does not use the database's runtime.** `blocking_recv` parks the calling thread
+/// on a plain synchronisation primitive, so a watcher waiting all afternoon does not
+/// hold anything the next `lists()` call needs. That was the first thing worth checking
+/// and the first thing that would have gone wrong: `Local` drives sqlx on a
+/// current-thread runtime, and a watcher that blocked *inside* it would have deadlocked
+/// the app on its own first read.
+pub struct Watcher {
+    want: Want,
+    stop: Arc<tokio::sync::Notify>,
+    stopped: Arc<std::sync::atomic::AtomicBool>,
+    /// The watcher's own runtime, and it has to be its own.
+    ///
+    /// Waiting is two things at once -- a change, or a stop -- and `select!` needs
+    /// somewhere to run. It cannot be `Local`'s: that one is current-thread, and a
+    /// watcher parked in it would hold it against the next read, which is the deadlock
+    /// this whole shape exists to avoid.
+    ///
+    /// A current-thread runtime spawns no threads. It drives on whichever thread calls
+    /// `next`, which is the client's watching thread and has nothing else to do.
+    runtime: tokio::runtime::Runtime,
+}
+
+/// Ends a watch, from any thread.
+///
+/// Separate from `Watcher` because the two are used from different threads by
+/// construction: the watcher is parked in `next`, so whoever ends it cannot be holding
+/// it.
+#[derive(Clone)]
+pub struct Stopper {
+    stop: Arc<tokio::sync::Notify>,
+    stopped: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Stopper {
+    pub fn stop(&self) {
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        // `notify_one` rather than `notify_waiters`, and the difference is the whole
+        // correctness of stopping: `notify_waiters` wakes whoever is parked *now* and
+        // is lost on a watcher that has not parked yet, which is a screen closing in
+        // the instant between two changes. `notify_one` leaves a permit, so the next
+        // wait returns immediately whichever order the two happen in.
+        self.stop.notify_one();
+    }
+}
+
+impl Watcher {
+    /// A handle that ends this watch, for the thread that owns the screen.
+    pub fn stopper(&self) -> Stopper {
+        Stopper {
+            stop: Arc::clone(&self.stop),
+            stopped: Arc::clone(&self.stopped),
+        }
+    }
+
+    /// Blocks until there is something to re-read, or until the watch is stopped.
+    ///
+    /// `None` means stopped and never means "nothing happened" -- a caller that treats
+    /// it as the latter would spin.
+    pub fn next(&mut self) -> Option<Change> {
+        use tokio::sync::broadcast::error::RecvError;
+
+        loop {
+            if self.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                return None;
+            }
+
+            let stop = Arc::clone(&self.stop);
+            let want = &mut self.want;
+
+            let heard = self.runtime.block_on(async move {
+                match want {
+                    Want::List(watching, receiver) => {
+                        tokio::select! {
+                            _ = stop.notified() => Heard::Stopped,
+                            received = receiver.recv() => match received {
+                                Ok(changed) if changed.list_id == *watching => {
+                                    Heard::Something(Change::List(watching.0))
+                                }
+                                // Somebody else's list. Not news for this screen.
+                                Ok(_) => Heard::SomethingElse,
+                                // More changes than the channel holds. Which ones is
+                                // not knowable and does not matter: the answer to "you
+                                // have missed some" is the same as the answer to "one
+                                // happened" -- re-read. Treating it as an error would
+                                // stop a screen updating for the rest of its life over
+                                // a burst of edits.
+                                Err(RecvError::Lagged(_)) => {
+                                    Heard::Something(Change::List(watching.0))
+                                }
+                                Err(RecvError::Closed) => Heard::Stopped,
+                            },
+                        }
+                    }
+                    Want::Lists(who, receiver) => {
+                        tokio::select! {
+                            _ = stop.notified() => Heard::Stopped,
+                            received = receiver.recv() => match received {
+                                Ok(changed) if changed.user_id == *who => {
+                                    Heard::Something(Change::Lists)
+                                }
+                                Ok(_) => Heard::SomethingElse,
+                                Err(RecvError::Lagged(_)) => Heard::Something(Change::Lists),
+                                Err(RecvError::Closed) => Heard::Stopped,
+                            },
+                        }
+                    }
+                }
+            });
+
+            match heard {
+                Heard::Something(change) => return Some(change),
+                // A nudge about something else leaves us waiting rather than returning.
+                // The caller asked for the next change *to this*, and a spurious wake
+                // would put a re-read behind every edit anywhere in the app.
+                Heard::SomethingElse => continue,
+                Heard::Stopped => return None,
+            }
         }
     }
 }
@@ -212,7 +419,10 @@ mod tests {
         let local = Local::open(&path).expect("a fresh database");
 
         assert!(local.me() > 0, "nobody was made for the device to act as");
-        assert!(local.lists().unwrap().is_empty(), "a fresh device had lists");
+        assert!(
+            local.lists().unwrap().is_empty(),
+            "a fresh device had lists"
+        );
 
         let _ = std::fs::remove_file(&path);
     }
@@ -253,7 +463,12 @@ mod tests {
 
         assert_eq!(again.me(), who, "the device came back as somebody else");
         assert_eq!(
-            again.lists().unwrap().iter().map(|l| l.name.0.clone()).collect::<Vec<_>>(),
+            again
+                .lists()
+                .unwrap()
+                .iter()
+                .map(|l| l.name.0.clone())
+                .collect::<Vec<_>>(),
             vec!["Household"]
         );
 
@@ -271,6 +486,151 @@ mod tests {
 
         local.delete_list(made.id.0).unwrap();
         assert!(local.lists().unwrap().is_empty());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ------------------------------------------------------- being told things changed
+
+    /// The one that decides whether the whole shape works.
+    ///
+    /// A watcher parked all afternoon must not be holding anything the app needs. If
+    /// it blocked inside `Local`'s runtime, this test would hang for ever rather than
+    /// fail -- which is why it has a deadline and why it is the first one here.
+    #[test]
+    fn a_parked_watcher_does_not_hold_the_database() {
+        let path = scratch();
+        let local = Local::open(&path).expect("a fresh database");
+        let mut watching = local.watch_lists();
+
+        std::thread::scope(|threads| {
+            let watcher = threads.spawn(move || watching.next());
+
+            // While that thread is parked, the app carries on reading and writing. This
+            // is a phone with a list on screen: the watch never stops, and every tap
+            // still has to work.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            assert!(
+                local.lists().unwrap().is_empty(),
+                "a read was blocked by a watcher"
+            );
+            local
+                .make_list("Household")
+                .expect("a write was blocked by a watcher");
+
+            assert_eq!(watcher.join().unwrap(), Some(Change::Lists));
+        });
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_change_to_a_watched_list_wakes_it() {
+        let path = scratch();
+        let local = Local::open(&path).expect("a fresh database");
+        let made = local.make_list("Household").unwrap();
+        let mut watching = local.watch_list(made.id.0);
+
+        std::thread::scope(|threads| {
+            let watcher = threads.spawn(move || watching.next());
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            local.rename_list(made.id.0, "Home").unwrap();
+
+            assert_eq!(watcher.join().unwrap(), Some(Change::List(made.id.0)));
+        });
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A screen watching one list should not re-read because a different one moved.
+    /// Waking on everything would put a round trip behind every edit anywhere.
+    #[test]
+    fn a_change_to_another_list_does_not() {
+        let path = scratch();
+        let local = Local::open(&path).expect("a fresh database");
+        let mine = local.make_list("Household").unwrap();
+        let other = local.make_list("Boat").unwrap();
+        let mut watching = local.watch_list(mine.id.0);
+        let stopper = watching.stopper();
+
+        std::thread::scope(|threads| {
+            let watcher = threads.spawn(move || watching.next());
+
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            local.rename_list(other.id.0, "Dinghy").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+
+            // Still waiting, so stopping is the only way this thread ends. If the
+            // filter were wrong it would already have returned `List(mine)`.
+            stopper.stop();
+            assert_eq!(
+                watcher.join().unwrap(),
+                None,
+                "a watcher woke for another list"
+            );
+        });
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A screen closing has to end its watch, or the thread outlives it.
+    #[test]
+    fn stopping_unblocks_a_waiting_watcher() {
+        let path = scratch();
+        let local = Local::open(&path).expect("a fresh database");
+        let mut watching = local.watch_lists();
+        let stopper = watching.stopper();
+
+        std::thread::scope(|threads| {
+            let watcher = threads.spawn(move || watching.next());
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            stopper.stop();
+
+            assert_eq!(watcher.join().unwrap(), None);
+        });
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Stopping before the watcher has parked. The two race by construction -- a screen
+    /// can close in the instant between two changes -- and a permit-less notification
+    /// would be lost, leaving the thread parked for ever.
+    #[test]
+    fn stopping_before_it_waits_is_not_lost() {
+        let path = scratch();
+        let local = Local::open(&path).expect("a fresh database");
+        let mut watching = local.watch_lists();
+
+        watching.stopper().stop();
+
+        assert_eq!(
+            watching.next(),
+            None,
+            "a stop that arrived first was dropped"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Every change while nobody is listening is not an error. A screen that comes back
+    /// re-reads, and `watch` only carries what happens after it is called -- so an app
+    /// returning from the background is told nothing and reads everything, which is the
+    /// right way round.
+    #[test]
+    fn changes_before_watching_are_not_delivered() {
+        let path = scratch();
+        let local = Local::open(&path).expect("a fresh database");
+        local.make_list("Household").unwrap();
+
+        let mut watching = local.watch_lists();
+        let stopper = watching.stopper();
+
+        std::thread::scope(|threads| {
+            let watcher = threads.spawn(move || watching.next());
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            stopper.stop();
+            assert_eq!(watcher.join().unwrap(), None, "an old change was replayed");
+        });
 
         let _ = std::fs::remove_file(&path);
     }
