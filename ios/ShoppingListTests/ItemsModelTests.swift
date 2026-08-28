@@ -39,7 +39,11 @@ struct ItemsModelTests {
             baseURL: URL(string: "http://127.0.0.1:1")!,
             token: { "none" }
         )
-        let made = ItemsModel(list: list, api: api, cache: cache)
+        // Through `CachingBackend`, because these are about the cache and the queue --
+        // which now live behind it. A bare `API` here would mean a backend that keeps
+        // its own store, and every one of these would quietly stop testing what it says
+        // it tests.
+        let made = ItemsModel(list: list, api: CachingBackend(remote: api, cache: cache), cache: cache)
         made.units = cache.units()
         return (made, cache, list)
     }

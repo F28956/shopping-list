@@ -8,6 +8,8 @@ import SwiftUI
 /// there.
 struct ListsView: View {
     let api: API
+    /// The one every screen below this shares. See `init`.
+    let backend: any Backend
     @Environment(Identity.self) private var identity
 
     private let cache = Cache.shared
@@ -36,8 +38,9 @@ struct ListsView: View {
         self.api = api
         // One or the other, decided once. `CachingBackend` is what makes a server's
         // unreliability the backend's problem rather than this screen's.
-        let backend: any Backend = standalone ?? CachingBackend(remote: api)
-        _model = State(initialValue: ListsModel(api: backend, accounts: api))
+        let chosen: any Backend = standalone ?? CachingBackend(remote: api)
+        self.backend = chosen
+        _model = State(initialValue: ListsModel(api: chosen, accounts: api))
     }
     /// The two screens behind the menu, as one piece of state.
     ///
@@ -189,7 +192,7 @@ struct ListsView: View {
             }
             .navigationTitle("Lists")
             .navigationDestination(for: List.self) { list in
-                ItemsView(api: api, list: list)
+                ItemsView(api: api, backend: backend, list: list)
             }
             // Making a list is the one thing this screen is for, so it gets a button
             // of its own rather than a line in a menu — and it sits where a thumb

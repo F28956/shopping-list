@@ -7,6 +7,8 @@ import SwiftUI
 /// small screen forced.
 struct MacShoppingView: View {
     let api: API
+    /// The one every screen below this shares. See `init`.
+    let backend: any Backend
     @Environment(Identity.self) private var identity
 
     private let cache = Cache.shared
@@ -35,8 +37,9 @@ struct MacShoppingView: View {
     /// what those used to be, moved behind the protocol.
     init(api: API, standalone: LocalBackend? = nil) {
         self.api = api
-        let backend: any Backend = standalone ?? CachingBackend(remote: api)
-        _model = State(initialValue: ListsModel(api: backend, accounts: api))
+        let chosen: any Backend = standalone ?? CachingBackend(remote: api)
+        self.backend = chosen
+        _model = State(initialValue: ListsModel(api: chosen, accounts: api))
     }
 
     private var selected: List? { model.lists.first { $0.id == chosen } }
@@ -130,7 +133,7 @@ struct MacShoppingView: View {
             .navigationTitle("Lists")
         } detail: {
             if let selected {
-                MacItemsView(api: api, list: selected)
+                MacItemsView(api: api, backend: backend, list: selected)
                     // Rebuilt when the choice changes: the screen is about one list,
                     // and carrying the previous one's state into it is how a tick
                     // lands on the wrong row.

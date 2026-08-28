@@ -26,7 +26,10 @@ final class ItemsModel {
     /// empties. No accounts and no sharing -- that is the point of the split, see
     /// ``Backend``. A device with no server can answer every one of these, which is
     /// what makes a local conformer possible later.
-    private let api: any Backend & Destination
+    /// No `Destination` any more: this model does not drain a queue, because it does
+    /// not know there is one. `CachingBackend` holds the queue and empties it; see
+    /// `drain`, which now only asks what became of it.
+    private let api: any Backend
     private let cache: Cache
 
     /// Says this person is no longer signed in, and why if there is a reason.
@@ -111,7 +114,7 @@ final class ItemsModel {
     /// this. Safe by construction: written once in `init`, read once in `deinit`.
     nonisolated(unsafe) private var watching: Task<Void, Never>?
 
-    init(list: List, api: any Backend & Destination, cache: Cache = .shared) {
+    init(list: List, api: any Backend, cache: Cache = .shared) {
         self.list = list
         self.api = api
         self.cache = cache
@@ -155,7 +158,11 @@ final class ItemsModel {
         if !contents.units.isEmpty { units = contents.units }
         if !contents.tags.isEmpty { tags = contents.tags }
         if !items.isEmpty { loaded = true }
-        refreshUnsent()
+        // Asking the backend is asynchronous now, and this is not: the observation that
+        // calls it is synchronous by nature. Its own task rather than blocking one --
+        // the marks arriving a turn later is invisible, and holding the observation is
+        // not.
+        Task { await refreshUnsent() }
     }
 
     /// The rows to show, in the order the shop is walked.
@@ -268,6 +275,7 @@ final class ItemsModel {
             cache.remember(alike, on: list, isNew: true)
             if putBack {
                 show { rows in rows.map { $0.uuid == uuid ? $0.withDone(false) : $0 } }
+                cache.remember(items: items, on: list)  // step two's to remove; see below
             }
 
         case .new(let row):
@@ -299,6 +307,12 @@ final class ItemsModel {
             }
             cache.remember(local, on: list, isNew: true)
             show { $0 + [local] }
+            // **Step two's to remove.** `show` used to write the rows down as well as
+            // put them on screen; that half is the backend's now, and every other
+            // mutation goes through it. `add` does not yet -- it still resolves the line
+            // and queues for itself -- so without this a row added offline would be on
+            // screen and nowhere else, and gone on the next launch.
+            cache.remember(items: items, on: list)
         }
 
         await drain()
@@ -316,8 +330,7 @@ final class ItemsModel {
     /// needs to exist.
     func reorder(_ chosen: [Tag]) async {
         tags = chosen
-        cache.remember(tags: chosen, on: list)
-        cache.outbox.setTagOrder(chosen, on: list)
+        try? await api.setTagOrder(chosen, on: list)
         show { $0 }
         await drain()
     }
@@ -373,7 +386,7 @@ final class ItemsModel {
         // A missing amount is one. Nobody writing a shopping list means "zero of it".
         let amount = edit.amount > 0 ? edit.amount : 1
 
-        cache.outbox.update(
+        try await api.update(
             target.item,
             on: list,
             name: edit.name,
@@ -385,10 +398,10 @@ final class ItemsModel {
         // server meant the aisle picker never worked at all.
         let before = Set(target.attached.map(\.id))
         for tag in tags where edit.tagIDs.contains(tag.id) && !before.contains(tag.id) {
-            cache.outbox.tag(target.item, on: list, tagID: tag.id, attached: true)
+            try await api.attach(tag, to: target.item, on: list)
         }
         for tag in target.attached where !edit.tagIDs.contains(tag.id) {
-            cache.outbox.tag(target.item, on: list, tagID: tag.id, attached: false)
+            try await api.detach(tag, from: target.item, on: list)
         }
 
         // What somebody corrected an item *to* is a better memory than what they first
@@ -442,8 +455,11 @@ final class ItemsModel {
         guard list.mayEdit else { return }
 
         let done = !item.isDone
-        cache.outbox.setDone(item, on: list, done: done)
+        // The screen first, then the backend. Which of those *stores* it is the
+        // backend's business: `CachingBackend` writes it down and queues it,
+        // `LocalBackend` has already applied it by the time this returns.
         show { rows in rows.map { $0.uuid == item.uuid ? $0.withDone(done) : $0 } }
+        try? await api.setDone(item, on: list, done: done)
         await drain()
     }
 
@@ -464,28 +480,17 @@ final class ItemsModel {
         // because the app opens there — so this screen's count can go stale the moment
         // that happens. Returning early without refreshing left "3 changes waiting to
         // be sent" on a screen whose queue had been empty for minutes.
-        refreshUnsent()
-        cache.handOverIfNeeded()
-        guard cache.outbox.waiting > 0 else { return }
-
         draining = true
-        let drained = await cache.outbox.drain(through: api)
+        let report = await api.sync()
         draining = false
 
-        refreshUnsent()
-        refused = drained.refused
-        // A drain that sent nothing while something was queued is the other way to
-        // learn there is no connection, and often the first: it does not wait for a
-        // reload to fail.
-        if drained.sent > 0 {
-            offline = false
-        } else if drained.waiting > 0 && !drained.refused {
-            offline = true
-        }
-        if let lost = drained.lost.first { error = lost }
-        // Read back what the server made of it — which is also how a row created here
+        await refreshUnsent()
+        refused = report.refused
+        offline = !(await api.reachable)
+        if let lost = report.lost.first { error = lost }
+        // Read back what the server made of it -- which is also how a row created here
         // gets its real id. Re-entry stops at the guard above: the queue is empty now.
-        if drained.sent > 0 { await load() }
+        if report.sent > 0 { await load() }
     }
 
     /// Tries the queue again, every so often, for as long as anything is in it.
@@ -509,25 +514,28 @@ final class ItemsModel {
     /// ever leaves. Marking every row as waiting says the app is behind on work it
     /// means to do, and it isn't: the list is already exactly what it should be. The
     /// queue is still kept, because a server added later is owed every one of them.
-    func refreshUnsent() {
-        guard !ServerDirectory.isOnDeviceOnly else {
-            unsent = []
-            waiting = 0
-            return
-        }
-        let queued = cache.outbox.forList(list)
-        unsent = Set(queued.map(\.itemUUID))
-        waiting = queued.count
+    /// Which rows are carrying something unsent, and how much there is altogether.
+    ///
+    /// Asked of the backend rather than of a queue this model used to reach into. A
+    /// backend that has already stored what it was given answers with nothing, which is
+    /// why the `isOnDeviceOnly` check that used to be here is gone: it was asking about
+    /// the app's mode to work out something the backend can simply say.
+    func refreshUnsent() async {
+        unsent = await api.unsent(on: list)
+        waiting = await api.pending
     }
 
     /// Rewrites what is on screen, and remembers it.
     ///
     /// One place, so an optimistic change cannot end up on the screen but not in the
     /// cache — which is how a change survives the app being killed before it is sent.
+    /// Rewrites what is on screen.
+    ///
+    /// Only the screen now. Writing it down was the second half of this and belonged to
+    /// the cache; it is the backend's, and the call that follows every use of this is
+    /// what persists the change -- see `toggle`.
     func show(_ change: ([Item]) -> [Item]) {
         items = change(items)
-        cache.remember(items: items, on: list)
-        refreshUnsent()
     }
 
     /// The server's answer with this device's unsent changes laid back over it.
@@ -611,8 +619,8 @@ final class ItemsModel {
 
     func remove(_ item: Item) async {
         guard list.mayEdit else { return }
-        cache.outbox.delete(item, on: list)
         show { rows in rows.filter { $0.uuid != item.uuid } }
+        try? await api.delete(item, on: list)
         await drain()
     }
 
@@ -624,8 +632,8 @@ final class ItemsModel {
     func clearDone() async {
         guard list.mayEdit, !done.isEmpty else { return }
         let swept = done
-        cache.outbox.clearDone(swept, on: list)
         show { rows in rows.filter { row in !swept.contains { $0.uuid == row.uuid } } }
+        try? await api.clearDone(on: list)
         await drain()
     }
 

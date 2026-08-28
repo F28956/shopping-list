@@ -146,12 +146,36 @@ actor CachingBackend {
         try await remote.add(line, to: list)
     }
 
+    /// Queued, then sent -- rather than sent, and queued if that fails.
+    ///
+    /// The order is the promise. A change somebody has already watched happen must
+    /// survive the app being killed a second later, so it is written down before
+    /// anything is attempted. If the send fails it stays in the queue and the next
+    /// drain carries it; if the app dies, it is still there.
+    ///
+    /// This is how `ItemsModel` has always worked. It lives here now because *why* it
+    /// works this way -- a far end that can fail -- is this type's business.
     func setDone(_ item: Item, on list: List, done: Bool) async throws {
-        try await remote.setDone(item, on: list, done: done)
+        cache.outbox.setDone(item, on: list, done: done)
+        remembering(on: list) { rows in
+            rows.map { $0.uuid == item.uuid ? $0.withDone(done) : $0 }
+        }
+        await drain()
     }
 
     func setDone(itemID: Int64, listID: Int64, done: Bool) async throws {
         try await remote.setDone(itemID: itemID, listID: listID, done: done)
+    }
+
+    /// What is queued against one list, by row.
+    func unsent(on list: List) async -> Set<String> {
+        Set(cache.outbox.forList(list).map(\.itemUUID))
+    }
+
+    /// Sends what is waiting. See ``SyncReport``.
+    @discardableResult
+    func sync() async -> SyncReport {
+        await drain()
     }
 
     func update(
@@ -161,29 +185,76 @@ actor CachingBackend {
         amount: Double,
         unitID: Int64?
     ) async throws {
-        try await remote.update(item, on: list, name: name, amount: amount, unitID: unitID)
+        // The row as it was travels with it -- `seen` is how the server tells a rename
+        // from two people correcting the same row, and the outbox is what carries it.
+        cache.outbox.update(item, on: list, name: name, amount: amount, unitID: unitID)
+        remembering(on: list) { rows in
+            rows.map { row in
+                guard row.uuid == item.uuid else { return row }
+                return Item(
+                    id: row.id,
+                    uuid: row.uuid,
+                    name: name,
+                    amount: amount,
+                    unitID: unitID,
+                    doneAt: row.doneAt,
+                    tagIDs: row.tagIDs
+                )
+            }
+        }
+        await drain()
     }
 
     func attach(_ tag: Tag, to item: Item, on list: List) async throws {
-        try await remote.attach(tag, to: item, on: list)
+        cache.outbox.tag(item, on: list, tagID: tag.id, attached: true)
+        await drain()
     }
 
     func detach(_ tag: Tag, from item: Item, on list: List) async throws {
-        try await remote.detach(tag, from: item, on: list)
+        cache.outbox.tag(item, on: list, tagID: tag.id, attached: false)
+        await drain()
     }
 
+    /// Everything crossed off, by name.
+    ///
+    /// The rows are read here rather than passed in: the queue records *which* rows were
+    /// swept, so that a row somebody else crossed off in the meantime is not swept by
+    /// this device's replay of an older intention.
     func clearDone(on list: List) async throws {
-        try await remote.clearDone(on: list)
+        let swept = cache.items(on: list).filter(\.isDone)
+        guard !swept.isEmpty else { return }
+        cache.outbox.clearDone(swept, on: list)
+        remembering(on: list) { rows in rows.filter { !$0.isDone } }
+        await drain()
     }
 
     func delete(_ item: Item, on list: List) async throws {
-        try await remote.delete(item, on: list)
+        cache.outbox.delete(item, on: list)
+        remembering(on: list) { rows in rows.filter { $0.uuid != item.uuid } }
+        await drain()
+    }
+
+    /// Applies a change to what is written down, as well as queueing it.
+    ///
+    /// Both halves matter and they are different promises. The queue says the server
+    /// will hear about it; this says the *device* will still know about it after being
+    /// killed on the way out of the shop. `ItemsModel.show` used to do this, back when a
+    /// screen owned the cache -- and moving the queueing here without it would have
+    /// meant a tick that survived until the next launch and no further.
+    private func remembering(on list: List, _ change: ([Item]) -> [Item]) {
+        cache.remember(items: change(cache.items(on: list)), on: list)
     }
 
     // MARK: - The categories
 
+    /// Written down, then queued rather than sent.
+    ///
+    /// It used to go straight at the server and put "Something went wrong" on screen
+    /// when it could not get there -- on a device that had deliberately not got one.
     func setTagOrder(_ tags: [Tag], on list: List) async throws {
-        try await remote.setTagOrder(tags, on: list)
+        cache.remember(tags: tags, on: list)
+        cache.outbox.setTagOrder(tags, on: list)
+        await drain()
     }
 
     func createTag(named name: String, emoji: String?) async throws -> Tag {
@@ -249,15 +320,27 @@ actor CachingBackend {
     /// only moment draining can succeed.
     private var draining = false
 
-    private func drain() async {
+    @discardableResult
+    private func drain() async -> SyncReport {
         // Anything made while there was no server at all, handed over now that there is
         // one. Cheap when there is nothing to hand over, which is the ordinary case.
         cache.handOverIfNeeded()
 
-        guard !draining, cache.outbox.waiting > 0 else { return }
+        guard !draining, cache.outbox.waiting > 0 else {
+            return SyncReport(waiting: cache.outbox.waiting)
+        }
         draining = true
         let drained = await cache.outbox.drain(through: remote)
         draining = false
+
+        // A drain that sent nothing while something was queued is the other way to
+        // learn there is no connection, and often the first: it does not wait for a
+        // read to fail.
+        if drained.sent > 0 {
+            reachedIt = true
+        } else if drained.waiting > 0 && !drained.refused {
+            reachedIt = false
+        }
 
         // Lists made here have just been given the server's own ids. Without this the
         // same list appears twice, once under each numbering.
@@ -266,6 +349,13 @@ actor CachingBackend {
                 cache.adopt(local, as: adopted.real)
             }
         }
+
+        return SyncReport(
+            sent: drained.sent,
+            waiting: drained.waiting,
+            refused: drained.refused,
+            lost: drained.lost
+        )
     }
 
     private nonisolated func isTransport(_ problem: APIError) -> Bool {

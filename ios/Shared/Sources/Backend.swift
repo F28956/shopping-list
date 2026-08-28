@@ -98,6 +98,32 @@ protocol Backend: Sendable {
     ///
     /// What the status dot counts.
     var pending: Int { get async }
+
+    /// The rows on this list with work that has not been sent.
+    ///
+    /// Marked on the row rather than with a banner: it is a detail about that line, not
+    /// news about the app.
+    func unsent(on list: List) async -> Set<String>
+
+    /// Sends whatever is waiting, and says what became of it.
+    ///
+    /// Called after a change and on a timer. Only the losses are worth showing:
+    /// "three changes sent" is news about plumbing, while "the thing you crossed off had
+    /// been deleted" is news about the list -- and the one case where somebody watched
+    /// themselves do something that did not happen.
+    @discardableResult
+    func sync() async -> SyncReport
+}
+
+/// What became of a queue.
+struct SyncReport: Sendable {
+    var sent = 0
+    var waiting = 0
+    /// Something was refused and will not retry itself. The one state worth
+    /// interrupting somebody for.
+    var refused = false
+    /// Changes that can never land -- a tick against a row somebody else deleted.
+    var lost: [String] = []
 }
 
 extension Backend {
@@ -110,6 +136,13 @@ extension Backend {
 
     /// Nothing, for a backend that has already stored what it was given.
     var pending: Int { get async { 0 } }
+
+    /// Nothing unsent, for a backend that has already stored what it was given.
+    func unsent(on list: List) async -> Set<String> { [] }
+
+    /// Nothing to send. A device that is its own far end has already arrived.
+    @discardableResult
+    func sync() async -> SyncReport { SyncReport() }
 }
 
 /// Who may sign in to this server, and who this is.

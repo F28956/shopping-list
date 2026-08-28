@@ -23,10 +23,14 @@ struct MacItemsView: View {
 
     @FocusState private var typing: Bool
 
-    init(api: API, list: List) {
+    /// `backend` is the one the lists screen chose -- the device's own server, or a
+    /// server with the cache and the queue behind it. Passed down rather than rebuilt,
+    /// because two screens deciding separately is two screens that can disagree, and on
+    /// a migrated device the disagreement is a list that opens empty.
+    init(api: API, backend: any Backend, list: List) {
         self.api = api
         self.list = list
-        _model = State(initialValue: ItemsModel(list: list, api: api))
+        _model = State(initialValue: ItemsModel(list: list, api: backend))
     }
 
 
@@ -177,7 +181,7 @@ struct MacItemsView: View {
                 }
             }
             model.showWhatWeHave()
-            model.refreshUnsent()
+            await model.refreshUnsent()
             await model.load()
         }
         .task { await model.keepTrying() }
