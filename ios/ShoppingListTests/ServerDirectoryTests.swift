@@ -140,14 +140,35 @@ struct ServerDirectoryTests {
         let before = UserDefaults.standard.string(forKey: key)
         defer { UserDefaults.standard.set(before, forKey: key) }
 
+        // **Absent**, and asserted as absent. This used to remove the key and then
+        // write an empty string before asserting, with a note that a debug build is
+        // pointed at the machine on the desk and is "the one exception" -- which had
+        // stopped being true when `choice` stopped consulting the build setting. So the
+        // one case that matters, a cold start on a phone nobody has configured, was the
+        // one case not covered.
         UserDefaults.standard.removeObject(forKey: key)
 
-        // A debug build is pointed at the machine on the desk, which is the one
-        // exception — so this asserts what is true of a shipped build by asserting the
-        // stored answer rather than the built-in one.
-        UserDefaults.standard.set("", forKey: key)
         #expect(ServerDirectory.isOnDeviceOnly)
         #expect(ServerDirectory.current == nil)
+    }
+
+    /// The build setting is not a default, and a fresh install must not adopt it.
+    ///
+    /// It is written down so a debug build can reach the server on the same desk. Read
+    /// as a fallback it made "the app opens straight into a usable list" true of a
+    /// release build and false of every build anybody runs -- and, worse, it is a
+    /// suggestion about where somebody's shopping should live.
+    @Test func aBuildSettingIsNotAServerSomebodyChose() {
+        let key = "server.address"
+        let before = UserDefaults.standard.string(forKey: key)
+        defer { UserDefaults.standard.set(before, forKey: key) }
+        UserDefaults.standard.removeObject(forKey: key)
+
+        #expect(
+            ServerDirectory.current?.origin != Config.apiBaseURL.absoluteString,
+            "a fresh install adopted the address the build was compiled with"
+        )
+        #expect(Capabilities.current == .onItsOwn, "and it offered sharing and accounts")
     }
 
     @Test func everyRefusalSaysSomething() {
