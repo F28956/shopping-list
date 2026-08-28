@@ -300,32 +300,71 @@ struct LocalBackendTests {
         #expect(model.waiting == 0, "a list made on the device was queued for a server")
     }
 
-    /// The transition's one safety rule, and it was found by breaking it.
-    ///
-    /// This backend reads `device.sqlite`; a device that has been used keeps its lists
-    /// in `cache.sqlite`, and nothing migrates one to the other yet. Switching such a
-    /// device shows an empty app with somebody's shopping still on disk. That is exactly
-    /// what happened on the first Mac it was tried on -- one list, three items, gone from
-    /// the screen and safe on disk, which is the worst of both.
-    @MainActor
-    @Test("a device with lists to lose is not switched over")
-    func nothingIsStrandedByTheSwitch() {
-        let used = Cache.inMemory(sending: { false })
-        _ = used.makeListHere(named: "Everything I own", ownedBy: 0)
+    /// What the migration is for, and it was written after breaking it: switching a
+    /// device that has been used showed an empty app with somebody's shopping still on
+    /// disk. That happened on the first Mac it was tried on -- one list, three items.
+    @Test("a device's old cache is brought across")
+    func theOldCacheIsBroughtAcross() async throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("migrate-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: path) }
 
-        #expect(
-            LocalBackend.unlessSomethingWouldBeStranded(cache: used) == nil,
-            "a device with lists was switched to a backend that cannot see them"
+        // As the old path left it: a list, something needed, something crossed off.
+        let old = Cache.inMemory(sending: { false })
+        let list = old.makeListHere(named: "Home", ownedBy: 0)
+        old.remember(
+            items: [
+                Item(id: -2, uuid: "milk", name: "Milk", amount: 2,
+                     unitID: nil, doneAt: nil, tagIDs: [1]),
+                Item(id: -3, uuid: "apples", name: "Apples", amount: 1,
+                     unitID: nil, doneAt: Date(timeIntervalSince1970: 1_787_908_502), tagIDs: []),
+            ],
+            on: list
         )
+
+        let backend = try #require(LocalBackend(at: path))
+        #expect(backend.bringAcross(old.lists(), from: old), "the migration refused")
+
+        let carried: any Backend = backend
+        let lists = try await carried.lists()
+        #expect(lists.items.map(\.name) == ["Home"])
+
+        let items = try await carried.items(on: try #require(lists.items.first))
+        #expect(items.items.count == 2, "not everything came across")
+        let milk = try #require(items.items.first { $0.name == "Milk" })
+        #expect(milk.amount == 2, "how much was lost")
+        #expect(milk.tagIDs == [1], "what it was filed under was lost")
+        #expect(!milk.isDone, "something still needed arrived crossed off")
+        #expect(
+            items.items.first { $0.name == "Apples" }?.isDone == true,
+            "something crossed off arrived still needed"
+        )
+
+        // And the memory, because every row came in through the service that records a
+        // use -- so a device does not forget what it buys just because it moved house.
+        let offered = try await carried.suggestions(matching: "mil", on: try #require(lists.items.first))
+        #expect(offered.contains("Milk"), "autocomplete forgot what the device knew")
     }
 
-    @MainActor
-    @Test("a device with nothing to lose is switched over")
-    func afreshDeviceIsSwitched() {
-        let fresh = Cache.inMemory(sending: { false })
+    /// Nothing is deleted, which is what makes the switch reversible.
+    @Test("the old cache is left exactly as it was")
+    func theOldCacheIsNotEmptied() async throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("migrate-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: path) }
 
-        let backend = LocalBackend.unlessSomethingWouldBeStranded(cache: fresh)
+        let old = Cache.inMemory(sending: { false })
+        let list = old.makeListHere(named: "Home", ownedBy: 0)
+        old.remember(
+            items: [Item(id: -2, uuid: "milk", name: "Milk", amount: 1,
+                         unitID: nil, doneAt: nil, tagIDs: [])],
+            on: list
+        )
 
-        #expect(backend != nil, "a fresh device was left on the old path for no reason")
+        let backend = try #require(LocalBackend(at: path))
+        _ = backend.bringAcross(old.lists(), from: old)
+
+        #expect(old.lists().map(\.name) == ["Home"], "the fallback was emptied")
+        #expect(old.items(on: list).count == 1, "the fallback lost what was on the list")
     }
 }

@@ -63,22 +63,92 @@ actor LocalBackend {
         embedded_close(handle)
     }
 
-    /// The device's backend, but only where switching to it cannot strand anything.
+    /// The device's backend, ready to be used, having taken over from the old cache if
+    /// it had to.
     ///
-    /// This reads `device.sqlite`. A device that has been *used* keeps its lists in
-    /// `cache.sqlite`, and nothing has migrated one to the other yet -- so handing this
-    /// to a screen on such a device shows an empty app with somebody's shopping still on
-    /// disk, unreachable. That is not hypothetical: it is what happened on the first Mac
-    /// this was tried on, which had a list and three items.
+    /// The one entry point a composition root should call. Opening is not enough on a
+    /// device that has been used: its lists are in `cache.sqlite`, this reads
+    /// `device.sqlite`, and handing the second to a screen would show an empty app with
+    /// somebody's shopping still on disk.
     ///
-    /// So the switch happens where there is nothing to lose, and everywhere else waits
-    /// for a migration. That keeps the old cache exactly what it was meant to be during
-    /// this transition -- the thing to fall back to -- rather than the thing quietly
-    /// left behind.
-    static func unlessSomethingWouldBeStranded(cache: Cache = .shared) -> LocalBackend? {
-        guard cache.lists().isEmpty else { return nil }
-        return LocalBackend()
+    /// Nothing is deleted. The old cache is left exactly as it was, which is what makes
+    /// this reversible: if the new path turns out to be wrong, the fallback is still
+    /// sitting there with everything in it.
+    ///
+    /// Nil means stay on the old path -- the database would not open, or the migration
+    /// refused. Both are the same instruction to a caller: use what worked yesterday.
+    static func readyForUse(cache: Cache = .shared) -> LocalBackend? {
+        guard let backend = LocalBackend() else { return nil }
+        guard !hasTakenOver else { return backend }
+
+        let waiting = cache.lists()
+        guard !waiting.isEmpty else {
+            // Nothing to bring, so nothing to get wrong. Marked all the same, so a list
+            // made here tomorrow is not mistaken for a cache that needs migrating.
+            hasTakenOver = true
+            return backend
+        }
+
+        guard backend.bringAcross(waiting, from: cache) else { return nil }
+        hasTakenOver = true
+        return backend
     }
+
+    /// Whether this device has already handed its cache over.
+    ///
+    /// A flag rather than "is the new database empty", because those differ in the case
+    /// that matters: somebody who migrates and then deletes every list would be migrated
+    /// again on the next launch, and their deleted lists would come back.
+    private static var hasTakenOver: Bool {
+        get { UserDefaults.standard.bool(forKey: "device.tookOver") }
+        set { UserDefaults.standard.set(newValue, forKey: "device.tookOver") }
+    }
+
+    /// Hands the old cache's contents to the device's server.
+    ///
+    /// Synchronous, and deliberately so: this runs once, before a screen is built, and
+    /// a half-migrated app is worse than a pause. Everything goes through `domain`'s
+    /// services on the other side, so what arrives has been through the same rules as
+    /// anything added today -- including recording each use, which rebuilds the history
+    /// a device had spent months collecting.
+    /// `nonisolated` because it touches nothing this actor protects except the handle,
+    /// which `Local` is itself safe to use from several threads -- see `web/embedded`.
+    /// It also has to be callable before anything `await`s, which is the whole point of
+    /// doing this before a screen exists.
+    nonisolated func bringAcross(_ lists: [List], from cache: Cache) -> Bool {
+        let payload: [String: Any] = [
+            "lists": lists.map { list in
+                [
+                    "name": list.name,
+                    "items": cache.items(on: list).map { item in
+                        [
+                            "uuid": item.uuid,
+                            "name": item.name,
+                            "amount": item.amount,
+                            "unit_id": item.unitID as Any,
+                            "done_at": item.doneAt.map { Int64($0.timeIntervalSince1970) } as Any,
+                            "tag_ids": item.tagIDs,
+                        ] as [String: Any]
+                    },
+                ] as [String: Any]
+            },
+        ]
+
+        guard let json = try? JSONSerialization.data(withJSONObject: payload),
+              let text = String(data: json, encoding: .utf8)
+        else { return false }
+
+        return text.withCString { text in
+            guard let raw = embedded_import(handle, text) else { return false }
+            defer { embedded_free(raw) }
+            // Only the absence of an error matters here: how many rows came across is
+            // the migration's business, and a caller that has none is a caller with an
+            // empty cache.
+            let answer = String(cString: raw)
+            return !answer.contains("\"error\"")
+        }
+    }
+
 
     // MARK: - Reading
 

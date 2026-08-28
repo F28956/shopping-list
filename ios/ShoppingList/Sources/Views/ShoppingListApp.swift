@@ -70,9 +70,7 @@ struct RootView: View {
             // database will not open, which falls back to the old path -- the cache is
             // still there and still written by it, which is the point of leaving it
             // alone for now.
-            standalone: ServerDirectory.isOnDeviceOnly
-                ? LocalBackend.unlessSomethingWouldBeStranded()
-                : nil
+            standalone: ServerDirectory.isOnDeviceOnly ? LocalBackend.readyForUse() : nil
         )
     }
 

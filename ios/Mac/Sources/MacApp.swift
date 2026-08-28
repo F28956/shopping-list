@@ -91,9 +91,7 @@ struct MacRootView: View {
             ),
             // As on the phone: the Mac answers for itself when nobody has chosen a
             // server, and falls back to the old path if the database will not open.
-            standalone: ServerDirectory.isOnDeviceOnly
-                ? LocalBackend.unlessSomethingWouldBeStranded()
-                : nil
+            standalone: ServerDirectory.isOnDeviceOnly ? LocalBackend.readyForUse() : nil
         )
     }
 }

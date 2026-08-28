@@ -42,6 +42,9 @@ char *embedded_update_item(const EmbeddedLocal *handle, int64_t item_id, const c
 char *embedded_delete_item(const EmbeddedLocal *handle, int64_t item_id);
 char *embedded_clear_done(const EmbeddedLocal *handle, int64_t list_id);
 
+/// Brings a device's old cache across. Answers {"ok": <items brought>}.
+char *embedded_import(const EmbeddedLocal *handle, const char *everything_json);
+
 char *embedded_units(const EmbeddedLocal *handle);
 /// The categories in this list's order.
 char *embedded_tags(const EmbeddedLocal *handle, int64_t list_id);
@@ -61,6 +64,9 @@ char *embedded_history(const EmbeddedLocal *handle, int64_t list_id);
 char *embedded_suggestions(const EmbeddedLocal *handle, int64_t list_id, const char *query);
 
 EmbeddedWatcher *embedded_watch_list(const EmbeddedLocal *handle, int64_t list_id);
+/// Brings a device's old cache across. Answers {"ok": <items brought>}.
+char *embedded_import(const EmbeddedLocal *handle, const char *everything_json);
+
 char *embedded_units(const EmbeddedLocal *handle);
 /// The categories in this list's order.
 char *embedded_tags(const EmbeddedLocal *handle, int64_t list_id);

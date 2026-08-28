@@ -357,6 +357,76 @@ impl Local {
         })
     }
 
+    // MARK: taking over from a client that kept its own cache
+
+    /// Everything a device held before this crate existed.
+    ///
+    /// The client's old cache is a different schema in a different file, so switching a
+    /// device that has been used to this backend shows an empty app with somebody's
+    /// shopping still on disk. This is the way across.
+    ///
+    /// Written through the services rather than into the tables, which costs a little
+    /// speed and buys the thing that matters: every row arrives having been through the
+    /// same rules a row added today goes through. Items record their use, so the
+    /// history a device had spent months building is rebuilt rather than lost; tags
+    /// attach the way they always do; done items keep the moment they were ticked off.
+    pub fn import(&self, everything: &Incoming) -> Result<usize, Error> {
+        self.runtime.block_on(async {
+            let mut brought = 0;
+
+            for list in &everything.lists {
+                // A new uuid, deliberately. The old one named this list to a queue that
+                // no longer exists -- a device with no server has nothing queued -- and
+                // minting one here keeps the invariant that a uuid is made where the row
+                // is made.
+                let made = lists::create(&self.ctx, &self.me, Name(list.name.clone()))
+                    .await
+                    .map_err(|e| Error::Refused(e.to_string()))?;
+
+                for row in &list.items {
+                    let item = domain::service::items::create(
+                        &self.ctx,
+                        &self.me,
+                        made.id,
+                        Some(item::Uuid(row.uuid.clone())),
+                        item::Name(row.name.clone()),
+                        item::Amount(row.amount),
+                        row.unit_id.map(domain::models::unit::Id),
+                    )
+                    .await
+                    .map_err(|e| Error::Refused(e.to_string()))?;
+
+                    for tag_id in &row.tag_ids {
+                        // Ignored rather than fatal: a category the old cache knew and
+                        // this database does not is a row that files itself nowhere,
+                        // which is a smaller loss than refusing the whole migration.
+                        let _ = domain::service::tags::attach(
+                            &self.ctx,
+                            &self.me,
+                            item.id,
+                            domain::models::tag::Id(*tag_id),
+                        )
+                        .await;
+                    }
+
+                    if let Some(seconds) = row.done_at {
+                        let when = time::OffsetDateTime::from_unix_timestamp(seconds)
+                            .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+                        domain::service::items::set_done_at(
+                            &self.ctx, &self.me, item.id, true, when,
+                        )
+                        .await
+                        .map_err(|e| Error::Refused(e.to_string()))?;
+                    }
+
+                    brought += 1;
+                }
+            }
+
+            Ok(brought)
+        })
+    }
+
     // MARK: what things are called, and how they are grouped
 
     /// Every unit this device knows. Global, and the same twenty-odd on every device:
@@ -531,6 +601,29 @@ impl Local {
             _ => 0,
         }
     }
+}
+
+/// What a device held in its old cache, on its way in. See [`Local::import`].
+#[derive(serde::Deserialize)]
+pub struct Incoming {
+    pub lists: Vec<IncomingList>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct IncomingList {
+    pub name: String,
+    pub items: Vec<IncomingItem>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct IncomingItem {
+    pub uuid: String,
+    pub name: String,
+    pub amount: f64,
+    pub unit_id: Option<i64>,
+    /// Unix seconds, or absent for something still needed.
+    pub done_at: Option<i64>,
+    pub tag_ids: Vec<i64>,
 }
 
 /// A list, with what this person may do to it.

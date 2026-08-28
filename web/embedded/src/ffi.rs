@@ -204,6 +204,31 @@ pub unsafe extern "C" fn embedded_clear_done(handle: *const Local, list_id: i64)
     answering(handle, |local| local.clear_done(list_id))
 }
 
+// ------------------------------------------------------------------ taking over
+
+/// Brings a device's old cache across. See `Local::import`.
+///
+/// Answers `{"ok": 4}` with the number of items brought.
+///
+/// # Safety
+///
+/// `handle` must be live and `everything_json` nul-terminated UTF-8.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_import(
+    handle: *const Local,
+    everything_json: *const c_char,
+) -> *mut c_char {
+    let Some(raw) = (unsafe { borrow(everything_json) }) else {
+        return owned(&serde_json::json!({ "error": "nothing to import" }));
+    };
+    let everything: crate::Incoming = match serde_json::from_str(raw) {
+        Ok(read) => read,
+        Err(why) => return owned(&serde_json::json!({ "error": why.to_string() })),
+    };
+
+    answering(handle, move |local| local.import(&everything))
+}
+
 // --------------------------------------------- what things are called and grouped
 
 /// # Safety
@@ -837,6 +862,77 @@ mod tests {
         unsafe { embedded_stop(stopper) };
         unsafe { embedded_stopper_free(stopper) };
         unsafe { embedded_watcher_free(watcher) };
+        unsafe { embedded_close(handle) };
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The way across for a device that has been used, which is every device somebody
+    /// actually owns. Without it the switch shows an empty app with their shopping
+    /// still on disk.
+    #[test]
+    fn an_old_cache_is_brought_across() {
+        let path = scratch();
+        let handle = unsafe { embedded_open(c(path.to_str().unwrap()).as_ptr()) };
+
+        let everything = serde_json::json!({
+            "lists": [{
+                "name": "Home",
+                "items": [
+                    {"uuid": "milk", "name": "Milk", "amount": 2.0, "unit_id": null,
+                     "done_at": null, "tag_ids": [1]},
+                    {"uuid": "apples", "name": "Apples", "amount": 1.0, "unit_id": null,
+                     "done_at": 1_787_908_502i64, "tag_ids": []}
+                ]
+            }]
+        });
+
+        let brought = unsafe { read(embedded_import(handle, c(&everything.to_string()).as_ptr())) };
+        assert_eq!(brought["ok"], 2, "not everything came across: {brought}");
+
+        let lists = unsafe { read(embedded_lists(handle)) };
+        let list_id = lists["ok"][0]["id"].as_i64().unwrap();
+        assert_eq!(lists["ok"][0]["name"], "Home");
+
+        let items = unsafe { read(embedded_items(handle, list_id)) };
+        let rows = items["ok"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+
+        let milk = rows.iter().find(|r| r["name"] == "Milk").expect("milk");
+        assert_eq!(milk["amount"], 2.0, "how much was lost");
+        assert_eq!(
+            milk["tag_ids"].as_array().map(|t| t.len()),
+            Some(1),
+            "what it was filed under was lost"
+        );
+        assert!(
+            milk["done_at"].is_null(),
+            "something still needed arrived crossed off"
+        );
+
+        let apples = rows.iter().find(|r| r["name"] == "Apples").expect("apples");
+        assert!(
+            !apples["done_at"].is_null(),
+            "something crossed off arrived still needed"
+        );
+
+        // The months of history a device had built, rebuilt rather than lost -- because
+        // every row came in through the service that records a use.
+        let remembered = unsafe { read(embedded_history(handle, list_id)) };
+        assert_eq!(
+            remembered["ok"].as_array().unwrap().len(),
+            2,
+            "the memory did not come across: {remembered}"
+        );
+        let offered = unsafe { read(embedded_suggestions(handle, list_id, c("mil").as_ptr())) };
+        assert!(
+            offered["ok"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|n| n == "Milk"),
+            "autocomplete forgot what the device knew: {offered}"
+        );
+
         unsafe { embedded_close(handle) };
         let _ = std::fs::remove_file(&path);
     }
