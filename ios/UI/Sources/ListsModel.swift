@@ -63,42 +63,60 @@ final class ListsModel {
 
     /// Guards against a drain and a reload calling each other round in a circle.
     private var draining = false
-
-    /// See ``ItemsModel/watching``: the model notices the cache moved, so that every
-    /// screen built on it does, on both platforms.
-    /// `nonisolated(unsafe)` because `deinit` is not on the main actor and this has to
-    /// be read there to unsubscribe. Safe by construction: it is written once, in
-    /// `init`, and read once, in `deinit` -- there is no moment when two things could
-    /// touch it.
-    nonisolated(unsafe) private var watching: (any NSObjectProtocol)?
+    /// See ``ItemsModel/watching``, which explains the whole of this: the screen is a
+    /// query over the database rather than a copy of what it once said.
+    ///
+    /// `nonisolated(unsafe)` because `deinit` is not on the main actor and has to cancel
+    /// it. Safe by construction: written once in `init`, read once in `deinit`.
+    nonisolated(unsafe) private var watching: Task<Void, Never>?
 
     init(api: API, cache: Cache = .shared) {
         self.api = api
         self.cache = cache
 
-        watching = NotificationCenter.default.addObserver(
-            forName: .cacheChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reloadFromCache() }
+        watching = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let stream = cache.observeLists() else { return }
+                do {
+                    for try await overview in stream {
+                        guard let self else { return }
+                        self.adopt(overview)
+                    }
+                    return
+                } catch {
+                    // Restarted rather than given up on: a screen that has quietly
+                    // stopped updating looks exactly like one that is working.
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
         }
     }
 
     deinit {
-        if let watching { NotificationCenter.default.removeObserver(watching) }
+        watching?.cancel()
     }
 
-    /// Re-reads the lists, because the cache says they changed.
+    /// What the database currently says, put on screen.
     ///
-    /// Unguarded by `fresh`, unlike `showWhatWeHave`: this is not a stale read racing a
-    /// fresh one, it is the database saying it has moved since the last answer -- so it
-    /// is the newer of the two by definition.
+    /// The guard is about emptiness rather than staleness: a cache not filled yet must
+    /// not blank a screen the server has already answered. `waiting` has no such guard
+    /// -- nothing queued is a real answer, and the honest one the moment a drain lands.
+    private func adopt(_ overview: Cache.Overview) {
+        if !overview.lists.isEmpty || lists.isEmpty {
+            lists = overview.lists
+            if !fresh { total = Int64(overview.lists.count) }
+        }
+        waiting = overview.waiting
+        if !lists.isEmpty { loaded = true }
+    }
+
+    /// Re-reads the lists and the queue.
+    ///
+    /// Kept for the tests, and for the few places that want the answer in this turn
+    /// rather than on the observation's next one. Nothing else calls it.
     func reloadFromCache() {
-        let remembered = cache.lists()
-        guard !remembered.isEmpty || lists.isEmpty else { return }
-        lists = remembered
-        waiting = cache.outbox.waiting
+        guard let overview = cache.overview() else { return }
+        adopt(overview)
     }
 
     // MARK: - Reading
@@ -110,11 +128,7 @@ final class ListsModel {
     /// land after a fast answer and put yesterday's lists back.
     func showWhatWeHave() {
         guard !fresh else { return }
-        let remembered = cache.lists()
-        guard !remembered.isEmpty else { return }
-        lists = remembered
-        total = Int64(remembered.count)
-        loaded = true
+        reloadFromCache()
     }
 
     func load() async {
@@ -218,8 +232,11 @@ final class ListsModel {
         } catch APIError.transport {
             let made = cache.makeListHere(named: name, ownedBy: mine)
             cache.outbox.makeList(made)
-            waiting = cache.outbox.waiting
-            lists = cache.lists()
+            // The observation will deliver this too, a hop later. Read now as well so
+            // the row is there in the same turn -- a caller that selects what it just
+            // made would otherwise select something not yet on screen. Through the same
+            // fetch, not field by field, so the two cannot say different things.
+            reloadFromCache()
             offline = true
             return made
         } catch {
@@ -246,7 +263,7 @@ final class ListsModel {
         draining = true
         let drained = await cache.outbox.drain(through: api)
         draining = false
-        waiting = cache.outbox.waiting
+        reloadFromCache()
 
         // Lists made here have just been given the server's own ids. Done before the
         // reload below, so the screen never shows the same list twice -- once under this
@@ -259,7 +276,7 @@ final class ListsModel {
         }
 
         if !drained.adopted.isEmpty {
-            lists = cache.lists()
+            reloadFromCache()
         }
     }
 

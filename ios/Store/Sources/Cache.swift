@@ -457,16 +457,18 @@ final class Cache: @unchecked Sendable {
     // MARK: - Lists
 
     func lists() -> [List] {
-        read { db in
-            try Row.fetchAll(db, sql: "SELECT * FROM lists ORDER BY position").map { row in
-                List(
-                    id: row["id"],
-                    uuid: row["uuid"],
-                    name: row["name"],
-                    ownerID: row["owner_id"],
-                    role: Role(rawValue: row["role"]) ?? .viewer
-                )
-            }
+        read { db in try Self.fetchLists(db) }
+    }
+
+    fileprivate static func fetchLists(_ db: Database) throws -> [List] {
+        try Row.fetchAll(db, sql: "SELECT * FROM lists ORDER BY position").map { row in
+            List(
+                id: row["id"],
+                uuid: row["uuid"],
+                name: row["name"],
+                ownerID: row["owner_id"],
+                role: Role(rawValue: row["role"]) ?? .viewer
+            )
         }
     }
 
@@ -921,6 +923,47 @@ final class Cache: @unchecked Sendable {
         var items: [Item]
         var units: [Unit]
         var tags: [Tag]
+    }
+
+    /// Everything the lists screen reads.
+    ///
+    /// The queue count belongs here rather than beside it: it lives in the same database
+    /// and it is part of the same answer. Keeping it out is what left both list screens
+    /// re-reading `outbox.waiting` on a two-second timer -- a poll, to notice something
+    /// the database could have told them.
+    struct Overview: Equatable, Sendable {
+        var lists: [List]
+        var waiting: Int
+    }
+
+    func overview() -> Overview? {
+        readOne { db in
+            Overview(
+                lists: try Self.fetchLists(db),
+                waiting: try Self.fetchWaiting(db)
+            )
+        }
+    }
+
+    /// The lists, and how much is queued, for as long as somebody is looking.
+    ///
+    /// See `observe(list:)` for why this shape, and for where it stops seeing.
+    func observeLists() -> AsyncValueObservation<Overview>? {
+        guard let queue else { return nil }
+
+        return ValueObservation
+            .tracking { db in
+                Overview(
+                    lists: try Self.fetchLists(db),
+                    waiting: try Self.fetchWaiting(db)
+                )
+            }
+            .removeDuplicates()
+            .values(in: queue)
+    }
+
+    fileprivate static func fetchWaiting(_ db: Database) throws -> Int {
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM operations") ?? 0
     }
 
     /// The same answer, once, for a caller that wants it in this turn rather than on

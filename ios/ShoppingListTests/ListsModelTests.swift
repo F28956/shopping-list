@@ -12,6 +12,14 @@ import Foundation
 /// standalone case, which is what most of these are about.
 @MainActor
 struct ListsModelTests {
+    /// Waits for the observation to deliver. See `ItemsModelTests.until`.
+    private func until(_ settled: () -> Bool, within seconds: Double = 2) async {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !settled() && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     private func model(_ cache: Cache = .inMemory()) -> (ListsModel, Cache) {
         let api = API(
             baseURL: URL(string: "http://127.0.0.1:1")!,
@@ -143,5 +151,55 @@ struct ListsModelTests {
         await model.attempt { throw APIError.badInput("That name is too long.") }
 
         #expect(model.error?.isEmpty == false)
+    }
+
+    /// A list made somewhere else in the app appears here, with nobody asking.
+    ///
+    /// The screen used to be a copy taken when it loaded. Now it is a query, so a write
+    /// through the same cache -- from a sheet, from the watch link, from a drain -- is
+    /// on screen without anything being told to reload.
+    @Test("a list written anywhere appears without a reload")
+    func aWriteAppearsWithoutBeingAskedTo() async {
+        let (model, cache) = model()
+        await until { model.lists.isEmpty }
+
+        // Not through the model. This is what another part of the app does.
+        let made = cache.makeListHere(named: "Boat", ownedBy: 0)
+
+        await until { model.lists.contains { $0.id == made.id } }
+        #expect(model.lists.map(\.name) == ["Boat"])
+    }
+
+    /// The queue count too, which is why it is in the same fetch.
+    ///
+    /// Both list screens used to re-read `outbox.waiting` on a two-second timer -- a
+    /// poll, to learn something the database could say. The dot was up to two seconds
+    /// out of date, and the timer ran whether or not anything had changed.
+    @Test("the queue count reaches the dot without polling for it")
+    func theQueueCountArrivesOnItsOwn() async {
+        let (model, cache) = model()
+        let made = cache.makeListHere(named: "Boat", ownedBy: 0)
+        await until { model.lists.count == 1 }
+        #expect(model.waiting == 0)
+
+        cache.outbox.makeList(made)
+
+        await until { model.waiting == 1 }
+        #expect(model.waiting == 1, "the dot never heard that something was queued")
+    }
+
+    /// And down again, which is the half a poll gets wrong for longest: a drain that
+    /// succeeds should clear the dot, not leave it orange until the next tick.
+    @Test("the queue count comes back down")
+    func theQueueCountClears() async {
+        let (model, cache) = model()
+        let made = cache.makeListHere(named: "Boat", ownedBy: 0)
+        cache.outbox.makeList(made)
+        await until { model.waiting == 1 }
+
+        cache.outbox.forgetEverything()
+
+        await until { model.waiting == 0 }
+        #expect(model.waiting == 0)
     }
 }

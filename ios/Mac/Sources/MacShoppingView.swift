@@ -257,14 +257,6 @@ struct MacShoppingView: View {
             model.showWhatWeHave()
             await model.load()
         }
-        .task {
-            // Cheap, and the only way the dot stays honest while somebody is looking at
-            // it: every items view drains the same queue, and nothing tells this one.
-            while !Task.isCancelled {
-                model.waiting = cache.outbox.waiting
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
         .task { await model.watchLists() }
         .alert("Could not load", isPresented: .constant(model.error != nil)) {
             Button("OK") { model.error = nil }
