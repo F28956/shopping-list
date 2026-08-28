@@ -5,3 +5,10 @@ module QuickAddC {
     header "quickadd.h"
     export *
 }
+
+// The device's own server. A separate module from QuickAddC because they are separate
+// libraries with separate lifetimes -- see web/embedded.
+module EmbeddedC {
+    header "embedded.h"
+    export *
+}

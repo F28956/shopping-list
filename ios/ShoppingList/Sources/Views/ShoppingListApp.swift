@@ -14,6 +14,13 @@ struct ShoppingListApp: App {
         // one would silently take over from the first.
         PhoneLink.shared.token = { await identity.token() }
         PhoneLink.shared.start()
+
+        // Temporary, and here to be measured rather than used. Linking the device's
+        // own server costs binary size, and the honest number only appears once the
+        // linker has something to keep -- a library nothing calls is dead-stripped and
+        // measures zero. See `LocalServer`; this line goes when a `Backend` conformer
+        // takes its place.
+        LocalServer.check()
     }
 
     var body: some Scene {
