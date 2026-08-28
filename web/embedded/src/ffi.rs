@@ -204,6 +204,142 @@ pub unsafe extern "C" fn embedded_clear_done(handle: *const Local, list_id: i64)
     answering(handle, |local| local.clear_done(list_id))
 }
 
+// --------------------------------------------- what things are called and grouped
+
+/// # Safety
+///
+/// `handle` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_units(handle: *const Local) -> *mut c_char {
+    answering(handle, |local| local.units())
+}
+
+/// The categories in this list's order.
+///
+/// # Safety
+///
+/// `handle` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_tags(handle: *const Local, list_id: i64) -> *mut c_char {
+    answering(handle, |local| local.tags(list_id))
+}
+
+/// # Safety
+///
+/// `handle` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_tags_on(handle: *const Local, item_id: i64) -> *mut c_char {
+    answering(handle, |local| local.tags_on(item_id))
+}
+
+/// The order, as a JSON array of tag ids: `[5, 3, 9]`.
+///
+/// An array rather than a repeated call, because the order is one fact about the list
+/// and applying it row by row would leave it half-applied if anything failed.
+///
+/// # Safety
+///
+/// `handle` must be live and `tag_ids_json` nul-terminated UTF-8.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_set_tag_order(
+    handle: *const Local,
+    list_id: i64,
+    tag_ids_json: *const c_char,
+) -> *mut c_char {
+    let ids: Vec<i64> = unsafe { borrow(tag_ids_json) }
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .unwrap_or_default();
+    answering(handle, move |local| local.set_tag_order(list_id, &ids))
+}
+
+/// `emoji` may be null.
+///
+/// # Safety
+///
+/// `handle` must be live; `name` and `emoji` nul-terminated UTF-8 or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_create_tag(
+    handle: *const Local,
+    name: *const c_char,
+    emoji: *const c_char,
+) -> *mut c_char {
+    let name = unsafe { borrow(name) }.unwrap_or_default().to_string();
+    let emoji = unsafe { borrow(emoji) }.map(str::to_string);
+    answering(handle, move |local| local.create_tag(&name, emoji))
+}
+
+/// # Safety
+///
+/// `handle` must be live; `name` and `emoji` nul-terminated UTF-8 or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_update_tag(
+    handle: *const Local,
+    id: i64,
+    name: *const c_char,
+    emoji: *const c_char,
+) -> *mut c_char {
+    let name = unsafe { borrow(name) }.unwrap_or_default().to_string();
+    let emoji = unsafe { borrow(emoji) }.map(str::to_string);
+    answering(handle, move |local| local.update_tag(id, &name, emoji))
+}
+
+/// # Safety
+///
+/// `handle` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_delete_tag(handle: *const Local, id: i64) -> *mut c_char {
+    answering(handle, |local| local.delete_tag(id))
+}
+
+/// # Safety
+///
+/// `handle` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_attach_tag(
+    handle: *const Local,
+    item_id: i64,
+    tag_id: i64,
+) -> *mut c_char {
+    answering(handle, |local| local.attach_tag(item_id, tag_id))
+}
+
+/// # Safety
+///
+/// `handle` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_detach_tag(
+    handle: *const Local,
+    item_id: i64,
+    tag_id: i64,
+) -> *mut c_char {
+    answering(handle, |local| local.detach_tag(item_id, tag_id))
+}
+
+// ------------------------------------------------------------------ what is bought
+
+/// # Safety
+///
+/// `handle` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_history(handle: *const Local, list_id: i64) -> *mut c_char {
+    answering(handle, |local| local.history(list_id))
+}
+
+/// `query` may be null or empty, which asks for the most recent rather than a match.
+///
+/// # Safety
+///
+/// `handle` must be live and `query` nul-terminated UTF-8 or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn embedded_suggestions(
+    handle: *const Local,
+    list_id: i64,
+    query: *const c_char,
+) -> *mut c_char {
+    let query = unsafe { borrow(query) }.unwrap_or_default().to_string();
+    answering(handle, move |local| local.suggestions(list_id, &query))
+}
+
 // ------------------------------------------------------------------ being told
 
 /// Starts watching one list. Give the answer back to [`embedded_watcher_free`].
@@ -453,6 +589,180 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .is_empty()
+        );
+
+        unsafe { embedded_close(handle) };
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The claim the whole crate rests on: a device answers the shape a server does.
+    ///
+    /// Not "close enough". A client that has to know which of the two it is talking to
+    /// in order to find a field is a client with the fork still in it, and the fork is
+    /// the thing being removed.
+    #[test]
+    fn the_wire_is_the_servers_wire() {
+        let path = scratch();
+        let handle = unsafe { embedded_open(c(path.to_str().unwrap()).as_ptr()) };
+        let list_id =
+            unsafe { read(embedded_make_list(handle, c("Household").as_ptr())) }["ok"]["id"]
+                .as_i64()
+                .unwrap();
+        let item_id = unsafe {
+            read(embedded_add(
+                handle,
+                list_id,
+                c("milk").as_ptr(),
+                std::ptr::null(),
+            ))
+        }["ok"]["id"]
+            .as_i64()
+            .unwrap();
+        let tag_id = unsafe { read(embedded_tags(handle, list_id)) }["ok"][0]["id"]
+            .as_i64()
+            .unwrap();
+        unsafe { read(embedded_attach_tag(handle, item_id, tag_id)) };
+
+        // A list carries `role`, which the API adds and the bare row does not have.
+        // Without it the Swift decoder falls back to viewer and the app hides renaming
+        // and deleting on every list the device owns.
+        let listed = unsafe { read(embedded_lists(handle)) };
+        assert_eq!(
+            listed["ok"][0]["role"], "owner",
+            "no role on a list: {listed}"
+        );
+        assert!(
+            listed["ok"][0]["uuid"].as_str().is_some(),
+            "no uuid on a list"
+        );
+
+        // An item carries `tag_ids`, which the API joins in. Without it every row is
+        // filed under nothing and the shop is walked in no order at all.
+        let items = unsafe { read(embedded_items(handle, list_id)) };
+        assert_eq!(
+            items["ok"][0]["tag_ids"].as_array().map(|t| t.len()),
+            Some(1),
+            "no tag_ids on an item: {items}"
+        );
+        assert!(
+            items["ok"][0]["done_at"].is_null(),
+            "a fresh item was already done"
+        );
+
+        unsafe { embedded_close(handle) };
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The whole surface a list screen needs, in one pass, because a conformer that
+    /// answers nine questions and crashes on the tenth is worse than one that does not
+    /// compile. Every call here is one the Swift `Backend` protocol declares.
+    #[test]
+    fn everything_a_list_screen_asks_for() {
+        let path = scratch();
+        let handle = unsafe { embedded_open(c(path.to_str().unwrap()).as_ptr()) };
+
+        let list_id =
+            unsafe { read(embedded_make_list(handle, c("Household").as_ptr())) }["ok"]["id"]
+                .as_i64()
+                .unwrap();
+
+        // The units and categories the app ships with, seeded by domain's migrations.
+        let units = unsafe { read(embedded_units(handle)) };
+        assert!(
+            !units["ok"].as_array().unwrap().is_empty(),
+            "no units: {units}"
+        );
+        let tags = unsafe { read(embedded_tags(handle, list_id)) };
+        let tag_id = tags["ok"][0]["id"].as_i64().expect("no categories");
+
+        let item_id = unsafe {
+            read(embedded_add(
+                handle,
+                list_id,
+                c("milk").as_ptr(),
+                std::ptr::null(),
+            ))
+        }["ok"]["id"]
+            .as_i64()
+            .unwrap();
+
+        unsafe { read(embedded_attach_tag(handle, item_id, tag_id)) };
+        let filed = unsafe { read(embedded_tags_on(handle, item_id)) };
+        assert_eq!(
+            filed["ok"].as_array().unwrap().len(),
+            1,
+            "filing did not stick"
+        );
+        unsafe { read(embedded_detach_tag(handle, item_id, tag_id)) };
+        assert!(
+            unsafe { read(embedded_tags_on(handle, item_id)) }["ok"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        // Reordering the walk, as one fact rather than row by row.
+        let reversed: Vec<i64> = tags["ok"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .map(|t| t["id"].as_i64().unwrap())
+            .collect();
+        let ordered = unsafe {
+            read(embedded_set_tag_order(
+                handle,
+                list_id,
+                c(&serde_json::to_string(&reversed).unwrap()).as_ptr(),
+            ))
+        };
+        assert!(
+            ordered["error"].is_null(),
+            "reordering was refused: {ordered}"
+        );
+        let after = unsafe { read(embedded_tags(handle, list_id)) };
+        assert_eq!(
+            after["ok"][0]["id"].as_i64().unwrap(),
+            reversed[0],
+            "the order did not take"
+        );
+
+        // A category of one's own, which is what standalone editing means.
+        let made = unsafe {
+            read(embedded_create_tag(
+                handle,
+                c("Fishmonger").as_ptr(),
+                c("🐟").as_ptr(),
+            ))
+        };
+        let mine = made["ok"]["id"].as_i64().expect("a category");
+        unsafe {
+            read(embedded_update_tag(
+                handle,
+                mine,
+                c("Fish").as_ptr(),
+                std::ptr::null(),
+            ))
+        };
+        unsafe { read(embedded_delete_tag(handle, mine)) };
+
+        // What was bought, and what to offer for a part-typed line.
+        let remembered = unsafe { read(embedded_history(handle, list_id)) };
+        assert!(
+            !remembered["ok"].as_array().unwrap().is_empty(),
+            "nothing remembered"
+        );
+        let offered = unsafe { read(embedded_suggestions(handle, list_id, c("mil").as_ptr())) };
+        // `Milk`, capitalised, for the second time in this file: what comes back is
+        // what the *server* stored, not what was typed. The clients capitalise for
+        // themselves today, which is the divergence being removed.
+        assert!(
+            offered["ok"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|n| n == "Milk"),
+            "milk was not offered for mil: {offered}"
         );
 
         unsafe { embedded_close(handle) };

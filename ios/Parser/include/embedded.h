@@ -42,7 +42,43 @@ char *embedded_update_item(const EmbeddedLocal *handle, int64_t item_id, const c
 char *embedded_delete_item(const EmbeddedLocal *handle, int64_t item_id);
 char *embedded_clear_done(const EmbeddedLocal *handle, int64_t list_id);
 
+char *embedded_units(const EmbeddedLocal *handle);
+/// The categories in this list's order.
+char *embedded_tags(const EmbeddedLocal *handle, int64_t list_id);
+char *embedded_tags_on(const EmbeddedLocal *handle, int64_t item_id);
+/// The order as a JSON array of tag ids: `[5, 3, 9]`. One fact, applied at once.
+char *embedded_set_tag_order(const EmbeddedLocal *handle, int64_t list_id,
+                             const char *tag_ids_json);
+char *embedded_create_tag(const EmbeddedLocal *handle, const char *name, const char *emoji);
+char *embedded_update_tag(const EmbeddedLocal *handle, int64_t id, const char *name,
+                          const char *emoji);
+char *embedded_delete_tag(const EmbeddedLocal *handle, int64_t id);
+char *embedded_attach_tag(const EmbeddedLocal *handle, int64_t item_id, int64_t tag_id);
+char *embedded_detach_tag(const EmbeddedLocal *handle, int64_t item_id, int64_t tag_id);
+
+char *embedded_history(const EmbeddedLocal *handle, int64_t list_id);
+/// `query` may be NULL or empty, which asks for the most recent rather than a match.
+char *embedded_suggestions(const EmbeddedLocal *handle, int64_t list_id, const char *query);
+
 EmbeddedWatcher *embedded_watch_list(const EmbeddedLocal *handle, int64_t list_id);
+char *embedded_units(const EmbeddedLocal *handle);
+/// The categories in this list's order.
+char *embedded_tags(const EmbeddedLocal *handle, int64_t list_id);
+char *embedded_tags_on(const EmbeddedLocal *handle, int64_t item_id);
+/// The order as a JSON array of tag ids: `[5, 3, 9]`. One fact, applied at once.
+char *embedded_set_tag_order(const EmbeddedLocal *handle, int64_t list_id,
+                             const char *tag_ids_json);
+char *embedded_create_tag(const EmbeddedLocal *handle, const char *name, const char *emoji);
+char *embedded_update_tag(const EmbeddedLocal *handle, int64_t id, const char *name,
+                          const char *emoji);
+char *embedded_delete_tag(const EmbeddedLocal *handle, int64_t id);
+char *embedded_attach_tag(const EmbeddedLocal *handle, int64_t item_id, int64_t tag_id);
+char *embedded_detach_tag(const EmbeddedLocal *handle, int64_t item_id, int64_t tag_id);
+
+char *embedded_history(const EmbeddedLocal *handle, int64_t list_id);
+/// `query` may be NULL or empty, which asks for the most recent rather than a match.
+char *embedded_suggestions(const EmbeddedLocal *handle, int64_t list_id, const char *query);
+
 EmbeddedWatcher *embedded_watch_lists(const EmbeddedLocal *handle);
 /// BLOCKS until something changed. Answers {"list": 4} or {"lists": true}, or NULL when
 /// the watch has ended. Call it on a thread of your own.

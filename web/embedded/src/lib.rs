@@ -117,6 +117,23 @@ impl Local {
             .await
             .map_err(|e| Error::Opening(e.to_string()))?;
 
+            // The device's person administers the device.
+            //
+            // Not a convenience: `tags::writable` and the rest of the owner-only rules
+            // are written for a server with several people on it, where the household's
+            // vocabulary is not one shopper's to rewrite. A device has one person, and
+            // that person is the household -- so they own it, and the same rules that
+            // refuse a guest on a server let them through here.
+            //
+            // This is the multi-user model paying for itself. Without it, "may I edit
+            // the categories" would need a second answer for standalone, which is
+            // exactly the fork this crate removes.
+            if let Actor::User(user) = &me {
+                domain::models::admission::set_owner(&ctx.db, user.id, true)
+                    .await
+                    .map_err(|e| Error::Opening(e.to_string()))?;
+            }
+
             Ok::<_, Error>((ctx, me))
         })?;
 
@@ -124,7 +141,7 @@ impl Local {
     }
 
     /// The lists this person can see.
-    pub fn lists(&self) -> Result<Vec<List>, Error> {
+    pub fn lists(&self) -> Result<Vec<ListWithRole>, Error> {
         self.runtime.block_on(async {
             // Everything, in the order a list screen shows them. The page exists for a
             // server answering over a network; a device reading its own file has no
@@ -138,10 +155,25 @@ impl Local {
                 direction: Direction::Descending,
             };
 
-            lists::for_user(&self.ctx, &self.me, page, order)
+            let listing = lists::for_user(&self.ctx, &self.me, page, order)
                 .await
-                .map(|listing| listing.items)
-                .map_err(|e| Error::Refused(e.to_string()))
+                .map_err(|e| Error::Refused(e.to_string()))?;
+
+            // Owner when it is theirs, which on a device is every list -- but asked
+            // rather than assumed, because a list joined from a server is not.
+            let who = self.me.person().map(|p| p.id).ok();
+            Ok(listing
+                .items
+                .into_iter()
+                .map(|list| {
+                    let role = if who == Some(list.owner_id) {
+                        domain::models::list::Role::Owner
+                    } else {
+                        domain::models::list::Role::Viewer
+                    };
+                    ListWithRole { list, role }
+                })
+                .collect())
         })
     }
 
@@ -204,7 +236,7 @@ impl Local {
     // MARK: what is on a list
 
     /// What is on one list, in the order the shop is walked.
-    pub fn items(&self, list_id: i64) -> Result<Vec<Item>, Error> {
+    pub fn items(&self, list_id: i64) -> Result<Vec<TaggedItem>, Error> {
         self.runtime.block_on(async {
             let page = Paging {
                 number: 1,
@@ -215,10 +247,34 @@ impl Local {
                 direction: Direction::Ascending,
             };
 
-            domain::service::items::for_list(&self.ctx, &self.me, list::Id(list_id), page, order)
+            let listing = domain::service::items::for_list(
+                &self.ctx,
+                &self.me,
+                list::Id(list_id),
+                page,
+                order,
+            )
+            .await
+            .map_err(|e| Error::Refused(e.to_string()))?;
+
+            // One query for the page rather than one per row, as the API does it --
+            // and already in `sort_order`, so "the first tag" means the same thing
+            // here, in the browser, and on the phone.
+            let filed = domain::service::tags::for_list(&self.ctx, &self.me, list::Id(list_id))
                 .await
-                .map(|listing| listing.items)
-                .map_err(|e| Error::Refused(e.to_string()))
+                .map_err(|e| Error::Refused(e.to_string()))?;
+
+            Ok(listing
+                .items
+                .into_iter()
+                .map(|item| TaggedItem {
+                    tag_ids: filed
+                        .get(&item.id.0)
+                        .map(|tags| tags.iter().map(|t| t.id.0).collect())
+                        .unwrap_or_default(),
+                    item,
+                })
+                .collect())
         })
     }
 
@@ -301,6 +357,165 @@ impl Local {
         })
     }
 
+    // MARK: what things are called, and how they are grouped
+
+    /// Every unit this device knows. Global, and the same twenty-odd on every device:
+    /// the ids are agreed in `reference.json`, which the server's seed is checked
+    /// against.
+    pub fn units(&self) -> Result<Vec<domain::models::unit::Unit>, Error> {
+        self.runtime.block_on(async {
+            domain::service::units::list(
+                &self.ctx,
+                &self.me,
+                Paging {
+                    number: 1,
+                    size: i64::MAX,
+                },
+                OrderBy {
+                    field: domain::models::unit::Field::Name,
+                    direction: Direction::Ascending,
+                },
+            )
+            .await
+            .map(|listing| listing.items)
+            .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    /// The categories, in the order this list is walked.
+    ///
+    /// Vocabulary and order are two things: `order_for` is the join, which is exactly
+    /// the shape the client's own cache was rebuilt into earlier today. One place they
+    /// are decided now, rather than two that agree by hand.
+    pub fn tags(&self, list_id: i64) -> Result<Vec<domain::models::tag::Tag>, Error> {
+        self.runtime.block_on(async {
+            domain::service::tags::order_for(&self.ctx, &self.me, list::Id(list_id))
+                .await
+                .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    /// What one row is filed under.
+    pub fn tags_on(&self, item_id: i64) -> Result<Vec<domain::models::tag::Tag>, Error> {
+        self.runtime.block_on(async {
+            domain::service::tags::for_item(&self.ctx, &self.me, item::Id(item_id))
+                .await
+                .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    pub fn set_tag_order(&self, list_id: i64, tag_ids: &[i64]) -> Result<(), Error> {
+        let ids: Vec<domain::models::tag::Id> = tag_ids
+            .iter()
+            .copied()
+            .map(domain::models::tag::Id)
+            .collect();
+        self.runtime.block_on(async {
+            domain::service::tags::set_order(&self.ctx, &self.me, list::Id(list_id), &ids)
+                .await
+                .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    pub fn create_tag(
+        &self,
+        name: &str,
+        emoji: Option<String>,
+    ) -> Result<domain::models::tag::Tag, Error> {
+        self.runtime.block_on(async {
+            domain::service::tags::create(
+                &self.ctx,
+                &self.me,
+                domain::models::tag::Name(name.to_string()),
+                None,
+                emoji.map(domain::models::tag::Emoji),
+            )
+            .await
+            .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    pub fn update_tag(
+        &self,
+        id: i64,
+        name: &str,
+        emoji: Option<String>,
+    ) -> Result<domain::models::tag::Tag, Error> {
+        self.runtime.block_on(async {
+            domain::service::tags::update(
+                &self.ctx,
+                &self.me,
+                domain::models::tag::Id(id),
+                domain::models::tag::Name(name.to_string()),
+                None,
+                emoji.map(domain::models::tag::Emoji),
+            )
+            .await
+            .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    pub fn delete_tag(&self, id: i64) -> Result<(), Error> {
+        self.runtime.block_on(async {
+            domain::service::tags::delete(&self.ctx, &self.me, domain::models::tag::Id(id))
+                .await
+                .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    pub fn attach_tag(&self, item_id: i64, tag_id: i64) -> Result<(), Error> {
+        self.runtime.block_on(async {
+            domain::service::tags::attach(
+                &self.ctx,
+                &self.me,
+                item::Id(item_id),
+                domain::models::tag::Id(tag_id),
+            )
+            .await
+            .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    pub fn detach_tag(&self, item_id: i64, tag_id: i64) -> Result<(), Error> {
+        self.runtime.block_on(async {
+            domain::service::tags::detach(
+                &self.ctx,
+                &self.me,
+                item::Id(item_id),
+                domain::models::tag::Id(tag_id),
+            )
+            .await
+            .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    // MARK: what this person buys
+
+    /// What has been bought on this list before, for resolving a typed line.
+    pub fn history(&self, list_id: i64) -> Result<Vec<domain::service::items::Remembered>, Error> {
+        self.runtime.block_on(async {
+            domain::service::items::remembered(&self.ctx, &self.me, list::Id(list_id), i64::MAX)
+                .await
+                .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
+    /// What to offer for a part-typed line.
+    ///
+    /// Ranked by `parsing::suggest`, which the clients also run -- and which they used
+    /// to run differently: this sorted by how well a name matched and the phone by how
+    /// often a thing is bought, so `mil` offered `milk` on one and `milk chocolate` on
+    /// the other. One ranker now.
+    pub fn suggestions(&self, list_id: i64, query: &str) -> Result<Vec<String>, Error> {
+        self.runtime.block_on(async {
+            let asked = if query.is_empty() { None } else { Some(query) };
+            domain::service::items::suggestions(&self.ctx, &self.me, list::Id(list_id), 6, asked)
+                .await
+                .map(|names| names.into_iter().map(|n| n.0).collect())
+                .map_err(|e| Error::Refused(e.to_string()))
+        })
+    }
+
     /// A runtime for one watcher. No I/O and no timers, so no threads and no reactor.
     fn watching_runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()
@@ -316,6 +531,27 @@ impl Local {
             _ => 0,
         }
     }
+}
+
+/// A list, with what this person may do to it.
+///
+/// The API answers this shape and not the bare row, so this answers it too. The claim
+/// that a device and a server speak the same wire is only worth making if it is true
+/// of the whole message -- a client that has to know which of the two it is talking to
+/// in order to find `role` is a client with the fork still in it.
+#[derive(serde::Serialize)]
+pub struct ListWithRole {
+    #[serde(flatten)]
+    pub list: List,
+    pub role: domain::models::list::Role,
+}
+
+/// An item, plus what it is filed under. Same reasoning as [`ListWithRole`].
+#[derive(serde::Serialize)]
+pub struct TaggedItem {
+    #[serde(flatten)]
+    pub item: Item,
+    pub tag_ids: Vec<i64>,
 }
 
 /// Something to re-read.
@@ -544,12 +780,12 @@ mod tests {
         let seen = local.lists().unwrap();
 
         assert_eq!(seen.len(), 1);
-        assert_eq!(seen[0].name.0, "Household");
-        assert_eq!(seen[0].id, made.id);
+        assert_eq!(seen[0].list.name.0, "Household");
+        assert_eq!(seen[0].list.id, made.id);
         // Owned by the device's person, not by nobody. This is the multi-user model
         // doing its job with one user in it: the row records who, and the answer is a
         // real user id rather than the zero the client used to invent.
-        assert_eq!(seen[0].owner_id.0, local.me());
+        assert_eq!(seen[0].list.owner_id.0, local.me());
 
         let _ = std::fs::remove_file(&path);
     }
@@ -573,7 +809,7 @@ mod tests {
                 .lists()
                 .unwrap()
                 .iter()
-                .map(|l| l.name.0.clone())
+                .map(|l| l.list.name.0.clone())
                 .collect::<Vec<_>>(),
             vec!["Household"]
         );
@@ -588,7 +824,7 @@ mod tests {
         let made = local.make_list("Huosehold").unwrap();
 
         local.rename_list(made.id.0, "Household").unwrap();
-        assert_eq!(local.lists().unwrap()[0].name.0, "Household");
+        assert_eq!(local.lists().unwrap()[0].list.name.0, "Household");
 
         local.delete_list(made.id.0).unwrap();
         assert!(local.lists().unwrap().is_empty());
