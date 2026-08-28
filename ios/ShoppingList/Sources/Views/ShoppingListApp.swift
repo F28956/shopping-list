@@ -15,12 +15,6 @@ struct ShoppingListApp: App {
         PhoneLink.shared.token = { await identity.token() }
         PhoneLink.shared.start()
 
-        // Temporary, and here to be measured rather than used. Linking the device's
-        // own server costs binary size, and the honest number only appears once the
-        // linker has something to keep -- a library nothing calls is dead-stripped and
-        // measures zero. See `LocalServer`; this line goes when a `Backend` conformer
-        // takes its place.
-        LocalServer.check()
     }
 
     var body: some Scene {
@@ -71,7 +65,12 @@ struct RootView: View {
                 baseURL: Config.apiBaseURL,
                 token: { await identity.token() },
                 remembered: { identity.isRemembered }
-            )
+            ),
+            // The device answers for itself when nobody has chosen a server. Nil if the
+            // database will not open, which falls back to the old path -- the cache is
+            // still there and still written by it, which is the point of leaving it
+            // alone for now.
+            standalone: ServerDirectory.isOnDeviceOnly ? LocalBackend() : nil
         )
     }
 

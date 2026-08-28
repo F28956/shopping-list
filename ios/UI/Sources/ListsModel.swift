@@ -34,8 +34,37 @@ final class ListsModel {
     /// see `sendQueued`. It is a separate protocol from ``Backend`` deliberately: the
     /// queue's other conformer is the watch's link to its phone, which is not a server
     /// and does not pretend to be one.
-    private let api: any Backend & Accounts & Destination
+    private let api: any Backend
+
+    /// Who administers the server, when there is one.
+    ///
+    /// Absent on a device answering for itself, which is not a gap: there is no account
+    /// to describe. What it decides here is one menu item, and the answer without a
+    /// server is yes -- the person using the device administers it, which is the same
+    /// answer `embedded` gives when it makes them an owner of their own database.
+    private let accounts: (any Accounts)?
+
+    /// Where the queue goes, when there is a queue.
+    ///
+    /// Absent for a backend that keeps its own store, and that absence is the whole
+    /// transition: a queue exists because a remote can fail, and one that cannot has
+    /// nothing to queue. `keepsItsOwnStore` reads off it rather than off a flag, so the
+    /// two cannot disagree.
+    private let queue: (any Destination)?
+
     private let cache: Cache
+
+    /// Whether the backend is its own memory.
+    ///
+    /// True for `LocalBackend`, where the device's database *is* the answer, so the
+    /// cache is neither read nor written and updates arrive from the backend's own
+    /// stream. False for `API`, which is remote, may fail, and needs both.
+    ///
+    /// A fork, and a deliberately temporary one. The end of this is a `CachingBackend`
+    /// wrapping `API` so that the cache and the queue live behind the protocol and this
+    /// model asks no such question -- but that shape should be argued for by a screen
+    /// that has actually run both ways, which is what this is.
+    private var keepsItsOwnStore: Bool { queue == nil }
 
     /// Says this person is no longer signed in, and why if there is a reason.
     ///
@@ -78,11 +107,23 @@ final class ListsModel {
     /// it. Safe by construction: written once in `init`, read once in `deinit`.
     nonisolated(unsafe) private var watching: Task<Void, Never>?
 
-    init(api: any Backend & Accounts & Destination, cache: Cache = .shared) {
+    init(
+        api: any Backend,
+        accounts: (any Accounts)? = nil,
+        queue: (any Destination)? = nil,
+        cache: Cache = .shared
+    ) {
         self.api = api
+        self.accounts = accounts
+        self.queue = queue
         self.cache = cache
 
         watching = Task { [weak self] in
+            // A backend that keeps its own store tells the screen itself -- see
+            // `watchLists`, which is where that stream is consumed. There is nothing in
+            // the cache to observe, because nothing writes to it.
+            guard queue != nil else { return }
+
             while !Task.isCancelled {
                 guard let stream = cache.observeLists() else { return }
                 do {
@@ -123,6 +164,11 @@ final class ListsModel {
     /// Kept for the tests, and for the few places that want the answer in this turn
     /// rather than on the observation's next one. Nothing else calls it.
     func reloadFromCache() {
+        // Nothing to re-read: the cache is not this backend's memory, and reading it
+        // would put another backend's lists on screen. This is the sharpest edge of
+        // running two stores side by side, and the reason the old one is read-only for
+        // the duration rather than merely unused.
+        guard !keepsItsOwnStore else { return }
         guard let overview = cache.overview() else { return }
         adopt(overview)
     }
@@ -142,7 +188,10 @@ final class ListsModel {
     func load() async {
         do {
             let listing = try await api.lists()
-            cache.remember(lists: listing.items)
+            // Not written down when the backend is already the place it would be
+            // written to. The cache is left exactly as the old path left it, so that
+            // path still works if this one has to be backed out.
+            if !keepsItsOwnStore { cache.remember(lists: listing.items) }
             lists = listing.items
             total = listing.total
             truncated = listing.truncated
@@ -154,7 +203,15 @@ final class ListsModel {
             // nothing on this screen waits for it -- a menu item appearing a moment
             // late is better than a screen that waits for a question about
             // administration before it shows anybody their shopping.
-            isOwner = (try? await api.whoAmI().isOwner) ?? isOwner
+            // Yes without a server: the person using the device administers it, which
+            // is what `embedded` says too when it makes them an owner of their own
+            // database. Asked otherwise, and asked after the lists have arrived, because
+            // nothing on this screen waits for it.
+            if let accounts {
+                isOwner = (try? await accounts.whoAmI().isOwner) ?? isOwner
+            } else {
+                isOwner = true
+            }
 
             // The server is reachable, so anything queued anywhere goes now.
             //
@@ -237,7 +294,7 @@ final class ListsModel {
             let made = try await api.createList(named: name)
             await load()
             return lists.first { $0.id == made.id } ?? made
-        } catch APIError.transport {
+        } catch APIError.transport where !keepsItsOwnStore {
             let made = cache.makeListHere(named: name, ownedBy: mine)
             cache.outbox.makeList(made)
             // The observation will deliver this too, a hop later. Read now as well so
@@ -267,6 +324,10 @@ final class ListsModel {
     /// the outbox's business -- see ``Outbox/drain(through:)`` -- and what is left stays
     /// queued for the next successful load.
     func sendQueued() async {
+        // Nothing to send, and nowhere to send it. A backend that keeps its own store
+        // has already stored it.
+        guard let queue else { return }
+
         // Before the count is looked at, because it is what puts something in the queue
         // on a device that has just been given a server: nothing was queued while it had
         // none, so the lists made there are known to this device and to nothing else.
@@ -274,7 +335,7 @@ final class ListsModel {
 
         guard !draining, cache.outbox.waiting > 0 else { return }
         draining = true
-        let drained = await cache.outbox.drain(through: api)
+        let drained = await cache.outbox.drain(through: queue)
         draining = false
         reloadFromCache()
 

@@ -263,4 +263,65 @@ struct LocalBackendTests {
         _ = try await backend.createList(named: "Household")
         #expect(try await backend.lists().items.count == 1)
     }
+
+    // MARK: - The lists screen, driven by the device
+
+    /// The first screen to run on this, and the point of the whole exercise.
+    ///
+    /// Note what is *not* asserted: no queue, no cache, no offline. The model is given
+    /// a backend and nothing else, and the screen works -- which is what "standalone is
+    /// not offline" means in code rather than in a comment.
+    @MainActor
+    @Test("the lists screen runs on the device's own backend")
+    func theListsScreenRunsLocally() async throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("screen-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: path) }
+        let backend = try #require(LocalBackend(at: path))
+
+        // No `accounts`, no `queue`, and a cache that is never touched.
+        let model = ListsModel(api: backend, cache: .inMemory(sending: { false }))
+
+        await model.load()
+
+        #expect(model.loaded)
+        #expect(model.fresh, "a device that answered was treated as not having answered")
+        #expect(!model.offline, "a device answering for itself reported itself unreachable")
+        #expect(model.error == nil)
+        #expect(model.waiting == 0, "something was queued for nobody")
+        // The person using the device administers it, so the screens behind that are
+        // offered rather than hidden.
+        #expect(model.isOwner, "the device's person does not administer the device")
+
+        let made = try #require(await model.makeList(named: "Household"))
+        #expect(made.name == "Household")
+        #expect(model.lists.map(\.name) == ["Household"])
+        #expect(model.error == nil, "making a list on the device was reported as a failure")
+        #expect(model.waiting == 0, "a list made on the device was queued for a server")
+    }
+
+    /// The cache is the fallback if this has to be backed out, so nothing here may
+    /// write to it.
+    @MainActor
+    @Test("the device's backend leaves the old cache alone")
+    func theOldCacheIsUntouched() async throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("screen-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: path) }
+        let backend = try #require(LocalBackend(at: path))
+
+        let cache = Cache.inMemory(sending: { false })
+        // As the old path left it: a list this device made before the switch.
+        let before = cache.makeListHere(named: "From the old path", ownedBy: 0)
+
+        let model = ListsModel(api: backend, cache: cache)
+        await model.load()
+        _ = await model.makeList(named: "Household")
+
+        #expect(model.lists.map(\.name) == ["Household"], "the screen read the wrong store")
+        #expect(
+            cache.lists().map(\.name) == [before.name],
+            "the cache was written to, so backing this out would not find it as it was"
+        )
+    }
 }

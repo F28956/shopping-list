@@ -25,9 +25,19 @@ struct ListsView: View {
     /// it only changes by leaving this screen entirely.
     private let onDeviceOnly = ServerDirectory.isOnDeviceOnly
 
-    init(api: API) {
+    /// `standalone` is the device answering for itself, and nil means the old path.
+    ///
+    /// Two backends, chosen once here rather than asked about throughout: with one the
+    /// model reads the device's own database and needs no cache and no queue, with the
+    /// other it reads a server and needs both. `api` is still held because the sheets
+    /// behind this screen -- sharing, joining, who may sign in -- are a server's and are
+    /// not offered without one.
+    init(api: API, standalone: LocalBackend? = nil) {
         self.api = api
-        _model = State(initialValue: ListsModel(api: api))
+        _model = State(
+            initialValue: standalone.map { ListsModel(api: $0) }
+                ?? ListsModel(api: api, accounts: api, queue: api)
+        )
     }
     /// The two screens behind the menu, as one piece of state.
     ///

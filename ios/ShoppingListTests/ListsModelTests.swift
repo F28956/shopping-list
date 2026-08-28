@@ -20,12 +20,19 @@ struct ListsModelTests {
         }
     }
 
+    /// The remote configuration: a server that cannot be reached, with the cache and
+    /// the queue behind it. Every test in this file is about that path -- what a device
+    /// answering for itself does instead is `LocalBackendTests`.
+    ///
+    /// Said outright rather than defaulted, because the defaults now mean the *other*
+    /// arrangement: a backend with no queue is one that keeps its own store, and these
+    /// tests would quietly stop touching the cache they are about.
     private func model(_ cache: Cache = .inMemory(sending: { true })) -> (ListsModel, Cache) {
         let api = API(
             baseURL: URL(string: "http://127.0.0.1:1")!,
             token: { "none" }
         )
-        return (ListsModel(api: api, cache: cache), cache)
+        return (ListsModel(api: api, accounts: api, queue: api, cache: cache), cache)
     }
 
     /// The one the Mac got wrong. It called `api.createList` and showed the failure,
