@@ -218,23 +218,24 @@ pub unsafe extern "C" fn quickadd_suggest(input: *const c_char) -> *mut c_char {
 
     let names = match parsed {
         None => Vec::new(),
-        Some(query) => {
-            let matched: Vec<parsing::history_rank::Candidate<String>> = query
+        // The whole policy is `parsing::suggest` -- which names are candidates, and in
+        // what order. It used to be half here: this filtered by fuzzy score and then
+        // ordered by how often a thing is bought, while the server ordered by how well
+        // it matched and broke ties on use. `mil` offered `milk` on one and `milk
+        // chocolate` on the other.
+        Some(query) => parsing::suggest::offer(
+            &query.query,
+            query
                 .candidates
                 .into_iter()
-                // Scored, then discarded: `rank` decides the order and a fuzzy score
-                // is only about whether it belongs in the running at all. Sorting by
-                // it instead would put a close spelling above something bought weekly.
-                .filter(|c| parsing::fuzzy::score(&query.query, &c.name).is_some())
-                .map(|c| parsing::history_rank::Candidate {
-                    value: c.name,
+                .map(|c| parsing::suggest::Remembered {
+                    name: c.name,
                     uses: c.uses,
                     last_used_at: c.last_used_at,
                 })
-                .collect();
-
-            parsing::history_rank::rank(matched, query.now)
-        }
+                .collect(),
+            query.now,
+        ),
     };
 
     CString::new(serde_json::json!({ "names": names }).to_string())

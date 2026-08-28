@@ -14,6 +14,7 @@ pub mod add;
 pub mod fuzzy;
 pub mod history_rank;
 pub mod quick_add;
+pub mod suggest;
 
 /// The first letter upper-cased, unless the first word already has a capital.
 ///

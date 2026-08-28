@@ -224,10 +224,17 @@ struct MacItemsView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(suggestions.offered, id: \.self) { suggestion in
                             Button {
+                                // Added outright, as on the phone: picking something
+                                // you have bought before is already the whole
+                                // decision, and a second press to confirm it asks
+                                // nothing. It goes through the same resolve as
+                                // anything typed, so it arrives measured and filed
+                                // the way it was last time.
                                 line = suggestion
                                 typing = true
                                 // What was accepted is no longer a suggestion.
                                 suggestions.clear()
+                                Task { await add() }
                             } label: {
                                 HStack {
                                     Image(systemName: "clock.arrow.circlepath")

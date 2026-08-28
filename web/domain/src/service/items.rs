@@ -432,7 +432,9 @@ pub async fn forget(ctx: &Ctx, actor: &Actor, list_id: list::Id, name: Name) -> 
 /// Here rather than in each transport: the browser was showing every match and the
 /// phone the first six, which is two answers to one question. Six is what fits under
 /// a field on a phone without covering the list behind it.
-pub const SUGGESTIONS: usize = 6;
+/// How many to offer. The number lives with the policy -- see
+/// `parsing::suggest::LIMIT`.
+pub const SUGGESTIONS: usize = parsing::suggest::LIMIT;
 
 /// What gets bought on this list, for a quick-add suggestion list.
 ///
@@ -452,47 +454,31 @@ pub async fn suggestions(
 ) -> Result<Vec<Name>> {
     lists::readable(ctx, actor.person()?, list_id).await?;
 
-    // Read by recency, offer by rank: the query bounds how much is considered, and
-    // `history_rank` decides the order — see there for why not in SQL.
+    // Read by recency; what to offer and in what order is `parsing::suggest`, which
+    // the clients run too. It was written out here and again on the phone, and the two
+    // disagreed: this sorted by how well a name matched, that one by how often it is
+    // bought, so `mil` offered `milk` here and `milk chocolate` there.
     let entries = Entry::for_list(&ctx.db, list_id, limit.clamp(0, super::PAGE_MAX)).await?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
 
-    let ranked = history_rank::rank(
+    Ok(parsing::suggest::offer(
+        query.unwrap_or_default(),
         entries
             .into_iter()
-            .map(|e| Candidate {
+            .map(|e| parsing::suggest::Remembered {
+                // Offered in the spelling last used, not the normalised key.
+                name: e.display.0,
                 uses: e.uses.0,
                 last_used_at: e.last_used_at.0.unix_timestamp(),
-                // Offered in the spelling last used, not the normalised key.
-                value: e.display.0,
             })
             .collect(),
         now,
-    );
-
-    let Some(query) = query.map(str::trim).filter(|q| !q.is_empty()) else {
-        return Ok(ranked.into_iter().map(Name).collect());
-    };
-
-    // Scored, then ranked: how well it matches what was typed decides the order, and
-    // how often it is bought breaks the ties. `position` is the rank order, so a
-    // stable sort on it keeps the more-used of two equal matches first.
-    let mut matches: Vec<(i32, usize, String)> = ranked
-        .into_iter()
-        .enumerate()
-        // Never what has already been typed in full: a suggestion that changes
-        // nothing is a row in the way of the ones that would.
-        .filter(|(_, name)| !name.eq_ignore_ascii_case(query))
-        .filter_map(|(rank, name)| fuzzy::score(query, &name).map(|s| (s, rank, name)))
-        .collect();
-    matches.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-
-    Ok(matches
-        .into_iter()
-        .map(|(_, _, name)| Name(name))
-        .take(SUGGESTIONS)
-        .collect())
+    )
+    .into_iter()
+    .map(Name)
+    .collect())
 }
+
 
 /// Clears everything ticked off one of the actor's lists, returning how many went.
 /// Empties the trolley.

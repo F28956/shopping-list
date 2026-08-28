@@ -1084,10 +1084,19 @@ private struct AddItemSheet: View {
                     Section {
                         ForEach(suggestions.offered, id: \.self) { suggestion in
                             Button {
-                                // Fills the field rather than adding outright: what is
-                                // typed may carry a quantity, and only the server knows
-                                // what a line means.
+                                // Added outright. It used to fill the field and wait
+                                // for `Add`, on the grounds that a line may carry a
+                                // quantity and only the server knew what one meant --
+                                // which stopped being true when the parser moved into
+                                // the app. Picking something you have bought before is
+                                // already the whole decision, and a second tap to
+                                // confirm it is a tap that asks nothing.
+                                //
+                                // It goes through the same resolve as anything typed,
+                                // so it arrives measured and filed the way it was last
+                                // time: `Milk` comes back as a pint, under dairy.
                                 line = suggestion
+                                Task { await addAndStay() }
                             } label: {
                                 HStack {
                                     Image(systemName: "clock.arrow.circlepath")
