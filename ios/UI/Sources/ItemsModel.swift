@@ -590,11 +590,14 @@ final class ItemsModel {
                     signedOut?(problem.localizedDescription)
                     return
                 }
-            } catch {}
+            } catch {
+                // Anything else is the connection going away -- a tunnel, a lock
+                // screen, a server restarting. Ordinary, and not worth showing; the
+                // wait below and the loop are the whole response.
+            }
 
-            // Losing the connection is ordinary -- a tunnel, a lock screen, a server
-            // restart -- so it is not shown. Waiting keeps a server that is refusing
-            // everything from being asked as fast as the loop can go round.
+            // Waiting keeps a server that is refusing everything from being asked as
+            // fast as the loop can go round.
             reconnecting = true
             try? await Task.sleep(for: .seconds(3))
         }

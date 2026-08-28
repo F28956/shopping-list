@@ -149,10 +149,11 @@ struct WatchItemsView: View {
                 if case .unauthorized = problem {
                     store.credentialRefused()
                 }
-            } catch {}
+            } catch {
+                // Anything else is the connection going away, which on a watch is a
+                // lowered wrist. Ordinary, and not worth showing.
+            }
 
-            // A watch loses its connection constantly -- a lowered wrist is enough --
-            // so this is ordinary rather than an error worth showing.
             reconnecting = true
             try? await Task.sleep(for: .seconds(3))
         }
@@ -306,8 +307,7 @@ struct WatchItemsView: View {
         // With no server the phone has already put both in the cache -- the same
         // rows, with the same ids, that a server would have supplied.
         guard let api else {
-            units = Dictionary(uniqueKeysWithValues: cache.units().map { ($0.id, $0.name) })
-            tags = cache.tags(on: list)
+            seedReference()
             return
         }
         do {
@@ -316,7 +316,35 @@ struct WatchItemsView: View {
             let (loadedUnits, loadedTags) = try await (units, tags)
             self.units = Dictionary(uniqueKeysWithValues: loadedUnits.map { ($0.id, $0.name) })
             self.tags = loadedTags
-        } catch {}
+        } catch {
+            // Not swallowed, which is what this used to do. Failing here left `units`
+            // and `tags` empty for as long as the screen was up, so every row lost its
+            // measure and its aisle -- on the device with the worst connection of the
+            // three, where the ask is relayed through a phone and fails most often.
+            //
+            // Nothing is shown, because a poorer list is not a broken one and `load()`
+            // already reports what actually stops the screen working. But poorer is
+            // recovered from rather than accepted: the phone syncs the same rows into
+            // this cache, and what shipped with the app stands in if even that is
+            // empty. Same fallback as `ItemsModel.seedReference`, same ids.
+            seedReference()
+        }
+    }
+
+    /// What the server would have said, from the cache or from the bundle.
+    ///
+    /// Only fills what is missing: an answer already on screen is a real one, and a
+    /// half-failed load should not have the shipped set written over the top of it.
+    private func seedReference() {
+        if units.isEmpty {
+            let remembered = cache.units()
+            let known = remembered.isEmpty ? Reference.units : remembered
+            units = Dictionary(uniqueKeysWithValues: known.map { ($0.id, $0.name) })
+        }
+        if tags.isEmpty {
+            let remembered = cache.tags(on: list)
+            tags = remembered.isEmpty ? Reference.tags : remembered
+        }
     }
 
     private func load() async {

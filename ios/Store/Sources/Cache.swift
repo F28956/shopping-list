@@ -17,6 +17,21 @@ import GRDB
 /// Every method swallows its own errors. A cache that cannot be read is a cache that
 /// holds nothing, and a screen asking for the last thing it saw has nothing useful to
 /// do with a thrown error.
+/// ## Why `@unchecked Sendable`
+///
+/// `unchecked` is a promise made to the compiler, so it is written down here rather
+/// than left for somebody to re-derive. It rests on two things, and both are checkable
+/// by reading this file:
+///
+/// 1. **There is no mutable state.** `queue` and `outbox` are both `let`, set once in
+///    `init` and never reassigned. Nothing else is stored.
+/// 2. **Every read and write goes through `DatabaseQueue`**, which serialises access
+///    across threads -- that is what GRDB's queue is for. Two callers on two threads
+///    cannot be inside the database at once.
+///
+/// It stops being true the moment a `var` is added here, or a caller is handed the
+/// `DatabaseQueue` to use outside `read`/`write`. Either of those needs an actor
+/// instead, not a repeat of this comment.
 final class Cache: @unchecked Sendable {
 
     private let queue: DatabaseQueue?
@@ -729,8 +744,22 @@ final class Cache: @unchecked Sendable {
     /// the places that write are the places somebody adds a fourth of without knowing
     /// that anything downstream cared. What listens today is the watch link -- the
     /// phone is the watch's server, so a change here is news the wrist is waiting for.
+    ///
+    /// **On the main queue, always.** A notification is delivered synchronously on
+    /// whichever thread posted it, and this is posted from whichever thread happened to
+    /// be writing. Two of the three listeners are SwiftUI `.onReceive` closures that
+    /// assign straight into `@State`, so posting from a database thread was a
+    /// background write to view state -- the kind that works until the day it does not.
+    /// Hopping here rather than at each listener means a fourth listener added later
+    /// inherits the guarantee instead of having to know about it.
     private func announce() {
-        NotificationCenter.default.post(name: .cacheChanged, object: nil)
+        if Thread.isMainThread {
+            NotificationCenter.default.post(name: .cacheChanged, object: nil)
+        } else {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .cacheChanged, object: nil)
+            }
+        }
     }
 }
 

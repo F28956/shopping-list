@@ -315,7 +315,11 @@ struct ListsView: View {
                     identity.signOut(because: problem.localizedDescription)
                     return
                 }
-            } catch {}
+            } catch {
+                // Anything else is the connection going away -- a tunnel, a lock
+                // screen, a server restarting. Ordinary, and not worth showing; the
+                // wait below and the loop are the whole response.
+            }
 
             reconnecting = true
             try? await Task.sleep(for: .seconds(3))

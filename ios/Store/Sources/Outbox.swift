@@ -123,6 +123,9 @@ struct Drained: Equatable {
 /// Unlike the cache, **this is not disposable**. A queued change exists nowhere else in
 /// the world until it is sent, which is why the database it shares with the cache is
 /// migrated by hand rather than thrown away on a schema change.
+/// `@unchecked Sendable` on the same two grounds as ``Cache``, which see: one `let`
+/// and no other stored state, and every touch of the database through GRDB's
+/// `DatabaseQueue`, which serialises them.
 final class Outbox: @unchecked Sendable {
 
     private let queue: DatabaseQueue?

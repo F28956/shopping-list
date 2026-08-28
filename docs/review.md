@@ -71,17 +71,38 @@ The parameter is gone, on both iOS and Android, where the same four-caller versi
 it existed. There is nothing to pass, so nothing can opt out: a debug build allows
 cleartext, a release build refuses it, and that is the whole rule.
 
-## 4. Six `catch {}` blocks swallow everything
+## ~~4. Six `catch {}` blocks swallow everything~~ — fixed
 
-Including `loadReference` on both platforms: reference data and history can fail to
-load for any reason and nothing is said anywhere, ever.
+Five, by the time they were counted, and they were not all the same thing.
 
-## 5. `Cache` is `@unchecked Sendable` and nothing records why that is true
+Four are the SSE watch loops, where anything that is not an `APIError` is the
+connection going away — a tunnel, a lock screen, a server restarting. Swallowing that
+is right; the loop waiting and reconnecting is the whole response. What was missing was
+any statement of it at the brace, so a reader had to find the comment further down and
+join it up. Each now says so where it is.
 
-It is true today — every stored property is a `let` and GRDB serialises access — but
-the compiler is being told to trust rather than check, and nothing says what would
-break the promise. `cacheChanged` is also posted on whichever thread wrote, and
-consumed straight into SwiftUI `@State`.
+The fifth was real. `WatchItemsView.loadReference` swallowed a failure and left `units`
+and `tags` empty for as long as the screen was up, so every row lost its measure and its
+aisle — on the device with the worst connection of the three, where the ask is relayed
+through a phone and so fails most often. It now falls back the way the phone does:
+the cache first, then the set that shipped with the app, same ids. `ItemsModel`'s own
+`loadReference` had already gained that fallback when it was extracted.
+
+## ~~5. `Cache` is `@unchecked Sendable` and nothing records why that is true~~ — fixed
+
+Two halves, one of them a live bug.
+
+The promise is now written down on `Cache` and on `Outbox`: no mutable stored state,
+and every touch of the database through GRDB's `DatabaseQueue`, which serialises across
+threads — with the two things that would break it named, so the next person changing
+this file is told rather than left to re-derive it.
+
+`cacheChanged` was the bug. A notification is delivered synchronously on whichever
+thread posted it, this was posted from whichever thread happened to be writing, and two
+of the three listeners are SwiftUI `.onReceive` closures assigning into `@State`. That
+is a background write to view state — the kind that works until it does not. `announce`
+now hops to the main queue, once, so a listener added later inherits the guarantee
+rather than having to know about it.
 
 ## Checked and found sound
 
