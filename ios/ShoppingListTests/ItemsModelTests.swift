@@ -100,66 +100,6 @@ struct ItemsModelTests {
         #expect(cache.items(on: list).first?.isDone == true, "it was not written down")
     }
 
-    @Test("what is queued is laid back over what a server answered")
-    func unsentWorkSurvivesAReload() async {
-        // The rule that stops a successful load visibly undoing a tick that is still
-        // queued: the server has not been told, so it answers with the old state.
-        let (model, _, list) = model()
-        model.line = "milk"
-        await model.add()
-        await model.toggle(model.items[0])
-
-        let asTheServerSeesIt = [
-            Item(
-                id: 7,
-                uuid: model.items[0].uuid,
-                name: "Milk",
-                amount: 1,
-                unitID: 1,
-                doneAt: nil,
-                tagIDs: []
-            )
-        ]
-
-        let merged = model.withUnsent(asTheServerSeesIt)
-        #expect(merged.first?.isDone == true, "the queued tick was undone by a reload")
-        _ = list
-    }
-
-    @Test("rows this device made and has not sent are carried across a reload")
-    func locallyMadeRowsSurvive() async {
-        let (model, _, _) = model()
-        model.line = "milk"
-        await model.add()
-
-        // The server has never heard of it, so it says nothing about it.
-        let merged = model.withUnsent([])
-        #expect(merged.count == 1, "a row made offline vanished on the first load")
-    }
-
-    @Test("a row somebody else deleted does not come back as a ghost")
-    func deletedRowsDoNotReturn() async {
-        // Any queued operation used to qualify a row for carrying across, which meant
-        // a tick queued against a row somebody else had deleted put it back on screen
-        // -- present here, gone everywhere else, impossible to be rid of.
-        let (model, cache, list) = model()
-        let theirs = Item(
-            id: 3,
-            uuid: "theirs",
-            name: "Bread",
-            amount: 1,
-            unitID: 1,
-            doneAt: nil,
-            tagIDs: []
-        )
-        cache.remember(items: [theirs], on: list)
-        model.items = [theirs]
-        await model.toggle(theirs)
-
-        let merged = model.withUnsent([])
-        #expect(merged.isEmpty, "a deleted row came back")
-    }
-
     @Test("clearing takes only the rows this screen could see")
     func clearingIsBounded() async {
         let (model, _, _) = model()
@@ -185,7 +125,10 @@ struct ItemsModelTests {
         cache.remember(lists: [list])
         let model = ItemsModel(
             list: list,
-            api: API(baseURL: URL(string: "http://127.0.0.1:1")!, token: { "none" }),
+            api: CachingBackend(
+                remote: API(baseURL: URL(string: "http://127.0.0.1:1")!, token: { "none" }),
+                cache: cache
+            ),
             cache: cache
         )
 
@@ -216,7 +159,9 @@ struct ItemsModelTests {
             ],
             on: list
         )
-        model.reloadFromCache()
+        await model.loadReference()
+        let watching = Task { await model.watch() }
+        defer { watching.cancel() }
         #expect(model.tags.map(\.name).contains("dairy"), "the screen never had it to lose")
 
         // What the Categories screen does, and nothing more. No reload is asked for
@@ -239,7 +184,9 @@ struct ItemsModelTests {
             tags: [Tag(id: 900, name: "dairy", emoji: "🧀", sortOrder: 0)],
             on: list
         )
-        model.reloadFromCache()
+        await model.loadReference()
+        let watching = Task { await model.watch() }
+        defer { watching.cancel() }
 
         cache.rename(tag: 900, to: "cheese counter", emoji: "🧀")
         await until { model.tags.first { $0.id == 900 }?.name == "cheese counter" }
@@ -273,19 +220,30 @@ struct ItemsModelTests {
             ],
             on: list
         )
+        await model.loadReference()
+        let watching = Task { await model.watch() }
+        defer { watching.cancel() }
         await until { model.tags.count == 2 }
 
         // A different object over the same database, as another part of the app is.
         let elsewhere = Cache(path: path, sending: { true })
         elsewhere.removeTag(901)
 
-        // Deliberately asserting the limit. If this ever starts failing because the
-        // screen *did* catch up, the comment above is out of date and the restriction on
-        // opening a second cache can be lifted.
-        await until({ model.tags.count == 1 }, within: 0.5)
+        // The limit is narrower than it was, and this is where that was noticed.
+        //
+        // A *read* sees it: `tags(orderedFor:)` goes to the file, and the file has the
+        // other connection's write in it. What is still connection-bound is the
+        // *notification* -- nothing wakes this screen, so it catches up only when
+        // something else does, which here is the reference re-read that follows any
+        // change at all.
+        //
+        // So the rule to remember is not "a second connection is invisible". It is
+        // "a second connection cannot wake you". That is a smaller claim and the true
+        // one, and it is still why the app opens exactly one cache.
+        await until({ model.tags.count == 1 }, within: 1)
         #expect(
-            model.tags.map(\.name) == ["produce", "dairy"],
-            "a second connection is now observed -- see the note on Cache.observe(list:)"
+            model.tags.map(\.name) == ["produce"],
+            "a read did not see what another connection wrote"
         )
     }
 }

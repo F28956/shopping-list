@@ -180,7 +180,6 @@ struct MacItemsView: View {
                     identity.signOut()
                 }
             }
-            model.showWhatWeHave()
             await model.refreshUnsent()
             await model.load()
         }

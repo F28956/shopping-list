@@ -74,13 +74,50 @@ actor CachingBackend {
             let answer = try await remote.items(on: list)
             cache.remember(items: answer.items, on: list)
             reachedIt = true
-            return answer
+            let shown = laidOver(answer.items, on: list)
+            return Listing(items: shown, total: answer.total, truncated: answer.truncated)
         } catch let problem as APIError {
             guard case .transport = problem else { throw problem }
             reachedIt = false
-            let remembered = cache.items(on: list)
+            let remembered = laidOver(cache.items(on: list), on: list)
             return Listing(items: remembered, total: Int64(remembered.count), truncated: false)
         }
+    }
+
+    /// The answer with this device's unsent changes laid back over it.
+    ///
+    /// Without this a successful read visibly undoes work that is still queued: the
+    /// server has not been told, so it answers with the old state, and the rows flick
+    /// back for as long as the queue is stuck.
+    ///
+    /// Rows this device created and has not sent are not in the answer at all, so they
+    /// are carried from the cache -- which has them, because `add` writes them down.
+    /// **Only rows it created.** Any queued operation used to qualify, which meant a
+    /// tick queued against a row somebody else had deleted put that row back as a ghost:
+    /// present here, gone everywhere else, impossible to be rid of.
+    private func laidOver(_ answer: [Item], on list: List) -> [Item] {
+        let queued = cache.outbox.forList(list)
+        guard !queued.isEmpty else { return answer }
+
+        let known = Set(answer.map(\.uuid))
+        let made = Set(queued.filter { $0.kind == QueuedOperation.Kind.add }.map(\.itemUUID))
+        var rows = answer + cache.items(on: list).filter {
+            !known.contains($0.uuid) && made.contains($0.uuid)
+        }
+
+        for operation in queued {
+            switch operation.kind {
+            case QueuedOperation.Kind.setDone:
+                rows = rows.map {
+                    $0.uuid == operation.itemUUID ? $0.withDone(operation.done) : $0
+                }
+            case QueuedOperation.Kind.delete:
+                rows = rows.filter { $0.uuid != operation.itemUUID }
+            default:
+                break
+            }
+        }
+        return rows
     }
 
     func units() async throws -> [Unit] {
@@ -89,7 +126,11 @@ actor CachingBackend {
             cache.remember(units: answer)
             return answer
         } catch let problem as APIError where isTransport(problem) {
-            return cache.units()
+            // The cache, then what shipped with the app. A first run with no signal
+            // would otherwise have no units at all, and a row with no unit prints no
+            // measure -- which reads as a row that has lost one.
+            let remembered = cache.units()
+            return remembered.isEmpty ? Reference.units : remembered
         }
     }
 
@@ -99,7 +140,8 @@ actor CachingBackend {
             cache.remember(tags: answer, on: list)
             return answer
         } catch let problem as APIError where isTransport(problem) {
-            return cache.tags(on: list)
+            let remembered = cache.tags(on: list)
+            return remembered.isEmpty ? Reference.tags : remembered
         }
     }
 
@@ -107,14 +149,29 @@ actor CachingBackend {
         try await remote.tags(on: item, in: list)
     }
 
+    /// What to offer for a part-typed line.
+    ///
+    /// The device's own memory rather than a round trip, and not only as a fallback:
+    /// autocomplete that waits for a network answers after the next letter is typed.
+    /// The ranking is `parsing::suggest`, which the server runs too -- so the same
+    /// letters offer the same things in the same order either way.
     func suggestions(matching typed: String, on list: List) async throws -> [String] {
-        try await remote.suggestions(matching: typed, on: list)
+        QuickAdd.suggest(typed, from: cache.history(on: list))
     }
 
     func history(on list: List) async throws -> [RememberedEntry] {
         let answer = try await remote.history(on: list)
         cache.adopt(history: answer, on: list)
         return answer
+    }
+
+    /// Records what somebody corrected a row *to*.
+    ///
+    /// A better memory than what they first typed, which is why the server records
+    /// history on an edit as well as on an add. The count does not rise: editing one row
+    /// twice is one intention, not two.
+    private func remember(_ item: Item, on list: List) {
+        cache.remember(item, on: list, isNew: false)
     }
 
     // MARK: - Lists
@@ -142,8 +199,92 @@ actor CachingBackend {
 
     // MARK: - What is on one
 
+    /// Reads what somebody typed, and queues what it turned out to be.
+    ///
+    /// The reading is `QuickAdd.resolve`, which is `parsing::add` compiled in and shared
+    /// with the server -- which unit a bare name lands in, whether `Milk` is the `milk`
+    /// already on the list, whether a crossed-off row comes back. It happens here rather
+    /// than on a screen because it exists for one reason: a device with no signal has to
+    /// decide for itself, and deciding for itself is this type's whole job.
+    ///
+    /// `LocalBackend` does none of this. It hands the line to `domain`, which reads it
+    /// with the same rules on the other side of the boundary -- so a screen calls
+    /// `add(line)` and neither knows nor cares which happened.
     func add(_ line: String, to list: List) async throws {
-        try await remote.add(line, to: list)
+        let decision = QuickAdd.resolve(
+            line,
+            units: cache.units(),
+            rows: cache.items(on: list),
+            // The whole memory. Picking one entry by the typed line finds nothing for
+            // anything carrying a quantity -- see `QuickAdd.resolve`.
+            history: cache.history(on: list)
+        )
+
+        switch decision {
+        case .existing(let uuid, let putBack):
+            guard let alike = cache.items(on: list).first(where: { $0.uuid == uuid }) else {
+                return
+            }
+            // Queued under a **fresh** uuid: the server runs this same rule when it
+            // hears the line, and handing it the row's own uuid takes the early return
+            // in `create` and skips the putting back.
+            //
+            // Its own name and amount, not the typed line -- this is the row the shared
+            // rule chose, and saying so leaves the server nothing to choose.
+            cache.outbox.add(
+                uuid: UUID().uuidString.lowercased(),
+                localID: alike.id,
+                name: alike.name,
+                amount: alike.amount,
+                unitID: alike.unitID,
+                on: list
+            )
+            cache.remember(alike, on: list, isNew: true)
+            if putBack {
+                // Queued as well as shown, and that is not belt and braces: the overlay
+                // replays queued ticks in order, so the `setDone(true)` that crossed
+                // this row off is still in there. Without a later `setDone(false)` the
+                // next read puts the tick straight back and the row somebody just
+                // re-added appears already done.
+                cache.outbox.setDone(alike, on: list, done: false)
+                remembering(on: list) { rows in
+                    rows.map { $0.uuid == uuid ? $0.withDone(false) : $0 }
+                }
+            }
+
+        case .new(let row):
+            // A **negative id** that never leaves the device: a placeholder so a screen
+            // has something to key on. The uuid is what the operation actually names,
+            // and what the server's row comes back under.
+            let made = Item(
+                id: -Int64(Date().timeIntervalSince1970 * 1000),
+                uuid: UUID().uuidString.lowercased(),
+                name: row.name,
+                amount: row.amount,
+                unitID: row.unitID,
+                doneAt: nil,
+                // Where the history says it belongs, so a re-added item files itself.
+                tagIDs: row.tagIDs
+            )
+            cache.outbox.add(
+                uuid: made.uuid,
+                localID: made.id,
+                name: made.name,
+                amount: made.amount,
+                unitID: made.unitID,
+                on: list
+            )
+            // Said out loud, because the add itself has no field for tags and the
+            // server's filing step only runs when it is given a line. Behind the add in
+            // an ordered queue, so the row exists by the time these land.
+            for tagID in made.tagIDs {
+                cache.outbox.tag(made, on: list, tagID: tagID, attached: true)
+            }
+            cache.remember(made, on: list, isNew: true)
+            remembering(on: list) { $0 + [made] }
+        }
+
+        await drain()
     }
 
     /// Queued, then sent -- rather than sent, and queued if that fails.
@@ -188,20 +329,19 @@ actor CachingBackend {
         // The row as it was travels with it -- `seen` is how the server tells a rename
         // from two people correcting the same row, and the outbox is what carries it.
         cache.outbox.update(item, on: list, name: name, amount: amount, unitID: unitID)
+        let corrected = Item(
+            id: item.id,
+            uuid: item.uuid,
+            name: name,
+            amount: amount,
+            unitID: unitID,
+            doneAt: item.doneAt,
+            tagIDs: item.tagIDs
+        )
         remembering(on: list) { rows in
-            rows.map { row in
-                guard row.uuid == item.uuid else { return row }
-                return Item(
-                    id: row.id,
-                    uuid: row.uuid,
-                    name: name,
-                    amount: amount,
-                    unitID: unitID,
-                    doneAt: row.doneAt,
-                    tagIDs: row.tagIDs
-                )
-            }
+            rows.map { $0.uuid == item.uuid ? corrected : $0 }
         }
+        remember(corrected, on: list)
         await drain()
     }
 
@@ -306,8 +446,28 @@ actor CachingBackend {
         }
     }
 
+    /// Two sources again, for the same reason as ``listChanges()``: a change made on
+    /// this device reaches the cache, a change made elsewhere reaches the server, and a
+    /// screen wants to hear about both without knowing there are two.
     func changes(on list: List) async throws -> AsyncThrowingStream<Void, Error> {
-        try await remote.changes(on: list)
+        let remote = self.remote
+        let cache = self.cache
+
+        return AsyncThrowingStream { continuation in
+            let fromServer = Task {
+                if let stream = try? await remote.changes(on: list) {
+                    for try await _ in stream { continuation.yield() }
+                }
+            }
+            let fromHere = Task {
+                guard let stream = cache.observe(list: list) else { return }
+                for try await _ in stream { continuation.yield() }
+            }
+            continuation.onTermination = { _ in
+                fromServer.cancel()
+                fromHere.cancel()
+            }
+        }
     }
 
     // MARK: - The queue

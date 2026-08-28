@@ -95,4 +95,72 @@ struct CachingBackendTests {
         _ = try? await backend.lists()
         #expect(await backend.reachable == false, "an unreachable server was reported reachable")
     }
+
+    // MARK: - What is queued, laid back over what the server said
+
+    private func list() -> List {
+        List(id: 1, uuid: "list-1", name: "Shop", ownerID: 9, role: .editor)
+    }
+
+    /// The rule that stops a successful read visibly undoing a tick that is still
+    /// queued: the server has not been told, so it answers with the old state, and the
+    /// row would flick back for as long as the queue is stuck.
+    ///
+    /// These three were `ItemsModelTests` until the queue moved behind the protocol.
+    @Test("a queued tick is laid back over what was read")
+    func aQueuedTickSurvivesAReload() async throws {
+        let (backend, cache) = backend()
+        let list = list()
+        cache.remember(lists: [list])
+        cache.remember(units: [Unit(id: 1, name: "unit", bare: false)])
+
+        try await backend.add("milk", to: list)
+        let milk = try #require(try await backend.items(on: list).items.first)
+        try await backend.setDone(milk, on: list, done: true)
+
+        #expect(
+            try await backend.items(on: list).items.first?.isDone == true,
+            "the queued tick was undone by a read"
+        )
+    }
+
+    /// A row this device made is not in the server's answer at all, so it is carried
+    /// across from what was written down.
+    @Test("a row made with no signal is carried across a read")
+    func locallyMadeRowsSurvive() async throws {
+        let (backend, cache) = backend()
+        let list = list()
+        cache.remember(lists: [list])
+        cache.remember(units: [Unit(id: 1, name: "unit", bare: false)])
+
+        try await backend.add("milk", to: list)
+
+        #expect(
+            try await backend.items(on: list).items.count == 1,
+            "a row made offline vanished on the first read"
+        )
+    }
+
+    /// **Only** rows it made. Any queued operation used to qualify, which meant a tick
+    /// queued against a row somebody else had deleted put it back on screen: present
+    /// here, gone everywhere else, impossible to be rid of.
+    @Test("a row somebody else deleted does not come back as a ghost")
+    func deletedRowsDoNotReturn() async throws {
+        let (backend, cache) = backend()
+        let list = list()
+        cache.remember(lists: [list])
+        let theirs = Item(id: 3, uuid: "theirs", name: "Bread", amount: 1,
+                          unitID: 1, doneAt: nil, tagIDs: [])
+        cache.remember(items: [theirs], on: list)
+
+        // Ticked here, deleted there: the queue holds a tick against a row that is
+        // gone, and the cache no longer has it either.
+        try await backend.setDone(theirs, on: list, done: true)
+        cache.remember(items: [], on: list)
+
+        #expect(
+            try await backend.items(on: list).items.isEmpty,
+            "a row somebody else deleted came back"
+        )
+    }
 }

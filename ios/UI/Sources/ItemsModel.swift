@@ -112,58 +112,16 @@ final class ItemsModel {
     ///
     /// `nonisolated(unsafe)` because `deinit` is not on the main actor and has to cancel
     /// this. Safe by construction: written once in `init`, read once in `deinit`.
-    nonisolated(unsafe) private var watching: Task<Void, Never>?
-
     init(list: List, api: any Backend, cache: Cache = .shared) {
         self.list = list
         self.api = api
         self.cache = cache
 
-        watching = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let stream = cache.observe(list: list) else { return }
-                do {
-                    for try await contents in stream {
-                        guard let self else { return }
-                        self.adopt(contents)
-                    }
-                    // Ended without erroring: the database is gone, and nothing will
-                    // change again. Restarting would spin.
-                    return
-                } catch {
-                    // An observation that stops is a screen that quietly stops updating
-                    // -- exactly the failure this whole change exists to remove, and
-                    // worse than the old notification because it would look like it was
-                    // still working. So it is started again rather than given up on.
-                    try? await Task.sleep(for: .seconds(1))
-                }
-            }
-        }
+        // Nothing watched here any more. `watch()` consumes the backend's own stream,
+        // which carries changes from the server *and* from this device -- see
+        // `CachingBackend.changes(on:)`. One loop, either backend.
     }
 
-    deinit {
-        watching?.cancel()
-    }
-
-    /// What the database currently says, put on screen.
-    ///
-    /// The guards are about emptiness rather than staleness: a cache not filled yet must
-    /// not blank a screen the server has already answered. Once there is anything there
-    /// it wins, because this only runs when something wrote.
-    private func adopt(_ contents: Cache.ListContents) {
-        if !contents.items.isEmpty || items.isEmpty {
-            items = contents.items
-            if !fresh { total = Int64(contents.items.count) }
-        }
-        if !contents.units.isEmpty { units = contents.units }
-        if !contents.tags.isEmpty { tags = contents.tags }
-        if !items.isEmpty { loaded = true }
-        // Asking the backend is asynchronous now, and this is not: the observation that
-        // calls it is synchronous by nature. Its own task rather than blocking one --
-        // the marks arriving a turn later is invisible, and holding the observation is
-        // not.
-        Task { await refreshUnsent() }
-    }
 
     /// The rows to show, in the order the shop is walked.
     ///
@@ -193,33 +151,14 @@ final class ItemsModel {
     func suggest(_ typed: String) {
         suggestions.update(typed: typed) { [self] wanted in
             guard !ServerDirectory.isOnDeviceOnly else {
-                return QuickAdd.suggest(wanted, from: cache.history(on: list))
+                return await (try? api.suggestions(matching: wanted, on: list)) ?? []
             }
             do {
                 return try await api.suggestions(matching: wanted, on: list)
             } catch {
-                return QuickAdd.suggest(wanted, from: cache.history(on: list))
+                return await (try? api.suggestions(matching: wanted, on: list)) ?? []
             }
         }
-    }
-
-    /// Something changed the cache from outside this screen.
-    ///
-    /// In practice a tick that arrived from the watch, which lands in the cache with no
-    /// view involved. Without this the phone sat there showing the row un-ticked while
-    /// its own database said otherwise, which looked exactly like the watch failing.
-    ///
-    /// Safe against the writes this screen makes itself: re-reading is idempotent and
-    /// does not write back, so `show` → cache → here → `items` settles in one pass with
-    /// nothing to announce.
-    /// Re-reads everything this screen holds.
-    ///
-    /// Kept for the tests, which drive it directly rather than waiting on an
-    /// observation. In the app nothing calls it: the observation started in `init` does
-    /// this whenever the database moves, which is the whole point of the change.
-    func reloadFromCache() {
-        guard let contents = cache.contents(of: list) else { return }
-        adopt(contents)
     }
 
 
@@ -228,94 +167,21 @@ final class ItemsModel {
         guard !typed.isEmpty else { return }
 
         // Cleared before the request rather than after, so the next item can be typed
-        // straight away — the same reason the web form sits outside the swap. Putting
+        // straight away -- the same reason the web form sits outside the swap. Putting
         // the cursor back is the sheet's business now; this only clears what it holds.
         line = ""
         suggestions.clear()
 
-        // The row appears at once, under a uuid minted here and a **negative id**. The
-        // negative id never leaves the device: it is a placeholder so the screen has
-        // something to key on, and the uuid is what the operation actually names. When
-        // the add lands, the reload replaces it with the server's row — same uuid, real
-        // id.
-        //
         // **What the line does is not decided here.** Which unit a bare name lands in,
         // whether `Milk` is the `milk` already on the list, whether a crossed-off row
-        // comes back — all of it is `parsing::add`, compiled in and shared with the
-        // server. Written out in Swift instead, these drifted immediately: this screen
-        // showed three rows for `milk`, `milk` and `Milk` where a server would have
-        // shown one, and nothing was ever going to merge them.
-        // The whole memory. Picking one entry here meant picking it by the typed
-        // line, which found nothing for anything carrying a quantity -- see
-        // `QuickAdd.resolve`.
-        let decision = QuickAdd.resolve(
-            typed,
-            units: units,
-            rows: items,
-            history: cache.history(on: list)
-        )
-
-        switch decision {
-        case .existing(let uuid, let putBack):
-            // Nothing is created. Queued all the same, and under a **fresh** uuid: the
-            // server runs this same rule when it hears the line, and handing it the
-            // row's own uuid takes the early return in `create` and skips the putting
-            // back.
-            guard let alike = items.first(where: { $0.uuid == uuid }) else { return }
-            // Its own name and amount, not the typed line: this is the row the
-            // shared rule chose, and saying so leaves the server nothing to choose.
-            cache.outbox.add(
-                uuid: UUID().uuidString.lowercased(),
-                localID: alike.id,
-                name: alike.name,
-                amount: alike.amount,
-                unitID: alike.unitID,
-                on: list
-            )
-            cache.remember(alike, on: list, isNew: true)
-            if putBack {
-                show { rows in rows.map { $0.uuid == uuid ? $0.withDone(false) : $0 } }
-                cache.remember(items: items, on: list)  // step two's to remove; see below
-            }
-
-        case .new(let row):
-            let uuid = UUID().uuidString.lowercased()
-            let local = Item(
-                id: -Int64(Date().timeIntervalSince1970 * 1000),
-                uuid: uuid,
-                name: row.name,
-                amount: row.amount,
-                unitID: row.unitID,
-                doneAt: nil,
-                // Where the history says it belongs, so a re-added item files itself.
-                tagIDs: row.tagIDs
-            )
-            cache.outbox.add(
-                uuid: uuid,
-                localID: local.id,
-                name: local.name,
-                amount: local.amount,
-                unitID: local.unitID,
-                on: list
-            )
-            // Where the history said it belongs, said out loud. The add itself has no
-            // field for tags, and the server's own filing step only runs when it is
-            // given a line -- so this is how what was drawn here becomes what is
-            // stored there. Behind the add in an ordered queue, so the row exists.
-            for tagID in local.tagIDs {
-                cache.outbox.tag(local, on: list, tagID: tagID, attached: true)
-            }
-            cache.remember(local, on: list, isNew: true)
-            show { $0 + [local] }
-            // **Step two's to remove.** `show` used to write the rows down as well as
-            // put them on screen; that half is the backend's now, and every other
-            // mutation goes through it. `add` does not yet -- it still resolves the line
-            // and queues for itself -- so without this a row added offline would be on
-            // screen and nowhere else, and gone on the next launch.
-            cache.remember(items: items, on: list)
-        }
-
-        await drain()
+        // comes back -- all of it is `parsing::add`, and the backend is what reaches it:
+        // `LocalBackend` through `domain`, `CachingBackend` through the compiled-in
+        // parser against this device's own memory. Two routes to one set of rules.
+        //
+        // This used to be written out here, and that is how the screen came to show
+        // three rows for `milk`, `milk` and `Milk` where a server showed one.
+        try? await api.add(typed, to: list)
+        await load()
     }
 
     /// Records the order this person walks this list in.
@@ -404,22 +270,6 @@ final class ItemsModel {
             try await api.detach(tag, from: target.item, on: list)
         }
 
-        // What somebody corrected an item *to* is a better memory than what they first
-        // typed, which is why the server records history here as well as on an add.
-        // The count does not rise: editing one row twice is one intention.
-        cache.remember(
-            Item(
-                id: target.item.id,
-                uuid: target.item.uuid,
-                name: edit.name,
-                amount: amount,
-                unitID: unitID,
-                doneAt: target.item.doneAt,
-                tagIDs: Array(edit.tagIDs)
-            ),
-            on: list,
-            isNew: false
-        )
 
         show { rows in
             rows.map {
@@ -538,84 +388,6 @@ final class ItemsModel {
         items = change(items)
     }
 
-    /// The server's answer with this device's unsent changes laid back over it.
-    ///
-    /// Without this a successful load would visibly undo a tick that is still queued —
-    /// the server has not been told, so it answers with the old state, and the row
-    /// would flick back for as long as the queue is stuck.
-    /// The server's answer with this device's unsent changes laid back over it.
-    ///
-    /// Without this a successful load would visibly undo work that is still queued: the
-    /// server has not been told, so it answers with the old state, and the rows would
-    /// flick back for as long as the queue is stuck.
-    ///
-    /// Rows this device created and has not sent are not in the server's answer at all,
-    /// so they are carried across from what is already on screen rather than rebuilt.
-    func withUnsent(_ fromServer: [Item]) -> [Item] {
-        let queued = cache.outbox.forList(list)
-        guard !queued.isEmpty else { return fromServer }
-
-        // Only rows this device *created* and has not sent are carried across. Any
-        // queued operation used to qualify, which meant a tick queued against a row
-        // somebody else had deleted put that row back on screen as a ghost — present
-        // here, gone everywhere else, and impossible to get rid of.
-        let known = Set(fromServer.map(\.uuid))
-        let made = Set(
-            queued.filter { $0.kind == QueuedOperation.Kind.add }.map(\.itemUUID)
-        )
-        var rows = fromServer + items.filter { !known.contains($0.uuid) && made.contains($0.uuid) }
-
-        for operation in queued {
-            switch operation.kind {
-            case QueuedOperation.Kind.setDone:
-                rows = rows.map {
-                    $0.uuid == operation.itemUUID ? $0.withDone(operation.done) : $0
-                }
-
-            case QueuedOperation.Kind.delete:
-                rows = rows.filter { $0.uuid != operation.itemUUID }
-
-            case QueuedOperation.Kind.update:
-                rows = rows.map { row in
-                    guard row.uuid == operation.itemUUID else { return row }
-                    return Item(
-                        id: row.id,
-                        uuid: row.uuid,
-                        name: operation.editedName ?? row.name,
-                        amount: operation.editedAmount ?? row.amount,
-                        unitID: operation.editedUnitID ?? row.unitID,
-                        doneAt: row.doneAt,
-                        tagIDs: row.tagIDs
-                    )
-                }
-
-            case QueuedOperation.Kind.clearDone:
-                rows = rows.filter { !operation.sweptUUIDs.contains($0.uuid) }
-
-            case QueuedOperation.Kind.attachTag, QueuedOperation.Kind.detachTag:
-                guard let tagID = operation.tagID else { break }
-                let attaching = operation.kind == QueuedOperation.Kind.attachTag
-                rows = rows.map { row in
-                    guard row.uuid == operation.itemUUID else { return row }
-                    var filed = row.tagIDs.filter { $0 != tagID }
-                    if attaching { filed.append(tagID) }
-                    return Item(
-                        id: row.id,
-                        uuid: row.uuid,
-                        name: row.name,
-                        amount: row.amount,
-                        unitID: row.unitID,
-                        doneAt: row.doneAt,
-                        tagIDs: filed
-                    )
-                }
-
-            default:
-                break
-            }
-        }
-        return rows
-    }
 
     func remove(_ item: Item) async {
         guard list.mayEdit else { return }
@@ -652,6 +424,17 @@ final class ItemsModel {
             do {
                 for try await _ in try await api.changes(on: list) {
                     await load()
+                    // The categories too, and this is the one place the shape of the
+                    // stream costs something. A nudge does not say *what* changed, so
+                    // "a row moved" and "a category was renamed in Settings" arrive
+                    // identically and both have to be answered.
+                    //
+                    // Not re-reading them is how a category removed in Settings stayed
+                    // on the rows of every open list -- fixed once already today, and
+                    // it would have come back the moment the screen stopped watching
+                    // the cache for itself. The right fix is a stream that says which
+                    // it was; until then this is the correct answer and a request.
+                    await loadReference()
                 }
             } catch let problem as APIError {
                 // A stream refused for want of a token is not a network hiccup, and
@@ -719,16 +502,14 @@ final class ItemsModel {
             // than in `load` -- see `Cache.adopt(history:on:)`.
             async let remembered = api.history(on: list)
             let (fetchedUnits, fetchedTags) = try await (units, tags)
-            cache.remember(units: fetchedUnits)
-            cache.remember(tags: fetchedTags, on: list)
             (self.units, self.tags) = (fetchedUnits, fetchedTags)
 
             // After the two above, and allowed to fail on its own: a server that
             // predates this route still gives units and aisles, and a device without
             // the memory resolves lines a little less well rather than not at all.
-            if let remembered = try? await remembered {
-                cache.adopt(history: remembered, on: list)
-            }
+            // Asked for and thrown away: the backend keeps it, and `add` reads it back
+            // through the same backend. Asking is what makes it arrive.
+            _ = try? await remembered
         } catch {
             // Not shown: without these, rows lose their measure and their grouping,
             // which is a poorer list rather than no list. `load()` reports what
@@ -738,53 +519,20 @@ final class ItemsModel {
             // will: there every list would have no units and no aisles for ever. So
             // what the server would have said is bundled, and used when it cannot be
             // asked and the cache has nothing either.
-            seedReference()
+            // Nothing to do: a backend that could not answer has already fallen back
+            // to what it remembers, and to what shipped with the app after that. See
+            // `CachingBackend.units()`.
         }
     }
 
-    /// Falls back to the reference set that shipped with the app.
-    ///
-    /// Written to the cache as well as used, so the next screen finds it without
-    /// asking — and so that a device which later gains a server simply overwrites it
-    /// with that server's answer, ids and all. The ids are the same ids; see
-    /// `Reference`.
-    func seedReference() {
-        // The cache first, and only then the bundle. Checking the *view's* state was
-        // the bug: this runs from its own `.task`, which races the one that fills that
-        // state from the cache, so it usually found it empty and wrote the shipped
-        // order over the top. On a device with no server that quietly undid the aisle
-        // order somebody had arranged, every time they opened a list.
-        //
-        // The bundled set is a first run and nothing else. Once anything is stored --
-        // a server's answer, or a walk somebody chose -- that is the authority.
-        if units.isEmpty {
-            let remembered = cache.units()
-            units = remembered.isEmpty ? Reference.units : remembered
-            if remembered.isEmpty { cache.remember(units: units) }
-        }
-        if tags.isEmpty {
-            let remembered = cache.tags(on: list)
-            tags = remembered.isEmpty ? Reference.tags : remembered
-            if remembered.isEmpty { cache.remember(tags: tags, on: list) }
-        }
-    }
-
-    /// Puts the list up as it was last seen, before asking anything.
-    ///
-    /// The observation's first value does this on its own, immediately, so a screen is
-    /// never blank while a request is in flight without anybody arranging it. This
-    /// remains because the callers read better for saying it, and because it is
-    /// synchronous: a view appearing wants the rows in the same turn, not one hop later.
-    func showWhatWeHave() {
-        guard !fresh else { return }
-        reloadFromCache()
-    }
 
     func load() async {
         do {
             let listing = try await api.items(on: list)
-            cache.remember(items: listing.items, on: list)
-            self.items = withUnsent(listing.items)
+            // Already laid over by the backend, which is where the queue lives now --
+            // see `CachingBackend.laidOver`. A backend with no queue answers with the
+            // rows unchanged, because there is nothing to lay over them.
+            self.items = listing.items
             self.total = listing.total
             self.truncated = listing.truncated
             error = nil
@@ -802,7 +550,6 @@ final class ItemsModel {
                 // See ListsView.load: no signal is a state, not an event. What is on
                 // screen stays there -- it is the last thing the server said.
                 offline = true
-                if !fresh { showWhatWeHave() }
             } else {
                 error = problem.localizedDescription
             }

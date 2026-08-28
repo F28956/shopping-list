@@ -163,7 +163,6 @@ struct ItemsView: View {
                     identity.signOut()
                 }
             }
-            model.showWhatWeHave()
             await model.refreshUnsent()
             // `load` drains on success, so what was queued in the shop yesterday goes
             // as soon as the first request gets through.
