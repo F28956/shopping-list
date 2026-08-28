@@ -15,7 +15,13 @@ import WatchConnectivity
 final class PhoneLink: NSObject, WCSessionDelegate {
     static let shared = PhoneLink()
 
-    private let cache = Cache.shared
+    /// Where the phone reads its own lists.
+    ///
+    /// Set by the app as it starts, like `token`, because a backend needs an identity
+    /// and this is built before one exists. Nil until then, and a nil backend sends
+    /// nothing rather than sending an empty list -- a watch told "you have no lists" is
+    /// worse than a watch told nothing.
+    var backend: (@Sendable () async -> (any Backend)?)?
     /// What was last handed over, so an unchanged snapshot is not sent again.
     ///
     /// `updateApplicationContext` refuses a payload identical to the last one anyway,
@@ -90,8 +96,16 @@ final class PhoneLink: NSObject, WCSessionDelegate {
         // skip exactly the case this mechanism exists for.
         guard session.isPaired, session.isWatchAppInstalled else { return }
 
-        let snapshot = snapshot()
-        guard snapshot != lastSent else { return }
+        Task { await hand(over: session) }
+    }
+
+    /// Builds the picture and hands it over.
+    ///
+    /// Its own step because reading the backend is asynchronous now -- it may be a
+    /// database on this device or a server -- and `push` is called from notification
+    /// handlers that are not.
+    private func hand(over session: WCSession) async {
+        guard let snapshot = await snapshot(), snapshot != lastSent else { return }
 
         do {
             try session.updateApplicationContext(WatchLink.encode(snapshot))
@@ -106,17 +120,32 @@ final class PhoneLink: NSObject, WCSessionDelegate {
 
     /// What the watch should be showing.
     ///
-    /// Read from the cache rather than the network, deliberately. The cache is what the
-    /// phone itself shows, so the watch agrees with the phone even when both are out of
-    /// signal — and on a device with no server the cache is not a copy of anything, it
-    /// is the lists.
-    private func snapshot() -> WatchLink.Snapshot {
+    /// Read from wherever the phone reads, deliberately -- so the watch agrees with the
+    /// phone even when both are out of signal, and on a device with no server what is
+    /// sent is not a copy of anything, it is the lists.
+    ///
+    /// **Which store that is stopped being obvious.** This read `Cache.shared`, which
+    /// was the phone's memory until the device's own server took over; after a
+    /// migration the phone writes `device.sqlite` and nothing writes the old cache
+    /// again. The watch would have gone on receiving the snapshot taken the moment the
+    /// migration ran, for ever -- every list made and every item ticked off invisible to
+    /// it, with no error anywhere, because a frozen picture looks exactly like a
+    /// picture that has not changed.
+    ///
+    /// So it reads the *backend*, which is whatever the phone's own screens read.
+    private func snapshot() async -> WatchLink.Snapshot? {
         var remaining = WatchLink.cap
-        let units = cache.units()
+        // Nothing to send before the app has built one. The watch keeps the last
+        // picture it had, which is the right answer for "I do not know yet".
+        guard let backend = await backend?() else { return nil }
 
-        let lists = cache.lists().map { list -> WatchLink.ListOnTheWatch in
-            let tags = cache.tags(on: list)
-            let all = cache.items(on: list)
+        let units = (try? await backend.units()) ?? []
+        let visible = (try? await backend.lists())?.items ?? []
+
+        var lists: [WatchLink.ListOnTheWatch] = []
+        for list in visible {
+            let tags = (try? await backend.tags(orderedFor: list)) ?? []
+            let all = (try? await backend.items(on: list))?.items ?? []
 
             // In the order the shop is walked, before the cap, so what is dropped is
             // the tail of the walk rather than an arbitrary slice of it. Crossed-off
@@ -128,7 +157,7 @@ final class PhoneLink: NSObject, WCSessionDelegate {
             let sent = ordered.prefix(remaining)
             remaining -= sent.count
 
-            return WatchLink.ListOnTheWatch(
+            lists.append(WatchLink.ListOnTheWatch(
                 id: list.uuid,
                 name: list.name,
                 tags: tags.map {
@@ -151,7 +180,7 @@ final class PhoneLink: NSObject, WCSessionDelegate {
                 },
                 total: all.count,
                 truncated: sent.count < ordered.count
-            )
+            ))
         }
 
         return WatchLink.Snapshot(

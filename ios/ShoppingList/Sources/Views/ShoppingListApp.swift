@@ -70,18 +70,26 @@ struct RootView: View {
     }
 
     private var lists: some View {
-        ListsView(
-            api: API(
-                baseURL: Config.apiBaseURL,
-                token: { await identity.token() },
-                remembered: { identity.isRemembered }
-            ),
-            // The device answers for itself when nobody has chosen a server. Nil if the
-            // database will not open, which falls back to the old path -- the cache is
-            // still there and still written by it, which is the point of leaving it
-            // alone for now.
-            standalone: ServerDirectory.isOnDeviceOnly ? LocalBackend.readyForUse() : nil
+        let api = API(
+            baseURL: Config.apiBaseURL,
+            token: { await identity.token() },
+            remembered: { identity.isRemembered }
         )
+        // The device answers for itself when nobody has chosen a server, unless its
+        // database will not open -- which falls back to the old path, cache and all.
+        let backend: any Backend = (ServerDirectory.isOnDeviceOnly
+            ? LocalBackend.readyForUse()
+            : nil) ?? CachingBackend(remote: api)
+
+        // The watch is told what *this* holds, so it has to be told by the same thing
+        // this reads. It used to read `Cache.shared` directly, which stopped being the
+        // phone's memory the day the device's own server took over: after a migration
+        // the watch would have gone on receiving the picture taken the moment it ran,
+        // for ever, with no error anywhere.
+        PhoneLink.shared.backend = { backend }
+        PhoneLink.shared.push()
+
+        return ListsView(api: api, backend: backend)
     }
 
     @ViewBuilder

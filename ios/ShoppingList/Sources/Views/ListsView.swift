@@ -27,20 +27,17 @@ struct ListsView: View {
     /// it only changes by leaving this screen entirely.
     @Environment(\.capabilities) private var capabilities
 
-    /// `standalone` is the device answering for itself, and nil means the old path.
+    /// The backend is chosen by the composition root and handed down, not built here.
     ///
-    /// Two backends, chosen once here rather than asked about throughout: with one the
-    /// model reads the device's own database and needs no cache and no queue, with the
-    /// other it reads a server and needs both. `api` is still held because the sheets
-    /// behind this screen -- sharing, joining, who may sign in -- are a server's and are
-    /// not offered without one.
-    init(api: API, standalone: LocalBackend? = nil) {
+    /// It used to be built in this initialiser, which meant nothing else could have the
+    /// same one -- and `PhoneLink`, which tells the watch what the phone holds, went on
+    /// reading the old cache instead. `api` is still held because the sheets behind this
+    /// screen -- sharing, joining, who may sign in -- are a server's and are not offered
+    /// without one.
+    init(api: API, backend: any Backend) {
         self.api = api
-        // One or the other, decided once. `CachingBackend` is what makes a server's
-        // unreliability the backend's problem rather than this screen's.
-        let chosen: any Backend = standalone ?? CachingBackend(remote: api)
-        self.backend = chosen
-        _model = State(initialValue: ListsModel(api: chosen, accounts: api))
+        self.backend = backend
+        _model = State(initialValue: ListsModel(api: backend, accounts: api))
     }
     /// The two screens behind the menu, as one piece of state.
     ///
