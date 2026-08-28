@@ -42,8 +42,24 @@ typed line becomes, that adding the same thing twice makes one row, that a cross
 row comes back, that a queued tick survives a reload, that a row somebody else deleted
 does not return as a ghost.
 
-**`ListsView` and `MacShoppingView` still hold their own copies** of the smaller list
-logic — loading, joining, renaming, deleting. Same argument, not yet done.
+**Done too.** `ListsModel` now holds it. `ListsView` went from 465 lines to 288 and
+`MacShoppingView` from 367 to 257; neither has a `private func` left. Three things had
+already drifted, all on the Mac and all in the direction of the Mac being worse:
+
+| | iOS | Mac |
+| --- | --- | --- |
+| Making a list with no server | queued locally since S1 | `api.createList`, so the one toolbar button raised a dialog and made nothing |
+| Lists made offline, after a drain | server's id adopted | never adopted, so the list would have appeared twice |
+| Somebody the server will not have | told on the sign-in screen | raw error dialog — no `notAdmitted` arm |
+
+Eight tests on that logic now, where there were none: that a list can be made with no
+server and survives a restart, that a failed load does not claim there is nothing, that
+a slow cache read cannot overwrite a fast answer, and what each kind of refusal does.
+
+One difference is left and it is a real question rather than drift: **the Mac shows no
+queue state at all**. It kept a `queued` counter updated on a two-second timer and
+rendered it nowhere, so that is gone; whether the Mac should have the phone's status dot
+is a design decision nobody has made.
 
 ## ~~2. An invitation token travels in the URL path~~ — fixed
 

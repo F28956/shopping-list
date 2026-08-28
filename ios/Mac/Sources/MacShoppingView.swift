@@ -11,12 +11,14 @@ struct MacShoppingView: View {
 
     private let cache = Cache.shared
 
-    @State private var lists: [List] = []
-    @State private var truncated = false
-    @State private var total: Int64 = 0
+    /// Everything about the lists themselves — see `ListsModel`, which the phone
+    /// shares. It used to be a second copy of it here, and the copy was three fixes
+    /// behind: a list could not be made with no server, lists made offline would have
+    /// appeared twice, and somebody this server will not have got a raw dialog.
+    @State private var model: ListsModel
+
+    // What is genuinely this window's: which list is selected, and which sheet is open.
     @State private var chosen: List.ID?
-    @State private var error: String?
-    @State private var loaded = false
     @State private var naming: ListNameSheet.Purpose?
     @State private var deleting: List?
     @State private var sharing: List?
@@ -24,23 +26,20 @@ struct MacShoppingView: View {
     /// There is no server. The default -- see `ServerDirectory`. Re-read when settings
     /// change the answer, because storage is not observable state.
     @State private var onDeviceOnly = ServerDirectory.isOnDeviceOnly
-    /// See `ListsView.offline` on the phone: the same two flags, for the same reason.
-    @State private var offline = false
-    @State private var fresh = false
-    /// Guards against a drain and a reload calling each other round in a circle.
-    @State private var draining = false
-    /// How many changes are waiting, anywhere. The window opens here, so this is where
-    /// somebody first sees whether the Mac is in step.
-    @State private var queued = 0
 
-    private var selected: List? { lists.first { $0.id == chosen } }
+    init(api: API) {
+        self.api = api
+        _model = State(initialValue: ListsModel(api: api))
+    }
+
+    private var selected: List? { model.lists.first { $0.id == chosen } }
 
     var body: some View {
         NavigationSplitView {
             Group {
-                if !loaded {
+                if !model.loaded {
                     ProgressView()
-                } else if lists.isEmpty && !fresh && !onDeviceOnly {
+                } else if model.lists.isEmpty && !model.fresh && !onDeviceOnly {
                     // Before the empty state: after any failed load with nothing
                     // cached, "No lists" is an emptiness nobody has verified. Only a
                     // server that answered can earn the empty state.
@@ -51,15 +50,15 @@ struct MacShoppingView: View {
                     // to somebody who chose not to have one is the app complaining
                     // about a decision they made on purpose.
                     ContentUnavailableView(
-                        offline ? "Can't reach the server" : "Couldn't load your lists",
-                        systemImage: offline ? "icloud.slash" : "exclamationmark.triangle",
+                        model.offline ? "Can't reach the server" : "Couldn't load your lists",
+                        systemImage: model.offline ? "icloud.slash" : "exclamationmark.triangle",
                         description: Text(
-                            offline
+                            model.offline
                                 ? "Your lists will appear as soon as there is a connection."
                                 : "Whether you have any is not known yet."
                         )
                     )
-                } else if lists.isEmpty {
+                } else if model.lists.isEmpty {
                     ContentUnavailableView(
                         "No lists",
                         systemImage: "cart",
@@ -73,11 +72,11 @@ struct MacShoppingView: View {
                     SwiftUI.List(selection: $chosen) {
                         // Nothing to say on a Mac with no server: nothing is stale,
                         // because there is nowhere it could have gone stale against.
-                        if offline && !onDeviceOnly {
+                        if model.offline && !onDeviceOnly {
                             OfflineNote()
                         }
 
-                        ForEach(lists) { list in
+                        ForEach(model.lists) { list in
                             HStack {
                                 Text(list.name)
                                 Spacer()
@@ -112,8 +111,8 @@ struct MacShoppingView: View {
                             }
                         }
 
-                        if truncated {
-                            Text("Showing \(lists.count) of \(Int(total)).")
+                        if model.truncated {
+                            Text("Showing \(model.lists.count) of \(Int(model.total)).")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
@@ -170,13 +169,13 @@ struct MacShoppingView: View {
             }
         }
         .sheet(item: $sharing) { list in
-            ShareSheet(list: list, api: api) { await load() }
+            ShareSheet(list: list, api: api) { await model.load() }
         }
         .sheet(isPresented: $joining) {
             JoinSheet { found in
-                await attempt {
+                await model.attempt {
                     let joined = try await api.join(withToken: found)
-                    await load()
+                    await model.load()
                     // Opened on arrival: following a link is how you say which list
                     // you want to be looking at.
                     chosen = joined.id
@@ -187,15 +186,18 @@ struct MacShoppingView: View {
             ListNameSheet(purpose: purpose) { name in
                 switch purpose {
                 case .create:
-                    await attempt {
-                        // Selected on arrival: making a list is how you say which one
-                        // you want to be looking at.
-                        let made = try await api.createList(named: name)
-                        await load()
+                    // Through the model, which queues it when there is no server to
+                    // ask. This used to call `api.createList` directly, so on a Mac
+                    // deliberately kept off a server the one button in the toolbar
+                    // raised a dialog and made nothing.
+                    //
+                    // Selected on arrival either way: making a list is how you say
+                    // which one you want to be looking at.
+                    if let made = await model.makeList(named: name) {
                         chosen = made.id
                     }
                 case .rename(let list):
-                    await attempt { try await api.rename(list, to: name) }
+                    await model.attempt { try await api.rename(list, to: name) }
                 }
             }
         }
@@ -207,9 +209,9 @@ struct MacShoppingView: View {
             Button("Delete", role: .destructive) {
                 deleting = nil
                 Task {
-                    await attempt { try await api.delete(list) }
+                    await model.attempt { try await api.delete(list) }
                     // The detail pane is about a list that has gone.
-                    if chosen == list.id { chosen = lists.first?.id }
+                    if chosen == list.id { chosen = model.lists.first?.id }
                 }
             }
             .accessibilityIdentifier("delete.confirm")
@@ -223,145 +225,33 @@ struct MacShoppingView: View {
         .onReceive(NotificationCenter.default.publisher(for: .serverChanged)) { _ in
             onDeviceOnly = ServerDirectory.isOnDeviceOnly
         }
-        .task {
-            showWhatWeHave()
-            await load()
-        }
-        .task {
-            // Cheap, and the only way the dot stays honest while somebody is looking
-            // at it: every items view drains the same queue.
-            while !Task.isCancelled {
-                queued = cache.outbox.waiting
-                try? await Task.sleep(for: .seconds(2))
+        // One place that decides what is selected, rather than a line in each of the
+        // two functions that can change the lists. A selection pointing at a list that
+        // has gone shows an empty detail pane with no way back to a full one, and
+        // opening on nothing wastes the width the split view exists for.
+        .onChange(of: model.lists, initial: true) {
+            if chosen == nil || !model.lists.contains(where: { $0.id == chosen }) {
+                chosen = model.lists.first?.id
             }
         }
-        .task { await watchLists() }
-        .alert("Could not load", isPresented: .constant(error != nil)) {
-            Button("OK") { error = nil }
-        } message: {
-            Text(error ?? "")
-        }
-    }
-
-
-    /// Keeps the sidebar in step with lists made, renamed, deleted or joined anywhere.
-    ///
-    /// A list's own stream cannot carry this: one that has just been made has no
-    /// watchers at all, which is why a list created on a phone never appeared here.
-    private func watchLists() async {
-        var reconnecting = false
-
-        while !Task.isCancelled {
-            if reconnecting { await load() }
-
-            do {
-                for try await _ in try await api.listChanges() {
-                    await load()
-                }
-            } catch let problem as APIError {
-                if case .unauthorized = problem {
+        .task {
+            // Set here rather than passed in: the identity is an environment value and
+            // a view has none of those when its state is built. See `ListsModel`.
+            model.signedOut = { because in
+                if let because {
+                    identity.signOut(because: because)
+                } else {
                     identity.signOut()
-                    return
                 }
-                // Reconnecting every three seconds to be refused again is a loop
-                // nothing ends, and each turn of it raised another dialog.
-                if case .forbidden = problem { return }
-                if case .notAdmitted = problem {
-                    identity.signOut(because: problem.localizedDescription)
-                    return
-                }
-            } catch {
-                // Anything else is the connection going away -- a tunnel, a lock
-                // screen, a server restarting. Ordinary, and not worth showing; the
-                // wait below and the loop are the whole response.
             }
-
-            reconnecting = true
-            try? await Task.sleep(for: .seconds(3))
+            model.showWhatWeHave()
+            await model.load()
         }
-    }
-
-    /// Runs something that changes the lists, then reloads.
-    private func attempt(_ work: () async throws -> Void) async {
-        do {
-            try await work()
-            await load()
-        } catch let problem as APIError {
-            if case .unauthorized = problem {
-                identity.signOut()
-            } else if case .notAdmitted = problem {
-                // A person this server will not have is not a person with an empty
-                // list. Said on the sign-in screen, once.
-                identity.signOut(because: problem.localizedDescription)
-            } else {
-                error = problem.localizedDescription
-            }
-        } catch {
-            self.error = error.localizedDescription
+        .task { await model.watchLists() }
+        .alert("Could not load", isPresented: .constant(model.error != nil)) {
+            Button("OK") { model.error = nil }
+        } message: {
+            Text(model.error ?? "")
         }
-    }
-
-    /// Puts the last-loaded lists up before asking the server anything -- see the
-    /// phone's `ListsView.showWhatWeHave`.
-    private func showWhatWeHave() {
-        guard !fresh else { return }
-        let remembered = cache.lists()
-        guard !remembered.isEmpty else { return }
-        lists = remembered
-        total = Int64(remembered.count)
-        if chosen == nil { chosen = remembered.first?.id }
-        loaded = true
-    }
-
-    /// Empties the outbox, wherever its contents belong.
-    ///
-    /// A change queued on any list goes: the operation carries the list it was made
-    /// against, so nothing here needs to know which screen it came from. Failures are
-    /// the outbox's business -- see ``Outbox/drain(through:)`` -- and what is left
-    /// stays queued for the next successful load.
-    private func sendQueued() async {
-        guard !draining, cache.outbox.waiting > 0 else { return }
-        draining = true
-        _ = await cache.outbox.drain(through: api)
-        draining = false
-        queued = cache.outbox.waiting
-    }
-
-    private func load() async {
-        do {
-            let listing = try await api.lists()
-            cache.remember(lists: listing.items)
-            lists = listing.items
-            total = listing.total
-            truncated = listing.truncated
-            // Opening on nothing wastes the width the split view exists for -- and
-            // a selection pointing at a list that has gone shows an empty detail
-            // pane with no way back to a full one.
-            if chosen == nil || !lists.contains(where: { $0.id == chosen }) {
-                chosen = lists.first?.id
-            }
-            error = nil
-            offline = false
-            fresh = true
-            // The server is reachable, so anything queued anywhere goes now.
-            //
-            // Here as well as on the list screen, because the app opens here: a phone
-            // that came out of a shop and was put in a pocket would otherwise hold its
-            // ticks until somebody happened to open the list they were made on.
-            await sendQueued()
-        } catch let problem as APIError {
-            if case .unauthorized = problem {
-                identity.signOut()
-            } else if case .transport = problem {
-                // No signal is a state, not an event -- see the phone's ListsView.
-                offline = true
-                if !fresh { showWhatWeHave() }
-            } else {
-                error = problem.localizedDescription
-            }
-        } catch {
-            self.error = error.localizedDescription
-        }
-        loaded = true
     }
 }
