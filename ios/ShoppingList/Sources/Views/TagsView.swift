@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The aisles: what this app files things under.
+/// The categories: what this app files things under.
 ///
 /// In settings rather than on a list, because they belong to no one list — the same
 /// twenty-one names order every list on a server, and renaming `dairy` renames it for
@@ -68,13 +68,13 @@ struct TagsView: View {
                     }
                 }
             }
-            .navigationTitle("Aisles")
+            .navigationTitle("Categories")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // Adding on the left and finishing on the right, as Settings >
                 // Passwords does — see `ServerPeopleView`, which is the same shape.
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("New aisle", systemImage: "plus") { adding = true }
+                    Button("New category", systemImage: "plus") { adding = true }
                         .accessibilityIdentifier("tag.new")
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -130,7 +130,7 @@ struct TagsView: View {
         }
 
         // Not written locally first: the id is the server's to mint, and a placeholder
-        // would be an aisle that exists here under a number nothing else knows.
+        // would be a category that exists here under a number nothing else knows.
         await attempt {
             _ = try await api.createTag(named: name, emoji: emoji)
             try await refresh()
@@ -145,7 +145,7 @@ struct TagsView: View {
         await attempt { try await api.deleteTag(tag) }
     }
 
-    /// Takes the server's aisles as this device's, for every list.
+    /// Takes the server's categories as this device's, for every list.
     private func refresh() async throws {
         for list in cache.lists() {
             cache.remember(tags: try await api.tags(orderedFor: list), on: list)
@@ -160,7 +160,7 @@ struct TagsView: View {
         } catch let refusal as APIError {
             // A refusal here is nearly always "you do not own this server", which the
             // service hides as a 404. Said plainly rather than as "not found", which
-            // would read as the aisle having vanished.
+            // would read as the category having vanished.
             problem = refusal.localizedDescription
         } catch {
             problem = error.localizedDescription
@@ -168,9 +168,9 @@ struct TagsView: View {
     }
 }
 
-/// One aisle's name and glyph.
+/// One category's name and glyph.
 private struct TagEditor: View {
-    /// The aisle being changed, or nil when this is a new one.
+    /// The category being changed, or nil when this is a new one.
     let tag: Tag?
     let save: (String, String?) async -> Void
 
@@ -192,7 +192,7 @@ private struct TagEditor: View {
                     Text("A single emoji, shown on every item filed here.")
                 }
             }
-            .navigationTitle(tag == nil ? "New aisle" : "Aisle")
+            .navigationTitle(tag == nil ? "New category" : "Category")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

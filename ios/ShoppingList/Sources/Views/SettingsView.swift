@@ -26,8 +26,6 @@ struct SettingsView: View {
     @State private var leaving = false
     @State private var managingServer = false
     @State private var managingTags = false
-    /// Why the suggested address could not be used, if it could not.
-    @State private var suggestedRefused: String?
 
     var body: some View {
         NavigationStack {
@@ -61,7 +59,7 @@ struct SettingsView: View {
                 // service hides the routes from them anyway.
                 if ServerDirectory.isOnDeviceOnly || isOwner {
                     Section {
-                        Button("Aisles", systemImage: "tag") { managingTags = true }
+                        Button("Categories", systemImage: "tag") { managingTags = true }
                             .accessibilityIdentifier("manage-tags")
                     } footer: {
                         Text("The categories items are grouped under.")
@@ -77,22 +75,6 @@ struct SettingsView: View {
                         LabeledContent("Server", value: "None")
                         Button("Use a server") { choosing = true }
                             .accessibilityIdentifier("choose-server")
-                        // Only ever present in a build that was compiled with an
-                        // address, which in practice means a development build. It is
-                        // here so that pointing a fresh simulator at the machine on the
-                        // desk is one tap rather than typing a URL -- and so that
-                        // nothing has to be adopted silently to achieve that.
-                        if let suggested = ServerDirectory.suggested {
-                            Button("Use \(suggested.origin)") {
-                                Task { await use(suggested) }
-                            }
-                            .accessibilityIdentifier("use-suggested-server")
-                            if let suggestedRefused {
-                                Text(suggestedRefused)
-                                    .font(.footnote)
-                                    .foregroundStyle(.red)
-                            }
-                        }
                     }
                 } header: {
                     Text("Syncing")
@@ -162,19 +144,4 @@ struct SettingsView: View {
         }
     }
 
-    /// Adopts the address this build was compiled with.
-    ///
-    /// Checked first, exactly as a typed one is (C2). It is one tap rather than a URL
-    /// to type, not a licence to store an address without asking whether it answers --
-    /// a developer whose server is not running should be told that here rather than by
-    /// a screen full of nothing afterwards.
-    private func use(_ address: ServerAddress) async {
-        switch await ServerDirectory.ask(address) {
-        case .success:
-            ServerDirectory.remember(address)
-            dismiss()
-        case .failure(let refusal):
-            suggestedRefused = refusal.localizedDescription
-        }
-    }
 }

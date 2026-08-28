@@ -31,15 +31,6 @@ struct MacSettingsView: View {
                     HStack {
                         Button("Use this server") { Task { await use(typed) } }
                             .disabled(asking || typed.trimmingCharacters(in: .whitespaces).isEmpty)
-                        // Only ever present in a build compiled with an address, which
-                        // in practice means a development build. One click rather than
-                        // a typed URL -- and nothing adopted silently to achieve it.
-                        if let suggested = ServerDirectory.suggested {
-                            Button("Use \(suggested.origin)") {
-                                Task { await adopt(suggested) }
-                            }
-                            .disabled(asking)
-                        }
                     }
                 } else {
                     Button("Stop using this server", role: .destructive) { leaving = true }

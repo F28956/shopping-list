@@ -44,8 +44,10 @@ enum ServerDirectory {
         // release build and false of every build anybody actually runs: a fresh debug
         // install went to the machine on the desk and asked somebody to sign in.
         //
-        // The build setting is still there and still useful -- `suggested` offers it
-        // in settings, one tap -- but it is offered rather than assumed.
+        // The build setting is not consulted at all. It was offered in settings as a
+        // one-tap "use the machine on the desk", which is a developer's convenience on
+        // a screen everybody else reads -- and a pre-filled address is a suggestion
+        // about where somebody's shopping should live.
         guard let stored = UserDefaults.standard.string(forKey: key) else {
             return .none
         }
@@ -84,17 +86,11 @@ enum ServerDirectory {
         NotificationCenter.default.post(name: .serverChanged, object: nil)
     }
 
-    /// What the build was pointed at, if anything, for settings to offer.
+    /// What the build was pointed at, if anything.
     ///
-    /// Offered and never adopted — see `choice`. It saves whoever is developing this
-    /// from typing `http://localhost:8080` into every fresh simulator, and costs them
-    /// one tap; it does not decide what a fresh install does.
-    ///
-    /// Cleartext is allowed here whatever the build says: this value came from somebody
-    /// compiling the app rather than from a text field, and refusing it would only break
-    /// a simulator talking to a server on the same desk.
-    static var suggested: ServerAddress? { built }
-
+    /// Read by nothing on a screen any more -- see `choice`. It survives because a
+    /// debug build still has to reach the machine on the desk somehow, and this is
+    /// where that address is written down.
     private static var built: ServerAddress? {
         guard
             let raw = Bundle.main.object(forInfoDictionaryKey: "ShoppingListAPIBaseURL")
