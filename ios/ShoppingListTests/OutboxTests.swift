@@ -345,4 +345,45 @@ struct OutboxTests {
 
         #expect(cache.outbox.waiting == 0, "a list the server already has was sent back to it")
     }
+
+    /// An app updated from a version that queued regardless is carrying operations
+    /// addressed to nobody. They cannot be sent, cannot be pruned, and grew for as long
+    /// as that version ran -- so they go when the cache is opened.
+    @Test func aQueueThatCannotBeSentIsDiscardedOnOpening() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.appendingPathComponent("queue.sqlite").path
+
+        // As the old version left it: a standalone device with a queue.
+        let before = Cache(path: path, sending: { true })
+        before.outbox.setDone(item(3, "Coffee"), on: list, done: true)
+        #expect(before.outbox.waiting == 1)
+
+        // Opened by a version that knows better, on a device with no server.
+        let after = Cache(path: path, sending: { false })
+
+        #expect(after.outbox.waiting == 0, "operations addressed to nobody were kept")
+    }
+
+    /// And the case it must not touch: a server has been chosen, it just cannot be
+    /// reached right now. That queue is the whole reason the outbox exists.
+    @Test func aQueueWaitingForAServerIsKept() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.appendingPathComponent("queue.sqlite").path
+
+        let before = Cache(path: path, sending: { true })
+        before.outbox.setDone(item(3, "Coffee"), on: list, done: true)
+
+        let after = Cache(path: path, sending: { true })
+
+        #expect(
+            after.outbox.waiting == 1,
+            "a tick made in a shop was thrown away because the server was out of reach"
+        )
+    }
 }

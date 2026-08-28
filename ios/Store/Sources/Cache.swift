@@ -55,6 +55,7 @@ final class Cache: @unchecked Sendable {
         self.sending = sending
         outbox = Outbox(queue: queue, sending: sending)
         migrate()
+        discardWhatCannotBeSent()
     }
 
     /// A cache at an exact path, for tests that need one to outlive the object — the
@@ -68,10 +69,30 @@ final class Cache: @unchecked Sendable {
         self.sending = sending
         outbox = Outbox(queue: queue, sending: sending)
         migrate()
+        discardWhatCannotBeSent()
     }
 
     /// An in-memory cache, for tests and for `-uiTesting`, which must not read or
     /// write whatever the person running it happens to have on disk.
+    /// Empties a queue that cannot ever be emptied any other way.
+    ///
+    /// On a device with no server the queue is always empty -- see the guard in
+    /// `Outbox.queue`. It was not always so, and an app updated from a version that
+    /// queued regardless is carrying operations addressed to nobody: unsendable,
+    /// unprunable, and growing for as long as that version ran.
+    ///
+    /// Safe because `sending` is about whether a server has been *chosen*, not whether
+    /// it can be reached. A device in server mode with no signal keeps its queue, which
+    /// is the whole point of having one.
+    ///
+    /// Nothing is lost. What those operations describe is in the cache already, which is
+    /// where this device reads from, and `handOverIfNeeded` rebuilds what a server needs
+    /// from that -- from the current state rather than from the history of it.
+    private func discardWhatCannotBeSent() {
+        guard !sending(), outbox.waiting > 0 else { return }
+        outbox.forgetEverything()
+    }
+
     /// An in-memory cache, for tests and for `-uiTesting`.
     ///
     /// `sending` decides whether changes are queued, which is the difference between
