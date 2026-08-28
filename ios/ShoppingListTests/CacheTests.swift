@@ -26,6 +26,61 @@ struct CacheTests {
         )
     }
 
+    // MARK: - Lists this device minted for itself
+
+    /// The watch has no server to mint ids, so every one of its lists has a negative
+    /// one -- and `remember(lists:)` spares negative ids when it clears, because on a
+    /// phone they mean "made here and not yet sent". Re-inserting a row that is still
+    /// there hit the primary key and threw, and a thrown write was swallowed whole: the
+    /// watch's picture froze on the first snapshot it ever received and no later one
+    /// could correct it.
+    @Test("a list written again replaces the row rather than failing")
+    func rewritingAListReplacesIt() {
+        let cache = Cache.inMemory()
+        let mine = List(id: -1, uuid: "abc", name: "Home", ownerID: 0, role: .editor)
+
+        cache.remember(lists: [mine])
+        cache.remember(lists: [List(id: -1, uuid: "abc", name: "Household", ownerID: 0, role: .editor)])
+
+        #expect(cache.lists().map(\.name) == ["Household"], "the second snapshot was lost")
+    }
+
+    /// And the list itself. `remember(lists:)` spares negative ids, so on the watch --
+    /// where every id is negative -- a list deleted on the phone stayed on the wrist,
+    /// and a list whose uuid changed appeared twice under the same name.
+    @Test("a list the picture no longer mentions is dropped with its rows")
+    func departedListsAreDropped() {
+        let cache = Cache.inMemory()
+        let kept = List(id: -1, uuid: "kept", name: "Home", ownerID: 0, role: .editor)
+        let gone = List(id: -2, uuid: "gone", name: "Home", ownerID: 0, role: .editor)
+        cache.remember(lists: [kept, gone])
+        cache.remember(items: [item(id: -1, name: "Bread")], on: kept)
+        cache.remember(items: [item(id: -2, name: "Stale")], on: gone)
+
+        cache.forgetLists(outside: ["kept"])
+
+        #expect(cache.lists().map(\.uuid) == ["kept"], "a departed list stayed")
+        #expect(cache.items(on: gone).isEmpty, "its rows stayed with it")
+        #expect(cache.items(on: kept).map(\.name) == ["Bread"], "the surviving list lost its rows")
+    }
+
+    /// The same failure a list further down: rows whose list has gone, or whose id has
+    /// changed, are unreachable from any list and cannot be cleared by a write that
+    /// clears by list id.
+    @Test("rows belonging to no list are dropped")
+    func orphanedRowsAreSwept() {
+        let cache = Cache.inMemory()
+        let kept = list(id: -1, name: "Home")
+        cache.remember(lists: [kept])
+        cache.remember(items: [item(id: -1, name: "Bread")], on: kept)
+        cache.remember(items: [item(id: -9, name: "Ghost")], on: list(id: 7, name: "Gone"))
+
+        cache.forgetItems(outside: [-1])
+
+        #expect(cache.items(on: kept).map(\.name) == ["Bread"])
+        #expect(cache.items(on: list(id: 7, name: "Gone")).isEmpty, "a stranded row survived")
+    }
+
     @Test func remembersListsInTheOrderTheyArrived() {
         let cache = Cache.inMemory()
         let sent = [list(id: 3, name: "Bakery"), list(id: 1, name: "Dairy")]

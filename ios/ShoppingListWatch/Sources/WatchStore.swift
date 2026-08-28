@@ -147,25 +147,48 @@ final class WatchStore: NSObject, WCSessionDelegate {
     private func write(_ snapshot: WatchLink.Snapshot) {
         cache.remember(units: snapshot.units.map { Unit(id: $0.id, name: $0.name) })
 
-        let lists = snapshot.lists.enumerated().map { at, list in
-            // A negative id, because there is no server to have minted a real one and
-            // the uuid is the only name that means anything here. Stable across
-            // snapshots so that navigation does not break under somebody's thumb.
-            List(
-                id: -Int64(at + 1),
-                uuid: list.id,
-                name: list.name,
-                ownerID: 0,
-                role: .editor
+        // A negative id, because there is no server to have minted a real one and the
+        // uuid is the only name that means anything here.
+        //
+        // Kept against the uuid rather than taken from the position, which is what this
+        // did and which was not stable at all: one list added at the top renumbered
+        // every other, and rows written under the old number were then orphaned --
+        // unreachable from any list, undeletable by a write that clears by list id.
+        // What the phone no longer has, before the ids are read back: a list deleted
+        // there is a list gone, and the snapshot is the whole picture rather than a
+        // page of one.
+        cache.forgetLists(outside: Set(snapshot.lists.map(\.id)))
+
+        var minted = Dictionary(uniqueKeysWithValues: cache.lists().map { ($0.uuid, $0.id) })
+        var nextList = min(minted.values.min() ?? 0, 0) - 1
+        var lists: [List] = []
+        for wire in snapshot.lists {
+            if minted[wire.id] == nil {
+                minted[wire.id] = nextList
+                nextList -= 1
+            }
+            lists.append(
+                List(id: minted[wire.id]!, uuid: wire.id, name: wire.name, ownerID: 0, role: .editor)
             )
         }
         cache.remember(lists: lists)
+        // Before the rows are written, so a list that has gone takes its rows with it.
+        cache.forgetItems(outside: Set(lists.map(\.id)))
+
+        // Across the whole snapshot and not per list. Numbering from -1 inside each
+        // list gave the second list's rows the ids the first list's rows already had,
+        // and `id` is the primary key: the insert threw, the transaction rolled back,
+        // and every list after the first came out empty. On screen that is a list with
+        // nothing on it, which is a thing a list can legitimately be -- so it looked
+        // like an answer rather than a failure.
+        var nextItem = Int64(0)
 
         for (list, wire) in zip(lists, snapshot.lists) {
             cache.remember(
-                items: wire.items.enumerated().map { at, item in
-                    Item(
-                        id: -Int64(at + 1),
+                items: wire.items.map { item in
+                    nextItem -= 1
+                    return Item(
+                        id: nextItem,
                         uuid: item.id,
                         name: item.name,
                         amount: item.amount,

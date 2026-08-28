@@ -115,7 +115,20 @@ final class Cache: @unchecked Sendable {
         #if DEBUG
             if UITesting.isRunning { return .inMemory() }
         #endif
-        return Cache()
+        #if os(watchOS)
+            // A watch always has somewhere to send, and that is the whole of
+            // `PhoneDestination`: with a server the queue goes to the server, and with
+            // none it goes to the phone, which is this watch's server. The default here
+            // is the *phone's* rule -- "nobody to tell, so queue nothing" -- and on the
+            // wrist it is simply false. It meant every tick made on a watch paired to a
+            // standalone phone was dropped on the floor: the row greyed out, the queue
+            // stayed empty, nothing was ever sent, and the next snapshot from the phone
+            // put the row back. Silently, because the dot and the unsent marks are both
+            // hidden without a server.
+            return Cache(sending: { true })
+        #else
+            return Cache()
+        #endif
     }()
 
     private static func open(named name: String) -> DatabaseQueue? {
@@ -524,9 +537,17 @@ final class Cache: @unchecked Sendable {
             // the crime of having been written down offline.
             try db.execute(sql: "DELETE FROM lists WHERE id >= 0")
             for (at, list) in lists.enumerated() {
+                // `OR REPLACE`, because a row being written again is the ordinary case
+                // rather than a mistake. The delete above spares negative ids -- lists
+                // made here and not yet sent -- and on the watch *every* list has one,
+                // minted locally because there is no server to have minted a real one.
+                // A plain insert therefore hit the primary key on the second snapshot
+                // and threw, which took the whole transaction with it: the watch's
+                // picture froze on the first thing it was ever told and no later
+                // snapshot could correct it, with nothing on screen to say so.
                 try db.execute(
                     sql: """
-                    INSERT INTO lists (id, uuid, name, owner_id, role, position)
+                    INSERT OR REPLACE INTO lists (id, uuid, name, owner_id, role, position)
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     arguments: [list.id, list.uuid, list.name, list.ownerID, list.role.rawValue, at]
@@ -645,6 +666,48 @@ final class Cache: @unchecked Sendable {
                     ]
                 )
             }
+        }
+    }
+
+    /// Drops lists that are not in the picture just received, and their rows.
+    ///
+    /// For a caller holding a *complete* picture, which the watch's snapshot is and the
+    /// server's answer is not: `remember(lists:)` deliberately spares negative ids
+    /// because on a phone they are lists made here and not yet sent, and deleting them
+    /// would take somebody's shopping away for the crime of having been written down
+    /// offline. On the watch every list has a negative id, so nothing was ever removed
+    /// -- a list deleted on the phone stayed on the wrist for good, and a list whose
+    /// uuid changed appeared twice under the same name.
+    func forgetLists(outside uuids: Set<String>) {
+        write { db in
+            let holes = uuids.isEmpty ? "NULL" : uuids.map { _ in "?" }.joined(separator: ",")
+            let arguments = StatementArguments(Array(uuids))
+            try db.execute(
+                sql: """
+                DELETE FROM items WHERE list_id IN
+                    (SELECT id FROM lists WHERE uuid NOT IN (\(holes)))
+                """,
+                arguments: arguments
+            )
+            try db.execute(
+                sql: "DELETE FROM lists WHERE uuid NOT IN (\(holes))",
+                arguments: arguments
+            )
+        }
+    }
+
+    /// Drops rows belonging to lists this device no longer has.
+    ///
+    /// `remember(items:on:)` clears a list by its id, so rows whose list has gone --
+    /// or whose id has changed, which is what happened when a watch that had been on
+    /// a server was handed to one that answers for itself -- are left behind with no
+    /// list to reach them from. Invisible, permanent, and in the way.
+    func forgetItems(outside lists: Set<Int64>) {
+        write { db in
+            let placeholders = lists.isEmpty
+                ? "NULL"
+                : lists.map { String($0) }.joined(separator: ",")
+            try db.execute(sql: "DELETE FROM items WHERE list_id NOT IN (\(placeholders))")
         }
     }
 
@@ -949,7 +1012,16 @@ final class Cache: @unchecked Sendable {
     /// seventh writer added tomorrow inherits it instead of having to know.
     private func write(_ work: @escaping (Database) throws -> Void) {
         guard let queue else { return }
-        try? queue.write(work)
+        do {
+            try queue.write(work)
+        } catch {
+            // Not fatal -- a cache is a copy, and losing a write to it costs a re-read
+            // rather than somebody's shopping. But `try?` said nothing at all, and a
+            // constraint failure that rolls back a whole snapshot then looks exactly
+            // like a snapshot that had nothing in it. The watch spent days showing an
+            // empty list for that reason, with no error anywhere to find.
+            print("[cache] write failed: \(error)")
+        }
         announce()
     }
 
