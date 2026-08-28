@@ -17,6 +17,22 @@ import Foundation
 /// and the queue filled for a reader that did not exist. None of that is needed against
 /// a backend that answers.
 ///
+/// ## Two decisions taken deliberately
+///
+/// **Category names are shown as they are stored, which is lowercase.** `tag::Name`
+/// normalises -- trimmed and folded -- so that `Dairy`, `dairy ` and `DAIRY` cannot
+/// become three categories. The twenty-one shipped ones are stored that way already and
+/// no screen capitalises them, so nothing changes on screen for them; what changes is
+/// that a category somebody types with a capital keeps it today, through
+/// `Cache.addTag`, and will not once this backend is the one storing it. `parsing::
+/// capitalise` exists and is deliberately not used here.
+///
+/// **The old GRDB cache is left alone.** This writes nothing to it. Until a screen has
+/// actually run on this backend, the cache is the working app's memory and the thing to
+/// fall back to if the switch does not hold -- so during the transition it is read by
+/// the old path and written by nobody through this one. That is why this opens
+/// `device.sqlite` beside it rather than adopting `cache.sqlite`.
+///
 /// ## What is not here
 ///
 /// `Accounts` and `Sharing`. Deliberately, and they are separate protocols for exactly
@@ -183,22 +199,70 @@ actor LocalBackend {
 
     // MARK: - Somebody else changed something
 
-    /// Never yields, and that is the right answer rather than a gap.
+    /// Which lists this person can see, whenever that changes.
     ///
-    /// This stream is for changes made *elsewhere*. On a device there is no elsewhere:
-    /// every change is made here, and the screen hears about it from the database. A
-    /// conformer that failed instead would put an error path back on a screen that has
-    /// nothing wrong with it, which is the whole problem being solved.
-    ///
-    /// `web/embedded` does have a watcher, and it is what will drive the screens once
-    /// they read through this backend. It is not wired to this stream yet because
-    /// nothing reads from it yet.
+    /// The same shape the API answers with, so a screen watching one cannot tell which
+    /// it has -- but underneath it is `domain`'s own broadcast channel, the one the
+    /// server drives SSE from. Standalone and server mode are told about changes by
+    /// literally the same mechanism.
     func listChanges() async throws -> AsyncThrowingStream<Void, Error> {
-        AsyncThrowingStream { _ in }
+        try watching { embedded_watch_lists($0) }
     }
 
     func changes(on list: List) async throws -> AsyncThrowingStream<Void, Error> {
-        AsyncThrowingStream { _ in }
+        try watching { embedded_watch_list($0, list.id) }
+    }
+
+    /// Turns a blocking Rust watcher into a stream.
+    ///
+    /// A thread of its own, because `embedded_next_change` parks until something
+    /// happens -- which on a shopping list is most of the time. It cannot be a `Task`:
+    /// a blocked task holds a cooperative thread pool thread, and enough of those
+    /// starve everything else in the app.
+    ///
+    /// The ownership dance matters and is the one thing the C header warns about.
+    /// Freeing a watcher another thread is parked in is a use-after-free, so the
+    /// watching thread owns it and frees it only after `next_change` has returned nil.
+    /// Cancelling the stream stops it, which is what makes that return.
+    private func watching(
+        _ start: (OpaquePointer) -> OpaquePointer?
+    ) throws -> AsyncThrowingStream<Void, Error> {
+        guard let watcher = start(handle) else {
+            throw APIError.transport(NoLocalServer())
+        }
+        guard let stopper = embedded_watcher_stopper(watcher) else {
+            embedded_watcher_free(watcher)
+            throw APIError.transport(NoLocalServer())
+        }
+
+        return AsyncThrowingStream { continuation in
+            // `nonisolated(unsafe)` on the pointers: they are handed to exactly one
+            // thread, which is the only thing that touches the watcher, and to one
+            // termination handler, which is the only thing that touches the stopper.
+            nonisolated(unsafe) let parked = watcher
+            nonisolated(unsafe) let ending = stopper
+
+            let thread = Thread {
+                while let answer = embedded_next_change(parked) {
+                    // The answer says *what* changed. A caller of this protocol asked
+                    // to be told that something did, and re-reads -- the same nudge the
+                    // server's stream carries, and for the same reason: a watcher given
+                    // the rows becomes a second opinion about them.
+                    embedded_free(answer)
+                    continuation.yield()
+                }
+                // nil means stopped, and only then is nobody parked in it.
+                embedded_watcher_free(parked)
+                continuation.finish()
+            }
+            thread.name = "shoppinglist.local.watch"
+            thread.start()
+
+            continuation.onTermination = { _ in
+                embedded_stop(ending)
+                embedded_stopper_free(ending)
+            }
+        }
     }
 
     // MARK: - The boundary

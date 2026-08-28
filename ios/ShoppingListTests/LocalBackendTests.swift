@@ -207,4 +207,60 @@ struct LocalBackendTests {
             _ = try await backend.items(on: absent)
         }
     }
+
+    /// The screen being told, which is the half that cannot be checked by reading.
+    ///
+    /// Underneath this is `domain`'s broadcast channel -- the one the server drives SSE
+    /// from -- reaching Swift through a blocking call on a thread of its own. A `Task`
+    /// would not do: a blocked task holds a cooperative pool thread, and enough of them
+    /// starve the app.
+    @Test("a change reaches a watcher on the device")
+    func aChangeReachesAWatcher() async throws {
+        let (backend, clean) = try #require(opened())
+        defer { clean() }
+
+        let changes = try await backend.listChanges()
+        var iterator = changes.makeAsyncIterator()
+
+        // Made after the watch starts, because the channel carries what happens next
+        // rather than what has already happened -- an app returning from the background
+        // is told nothing and re-reads everything, which is the right way round.
+        Task { _ = try? await backend.createList(named: "Household") }
+
+        let heard = try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.addTask { try await iterator.next() != nil }
+            group.addTask {
+                try await Task.sleep(for: .seconds(5))
+                return false
+            }
+            let first = try await group.next()
+            group.cancelAll()
+            return first ?? false
+        }
+
+        #expect(heard, "nothing reached the watcher within five seconds")
+    }
+
+    /// Cancelling has to end the thread, or every screen that closes leaves one parked
+    /// for the life of the app.
+    @Test("a watch that is cancelled lets go")
+    func aWatchLetsGo() async throws {
+        let (backend, clean) = try #require(opened())
+        defer { clean() }
+
+        let watching = Task {
+            let changes = try await backend.listChanges()
+            for try await _ in changes { return }
+        }
+        // Long enough for the thread to have parked in `embedded_next_change`, which is
+        // the case that matters: cancelling before it parks proves nothing.
+        try await Task.sleep(for: .milliseconds(200))
+
+        watching.cancel()
+
+        // The backend still answers, which is the thing a leaked or deadlocked watcher
+        // would take away.
+        _ = try await backend.createList(named: "Household")
+        #expect(try await backend.lists().items.count == 1)
+    }
 }
