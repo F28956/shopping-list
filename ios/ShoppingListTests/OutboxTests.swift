@@ -9,6 +9,14 @@ import Testing
 /// emptied.
 struct OutboxTests {
 
+    /// Every test here is about the queue, and the queue only exists when there is
+    /// somewhere to send. Said outright rather than inherited from whatever the machine
+    /// running these happens to be pointed at -- see `Outbox.sending`.
+    private func serverMode() -> Cache { Cache.inMemory(sending: { true }) }
+
+    /// The other half, for the tests that are about a device with nobody to tell.
+    private func standalone() -> Cache { Cache.inMemory(sending: { false }) }
+
     private let list = List(id: 1, uuid: "list-1", name: "Shop", ownerID: 9, role: .editor)
 
     private func item(_ id: Int64, _ name: String, amount: Double = 1, unit: Int64? = nil) -> Item {
@@ -24,7 +32,7 @@ struct OutboxTests {
     }
 
     @Test func aTickIsQueuedWithWhatItNeedsToBeReplayed() {
-        let outbox = Cache.inMemory().outbox
+        let outbox = serverMode().outbox
 
         outbox.setDone(item(7, "Milk"), on: list, done: true)
 
@@ -43,7 +51,7 @@ struct OutboxTests {
     /// A device's own changes replay in the order they were made, always. The sequence
     /// is the row id, so it can only count up.
     @Test func theOrderIsTheOrderTheyWereMade() {
-        let outbox = Cache.inMemory().outbox
+        let outbox = serverMode().outbox
 
         outbox.setDone(item(1, "Milk"), on: list, done: true)
         outbox.setDone(item(2, "Bread"), on: list, done: true)
@@ -59,7 +67,7 @@ struct OutboxTests {
     /// Every operation is named, and no two share a name. The sync route recognises a
     /// resend by this, so a collision would be a change silently swallowed.
     @Test func everyOperationHasItsOwnName() {
-        let outbox = Cache.inMemory().outbox
+        let outbox = serverMode().outbox
 
         for id in Int64(1)...20 {
             outbox.setDone(item(id, "Thing \(id)"), on: list, done: true)
@@ -71,7 +79,7 @@ struct OutboxTests {
     }
 
     @Test func theQueueIsScopedWhenAskedAboutOneList() {
-        let cache = Cache.inMemory()
+        let cache = serverMode()
         let other = List(id: 2, uuid: "list-2", name: "Bakery", ownerID: 9, role: .editor)
 
         cache.outbox.setDone(item(1, "Milk"), on: list, done: true)
@@ -85,7 +93,7 @@ struct OutboxTests {
     /// Signing out empties it. What is in there are changes to somebody else's lists,
     /// made by somebody who is no longer here.
     @Test func signingOutEmptiesTheQueue() {
-        let cache = Cache.inMemory()
+        let cache = serverMode()
         cache.outbox.setDone(item(1, "Milk"), on: list, done: true)
 
         cache.forgetEverything()
@@ -102,10 +110,10 @@ struct OutboxTests {
         defer { try? FileManager.default.removeItem(at: folder) }
 
         let path = folder.appendingPathComponent("queue.sqlite").path
-        let first = Cache(path: path)
+        let first = Cache(path: path, sending: { true })
         first.outbox.setDone(item(3, "Coffee"), on: list, done: true)
 
-        let second = Cache(path: path)
+        let second = Cache(path: path, sending: { true })
 
         #expect(second.outbox.all().map(\.itemID) == [3])
     }
@@ -114,7 +122,7 @@ struct OutboxTests {
     /// in this file with somewhere to go wrong: the arguments live as JSON in a column,
     /// and they have to come back out in the right fields.
     @Test func eachKindReachesTheWireIntact() throws {
-        let cache = Cache.inMemory()
+        let cache = serverMode()
         let milk = item(1, "Milk")
         // Measured, so the `seen` fields have something to carry that is not a default.
         let measured = item(1, "Milk", amount: 2, unit: 3)
@@ -163,7 +171,7 @@ struct OutboxTests {
     /// The JSON is what the server reads, so it is worth looking at rather than trusting
     /// the field names to line up.
     @Test func theBatchEncodesTheWayTheRouteReadsIt() throws {
-        let cache = Cache.inMemory()
+        let cache = serverMode()
         cache.outbox.update(
             item(1, "Milk", amount: 2, unit: 3),
             on: list,
@@ -191,7 +199,7 @@ struct OutboxTests {
     /// A row made offline is queued under a uuid and a placeholder id, and the uuid is
     /// the only one that travels. The negative id never leaves the device.
     @Test func aRowMadeOfflineTravelsUnderItsUuid() {
-        let cache = Cache.inMemory()
+        let cache = serverMode()
 
         cache.outbox.add(
             uuid: "minted",
@@ -211,7 +219,7 @@ struct OutboxTests {
 
     @Test("filing is queued rather than sent, so it survives having no server")
     func filingIsQueued() {
-        let outbox = Cache.inMemory().outbox
+        let outbox = serverMode().outbox
         let milk = item(7, "Milk")
 
         outbox.tag(milk, on: list, tagID: 5, attached: true)
@@ -230,7 +238,7 @@ struct OutboxTests {
         // The two tag kinds are built by hand at both ends, so nothing but a test
         // notices if the key is spelled the way Swift spells the property. A phone in
         // a shop would notice, eventually, by the filing never arriving.
-        let outbox = Cache.inMemory().outbox
+        let outbox = serverMode().outbox
         outbox.tag(item(7, "Milk"), on: list, tagID: 5, attached: true)
 
         let encoder = JSONEncoder()
@@ -243,5 +251,98 @@ struct OutboxTests {
         #expect(fields["kind"] as? String == "attach_tag")
         #expect((fields["tag_id"] as? NSNumber)?.int64Value == 5)
         #expect(fields["item"] as? String == "item-7")
+    }
+
+    // MARK: - A device kept to itself queues nothing
+
+    /// Standalone is not server mode with the server unreachable. There is nobody to
+    /// tell, so there is nothing to queue -- and what used to happen instead was a log
+    /// of every change ever made, never drained because there was nothing to drain to,
+    /// and invisible because the dot and the unsent marks are both hidden without a
+    /// server. Two items came to nine operations.
+    @Test func nothingIsQueuedWithNoServer() {
+        let cache = standalone()
+        let list = cache.makeListHere(named: "Home", ownedBy: 0)
+        let milk = Item(
+            id: -2, uuid: "milk", name: "Milk", amount: 1,
+            unitID: nil, doneAt: nil, tagIDs: [1]
+        )
+        cache.remember(items: [milk], on: list)
+
+        cache.outbox.makeList(list)
+        cache.outbox.add(uuid: milk.uuid, localID: milk.id, name: milk.name,
+                         amount: 1, unitID: nil, on: list)
+        cache.outbox.tag(milk, on: list, tagID: 1, attached: true)
+        cache.outbox.setDone(milk, on: list, done: true)
+
+        #expect(cache.outbox.waiting == 0, "a device with no server queued something")
+    }
+
+    /// And the handover that replaces it. Adopting a server has a real job to do,
+    /// because the lists made while there was none exist nowhere else -- and with
+    /// nothing queued along the way, this is the only thing that carries them.
+    ///
+    /// `sending` flips, which is exactly what choosing a server does.
+    @Test func adoptingAServerHandsOverWhatIsHere() {
+        nonisolated(unsafe) var hasServer = false
+        let cache = Cache.inMemory(sending: { hasServer })
+
+        let list = cache.makeListHere(named: "Home", ownedBy: 0)
+        cache.outbox.makeList(list)
+        cache.remember(
+            items: [
+                Item(id: -2, uuid: "milk", name: "Milk", amount: 1,
+                     unitID: nil, doneAt: nil, tagIDs: [1]),
+                Item(id: -3, uuid: "apples", name: "Apples", amount: 2,
+                     unitID: nil, doneAt: nil, tagIDs: []),
+            ],
+            on: list
+        )
+        #expect(cache.outbox.waiting == 0, "something was queued before there was a server")
+
+        hasServer = true
+        cache.handOverIfNeeded()
+
+        let queued = cache.outbox.all()
+        #expect(queued.contains { $0.kind == "make_list" }, "the list itself was not handed over")
+        #expect(queued.filter { $0.kind == "add" }.count == 2, "the items were not handed over")
+        #expect(
+            queued.contains { $0.kind == "attach_tag" },
+            "what the items were filed under was not handed over"
+        )
+    }
+
+    /// Twice must not queue it twice: this runs before every drain, so it runs often.
+    @Test func aHandoverDoesNotRepeatItself() {
+        nonisolated(unsafe) var hasServer = false
+        let cache = Cache.inMemory(sending: { hasServer })
+        let list = cache.makeListHere(named: "Home", ownedBy: 0)
+        cache.remember(
+            items: [Item(id: -2, uuid: "milk", name: "Milk", amount: 1,
+                         unitID: nil, doneAt: nil, tagIDs: [])],
+            on: list
+        )
+
+        hasServer = true
+        cache.handOverIfNeeded()
+        let after = cache.outbox.waiting
+        cache.handOverIfNeeded()
+        cache.handOverIfNeeded()
+
+        #expect(after > 0, "nothing was handed over at all")
+        #expect(cache.outbox.waiting == after, "the queue grew on every drain")
+    }
+
+    /// A device that has always had a server has nothing to hand over: its lists came
+    /// from the server and carry its ids.
+    @Test func aServersOwnListsAreNotHandedBack() {
+        let cache = serverMode()
+        cache.remember(lists: [
+            List(id: 7, uuid: "theirs", name: "Household", ownerID: 1, role: .owner)
+        ])
+
+        cache.handOverIfNeeded()
+
+        #expect(cache.outbox.waiting == 0, "a list the server already has was sent back to it")
     }
 }

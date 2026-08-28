@@ -123,15 +123,29 @@ struct Drained: Equatable {
 /// Unlike the cache, **this is not disposable**. A queued change exists nowhere else in
 /// the world until it is sent, which is why the database it shares with the cache is
 /// migrated by hand rather than thrown away on a schema change.
-/// `@unchecked Sendable` on the same two grounds as ``Cache``, which see: one `let`
-/// and no other stored state, and every touch of the database through GRDB's
-/// `DatabaseQueue`, which serialises them.
+/// `@unchecked Sendable` on the same two grounds as ``Cache``, which see: `let`s and no
+/// other stored state, and every touch of the database through GRDB's `DatabaseQueue`,
+/// which serialises them.
 final class Outbox: @unchecked Sendable {
 
     private let queue: DatabaseQueue?
 
-    init(queue: DatabaseQueue?) {
+    /// Whether there is anybody to send to.
+    ///
+    /// Injected rather than read from `ServerDirectory` here, and the reason is worth
+    /// keeping: reading it directly made every queueing path depend on a global that a
+    /// test has to mutate to control. Tests run in parallel, so that is a race as well
+    /// as an inconvenience -- one test setting the key while another reads it.
+    ///
+    /// The default is the real answer, so nothing in the app passes this.
+    private let sending: @Sendable () -> Bool
+
+    init(
+        queue: DatabaseQueue?,
+        sending: @escaping @Sendable () -> Bool = { !ServerDirectory.isOnDeviceOnly }
+    ) {
         self.queue = queue
+        self.sending = sending
     }
 
     // MARK: - Queueing
@@ -254,6 +268,22 @@ final class Outbox: @unchecked Sendable {
         _ fields: [String: Any],
         at: Date = Date()
     ) {
+        // **Nothing is queued on a device kept to itself.** Standalone is not server
+        // mode with the server unreachable; it is a device where the cache *is* the
+        // truth and there is nobody to tell. A queue there is a log of everything that
+        // has ever happened, written for a reader that does not exist -- unbounded,
+        // never drained, and invisible, because the dot and the unsent marks are both
+        // hidden without a server. Two items were already nine operations.
+        //
+        // Here rather than at the twenty-odd callers, for the usual reason: a caller
+        // that has to remember is a caller that will not.
+        //
+        // What was queued *for* is adopting a server later, and `handOver` does that
+        // properly -- one pass over what the device actually holds, at the one moment
+        // it matters, instead of a year of history replayed to arrive at the same
+        // place.
+        guard sending() else { return }
+
         let payload = (try? JSONSerialization.data(withJSONObject: fields))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
 

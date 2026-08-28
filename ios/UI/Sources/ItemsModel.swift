@@ -461,6 +461,7 @@ final class ItemsModel {
         // that happens. Returning early without refreshing left "3 changes waiting to
         // be sent" on a screen whose queue had been empty for minutes.
         refreshUnsent()
+        cache.handOverIfNeeded()
         guard cache.outbox.waiting > 0 else { return }
 
         draining = true

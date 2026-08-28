@@ -39,29 +39,49 @@ final class Cache: @unchecked Sendable {
     /// The queue of changes that have not been sent, in the same file — see ``Outbox``.
     let outbox: Outbox
 
+    /// Whether there is a server to send to. See ``Outbox/sending``.
+    private let sending: @Sendable () -> Bool
+
     /// Opens the cache in Application Support, or gives up quietly.
     ///
     /// A `nil` queue is a working app with no memory rather than a crash on launch:
     /// the only thing this holds is a copy of what the server has, so a disk that
     /// will not cooperate costs a blank screen with no signal and nothing else.
-    init(named name: String = "cache.sqlite") {
+    init(
+        named name: String = "cache.sqlite",
+        sending: @escaping @Sendable () -> Bool = { !ServerDirectory.isOnDeviceOnly }
+    ) {
         queue = Self.open(named: name)
-        outbox = Outbox(queue: queue)
+        self.sending = sending
+        outbox = Outbox(queue: queue, sending: sending)
         migrate()
     }
 
     /// A cache at an exact path, for tests that need one to outlive the object — the
     /// queue surviving the app being killed is the whole point of it, and that is only
     /// checkable by opening the same file twice.
-    init(path: String) {
+    init(
+        path: String,
+        sending: @escaping @Sendable () -> Bool = { !ServerDirectory.isOnDeviceOnly }
+    ) {
         queue = try? DatabaseQueue(path: path)
-        outbox = Outbox(queue: queue)
+        self.sending = sending
+        outbox = Outbox(queue: queue, sending: sending)
         migrate()
     }
 
     /// An in-memory cache, for tests and for `-uiTesting`, which must not read or
     /// write whatever the person running it happens to have on disk.
-    static func inMemory() -> Cache { Cache(named: "") }
+    /// An in-memory cache, for tests and for `-uiTesting`.
+    ///
+    /// `sending` decides whether changes are queued, which is the difference between
+    /// standalone and server mode -- see ``Outbox/sending``. Tests say which they mean
+    /// rather than inheriting whatever the machine running them happens to be set to.
+    static func inMemory(
+        sending: @escaping @Sendable () -> Bool = { !ServerDirectory.isOnDeviceOnly }
+    ) -> Cache {
+        Cache(named: "", sending: sending)
+    }
 
     /// The one cache, because there is one database file.
     ///
@@ -910,6 +930,67 @@ final class Cache: @unchecked Sendable {
         guard let queue else { return }
         try? queue.write(work)
         announce()
+    }
+
+    // MARK: - Handing a standalone device over to a server
+
+    /// Puts everything this device holds into the queue, once, because it has just been
+    /// pointed at a server.
+    ///
+    /// This is what the outbox used to do continuously and should not have. On a device
+    /// with no server there is nobody to tell, so nothing is queued -- see the guard in
+    /// `Outbox.queue`. But a device that *adopts* a server has a real handover to do:
+    /// lists and items that exist nowhere else, which the server has never heard of and
+    /// so can never mention.
+    ///
+    /// One pass over what is actually here, rather than a replay of how it got here.
+    /// The two arrive at the same place, and this one is bounded by the size of the
+    /// list instead of by how long the app has been used -- and it cannot replay an
+    /// item that was added and later deleted, because such an item is simply not here.
+    ///
+    /// Only locally-made lists. Anything with a server's own id came from a server and
+    /// is not this device's to hand over.
+    ///
+    /// Called before every drain rather than at the moment a server is chosen, and that
+    /// is deliberate. A server can be adopted from four screens -- the phone's settings
+    /// and its sign-in, the Mac's settings, the watch's identity -- and a handover that
+    /// each of them has to remember to ask for is a handover three of them will
+    /// eventually forget. This asks the only question that matters, at the only moment
+    /// it matters: is there a server, and is there anything here it has never heard of?
+    ///
+    /// Nothing to do in the ordinary case, which is why it is cheap enough to sit in
+    /// front of every drain: a device that never had local lists has none, and one that
+    /// has already handed over finds its lists already queued.
+    func handOverIfNeeded() {
+        guard sending() else { return }
+
+        // Already spoken for. A list stops being local the moment the server answers
+        // with an id for it -- see `adopt` -- so this only skips a handover that is
+        // still in flight, never one that is needed.
+        let alreadyQueued = Set(outbox.all().map(\.listUUID))
+
+        for list in lists() where Self.isLocal(list) && !alreadyQueued.contains(list.uuid) {
+            outbox.makeList(list)
+
+            for item in items(on: list) {
+                outbox.add(
+                    uuid: item.uuid,
+                    localID: item.id,
+                    name: item.name,
+                    amount: item.amount,
+                    unitID: item.unitID,
+                    on: list
+                )
+                for tagID in item.tagIDs {
+                    outbox.tag(item, on: list, tagID: tagID, attached: true)
+                }
+                // After the add, and only when it is true: the wire has no field for it
+                // on an add, and the queue is ordered so this lands behind.
+                if item.isDone {
+                    outbox.setDone(item, on: list, done: true, at: item.doneAt ?? Date())
+                }
+            }
+        }
     }
 
     // MARK: - Watching

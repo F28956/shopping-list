@@ -28,7 +28,7 @@ struct ItemsModelTests {
         }
     }
 
-    private func model(_ cache: Cache = .inMemory()) -> (ItemsModel, Cache, List) {
+    private func model(_ cache: Cache = .inMemory(sending: { true })) -> (ItemsModel, Cache, List) {
         let list = List(id: -1, uuid: "list-1", name: "Shop", ownerID: 0, role: .owner)
         cache.remember(lists: [list])
         cache.remember(units: [
@@ -260,7 +260,7 @@ struct ItemsModelTests {
         let path = NSTemporaryDirectory() + "observe-\(UUID().uuidString).sqlite"
         defer { try? FileManager.default.removeItem(atPath: path) }
 
-        let mine = Cache(path: path)
+        let mine = Cache(path: path, sending: { true })
         let (model, _, list) = model(mine)
         mine.remember(
             tags: [
@@ -272,7 +272,7 @@ struct ItemsModelTests {
         await until { model.tags.count == 2 }
 
         // A different object over the same database, as another part of the app is.
-        let elsewhere = Cache(path: path)
+        let elsewhere = Cache(path: path, sending: { true })
         elsewhere.removeTag(901)
 
         // Deliberately asserting the limit. If this ever starts failing because the

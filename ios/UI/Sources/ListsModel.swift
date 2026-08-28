@@ -259,6 +259,11 @@ final class ListsModel {
     /// the outbox's business -- see ``Outbox/drain(through:)`` -- and what is left stays
     /// queued for the next successful load.
     func sendQueued() async {
+        // Before the count is looked at, because it is what puts something in the queue
+        // on a device that has just been given a server: nothing was queued while it had
+        // none, so the lists made there are known to this device and to nothing else.
+        cache.handOverIfNeeded()
+
         guard !draining, cache.outbox.waiting > 0 else { return }
         draining = true
         let drained = await cache.outbox.drain(through: api)

@@ -20,7 +20,7 @@ struct ListsModelTests {
         }
     }
 
-    private func model(_ cache: Cache = .inMemory()) -> (ListsModel, Cache) {
+    private func model(_ cache: Cache = .inMemory(sending: { true })) -> (ListsModel, Cache) {
         let api = API(
             baseURL: URL(string: "http://127.0.0.1:1")!,
             token: { "none" }
@@ -31,9 +31,12 @@ struct ListsModelTests {
     /// The one the Mac got wrong. It called `api.createList` and showed the failure,
     /// so on a machine deliberately kept off a server the only button on the screen
     /// raised a dialog and made nothing.
-    @Test("a list can be made with no server to ask")
+    ///
+    /// Standalone: written down, and **nothing queued**, because there is nobody to
+    /// tell. Adopting a server later is what `handOverIfNeeded` is for.
+    @Test("a list can be made with no server at all")
     func makingWorksWithNoServer() async {
-        let (model, cache) = model()
+        let (model, cache) = model(.inMemory(sending: { false }))
 
         let made = await model.makeList(named: "Household")
 
@@ -41,7 +44,22 @@ struct ListsModelTests {
         #expect(model.lists.map(\.name) == ["Household"], "the list did not reach the screen")
         #expect(model.error == nil, "making a list offline was reported as a failure")
         #expect(cache.lists().map(\.name) == ["Household"], "it was not written down")
-        #expect(cache.outbox.waiting == 1, "nothing was queued for a server that may appear")
+        #expect(cache.outbox.waiting == 0, "a device with nobody to tell queued something")
+        #expect(model.waiting == 0, "the dot claimed something was waiting to be sent")
+    }
+
+    /// The other mode, which is a different thing and looks the same from the screen:
+    /// there **is** a server, it just cannot be reached. Here the change is queued,
+    /// because there is somebody who has not been told yet.
+    @Test("a list made while the server is unreachable is queued for it")
+    func makingQueuesWhenAServerExists() async {
+        let (model, cache) = model(.inMemory(sending: { true }))
+
+        let made = await model.makeList(named: "Household")
+
+        #expect(made?.name == "Household")
+        #expect(cache.lists().map(\.name) == ["Household"])
+        #expect(cache.outbox.waiting == 1, "nothing was queued for a server that exists")
         #expect(model.waiting == 1, "the screen was not told there is something waiting")
     }
 
@@ -50,12 +68,12 @@ struct ListsModelTests {
         let path = NSTemporaryDirectory() + "lists-\(UUID().uuidString).sqlite"
         defer { try? FileManager.default.removeItem(atPath: path) }
 
-        let (first, _) = model(Cache(path: path))
+        let (first, _) = model(Cache(path: path, sending: { false }))
         await first.makeList(named: "Household")
 
         // A second cache over the same file is the only honest way to test this: the
         // queue outliving the process is the whole point of it.
-        let (second, _) = model(Cache(path: path))
+        let (second, _) = model(Cache(path: path, sending: { false }))
         second.showWhatWeHave()
 
         #expect(second.lists.map(\.name) == ["Household"])
@@ -103,7 +121,7 @@ struct ListsModelTests {
     /// gap is a known one rather than an assumed pass.
     @Test("a drain with nothing to send changes nothing")
     func drainingAnEmptyQueueIsQuiet() async {
-        let (model, cache) = model()
+        let (model, cache) = model(.inMemory(sending: { true }))
         await model.makeList(named: "Household")
         let before = model.lists
 
