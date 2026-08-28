@@ -21,6 +21,24 @@ extension View {
         #endif
     }
 
+    /// A sheet big enough to show what is in it.
+    ///
+    /// iOS presents a sheet at a size the system chooses and the content fills it. A
+    /// Mac sizes the sheet to its content, and a `List` inside a `NavigationStack` has
+    /// no intrinsic height to offer -- so it reports zero, and the sheet comes up as a
+    /// title and a footer with a scroll view of height 0 between them.
+    ///
+    /// That is not a subtle degradation. `TagsView` shipped on the Mac with all
+    /// twenty-one categories present in the view, laid out at 24pt each, inside a
+    /// scroll area measured at 470x0. The screen was simply empty.
+    func sheetSize() -> some View {
+        #if os(macOS)
+            return frame(minWidth: 420, idealWidth: 460, minHeight: 360, idealHeight: 520)
+        #else
+            return self
+        #endif
+    }
+
     /// A field that expects an email address: the right keyboard, and no capital
     /// letter forced onto the front of it.
     ///

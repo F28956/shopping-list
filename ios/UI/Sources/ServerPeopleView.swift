@@ -67,6 +67,7 @@ struct ServerPeopleView: View {
                 )
             }
         }
+        .sheetSize()
     }
 
     private var people: some View {
@@ -200,5 +201,6 @@ private struct AdmitSheet: View {
                 }
             }
         }
+        .sheetSize()
     }
 }

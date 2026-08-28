@@ -105,6 +105,7 @@ struct TagsView: View {
                 )
             }
         }
+        .sheetSize()
     }
 
     private func load() {
@@ -213,5 +214,6 @@ private struct TagEditor: View {
                 emoji = tag?.emoji ?? ""
             }
         }
+        .sheetSize()
     }
 }
