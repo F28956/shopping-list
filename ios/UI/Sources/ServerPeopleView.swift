@@ -31,13 +31,13 @@ struct ServerPeopleView: View {
                 }
             }
             .navigationTitle("Who may sign in")
-            .navigationBarTitleDisplayMode(.inline)
+            .compactTitle()
             .toolbar {
                 // Adding on the left, finishing on the right -- the shape Settings >
                 // Passwords uses, and the one a modal list with an add action wants.
                 // These were the other way round, which put `Done` in the slot that
                 // means cancel.
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .sheetLeading) {
                     Button("Admit", systemImage: "plus") { admitting = true }
                         .accessibilityIdentifier("admit")
                 }
@@ -177,15 +177,14 @@ private struct AdmitSheet: View {
             Form {
                 TextField("Their address", text: $email)
                     .textContentType(.emailAddress)
-                    .keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never)
+                    .emailEntry()
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("admit.email")
                 // "mum", so that a list of addresses stays readable.
                 TextField("A name for them, optionally", text: $note)
             }
             .navigationTitle("Admit somebody")
-            .navigationBarTitleDisplayMode(.inline)
+            .compactTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

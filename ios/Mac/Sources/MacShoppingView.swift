@@ -137,6 +137,16 @@ struct MacShoppingView: View {
             }
         }
         .toolbar {
+            // The same dot as the phone, and it was missing here: the Mac kept a
+            // counter of what was waiting and rendered it nowhere, so a Mac holding
+            // unsent changes looked exactly like one that was in step. It hides itself
+            // with no server -- see `StatusDot` for why a permanent green light for a
+            // connection that does not exist is worse than none.
+            if !onDeviceOnly {
+                ToolbarItem(placement: .navigation) {
+                    StatusDot(waiting: model.waiting, offline: model.offline)
+                }
+            }
             ToolbarItem(placement: .navigation) {
                 Button {
                     naming = .create
@@ -246,6 +256,14 @@ struct MacShoppingView: View {
             }
             model.showWhatWeHave()
             await model.load()
+        }
+        .task {
+            // Cheap, and the only way the dot stays honest while somebody is looking at
+            // it: every items view drains the same queue, and nothing tells this one.
+            while !Task.isCancelled {
+                model.waiting = cache.outbox.waiting
+                try? await Task.sleep(for: .seconds(2))
+            }
         }
         .task { await model.watchLists() }
         .alert("Could not load", isPresented: .constant(model.error != nil)) {

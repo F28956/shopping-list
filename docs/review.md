@@ -56,10 +56,21 @@ Eight tests on that logic now, where there were none: that a list can be made wi
 server and survives a restart, that a failed load does not claim there is nothing, that
 a slow cache read cannot overwrite a fast answer, and what each kind of refusal does.
 
-One difference is left and it is a real question rather than drift: **the Mac shows no
-queue state at all**. It kept a `queued` counter updated on a two-second timer and
-rendered it nowhere, so that is gone; whether the Mac should have the phone's status dot
-is a design decision nobody has made.
+**And the rest of the Mac's gaps with it.** The decision is that the Mac behaves as the
+phone does, so the remaining differences were gaps rather than choices:
+
+* **No status dot.** It kept a counter of what was waiting and rendered it nowhere, so a
+  Mac holding unsent changes looked exactly like one in step. It has the phone's dot now,
+  hidden with no server for the reason `StatusDot` gives.
+* **No Categories screen.** Editable categories reached two of the three clients.
+* **No "Who may sign in".** The owner's screen existed on the phone only, though its
+  comment already said it was written to be presented from the Mac.
+* **No way to use a share link.** C7 was iOS-only, so somebody sent a link on a Mac had
+  to pick the host out of it by hand.
+
+`TagsView` and `ServerPeopleView` moved to `UI/Sources` rather than being copied, and the
+four modifiers that exist on one platform and not the other are behind `PlatformChrome`
+— because a second copy of a screen is exactly how this file's first two entries began.
 
 ## ~~2. An invitation token travels in the URL path~~ — fixed
 

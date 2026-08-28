@@ -69,11 +69,11 @@ struct TagsView: View {
                 }
             }
             .navigationTitle("Categories")
-            .navigationBarTitleDisplayMode(.inline)
+            .compactTitle()
             .toolbar {
                 // Adding on the left and finishing on the right, as Settings >
                 // Passwords does — see `ServerPeopleView`, which is the same shape.
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .sheetLeading) {
                     Button("New category", systemImage: "plus") { adding = true }
                         .accessibilityIdentifier("tag.new")
                 }
@@ -193,7 +193,7 @@ private struct TagEditor: View {
                 }
             }
             .navigationTitle(tag == nil ? "New category" : "Category")
-            .navigationBarTitleDisplayMode(.inline)
+            .compactTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
