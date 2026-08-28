@@ -254,6 +254,67 @@ final class Cache: @unchecked Sendable {
             }
         }
 
+        // The categories, stored the way the server stores them.
+        //
+        // They were in `reference` keyed on `(kind, list_id, id)`, which is one copy of
+        // the whole vocabulary per list. That is not what a category is: there is one
+        // set of them, and what a list has is an *order* over it. The server has said so
+        // since the beginning -- `tags` is a single table there and `list_tag_order`
+        // holds nothing but positions -- and only this cache flattened the two together.
+        //
+        // What the flattening cost: `allTags` had to pick a list to read the vocabulary
+        // off and answered nothing when there were none; renaming, adding and removing
+        // each had to loop every list and rewrite its rows; two lists could disagree
+        // about a name with nothing to stop them; and the storage was O(lists x tags)
+        // for something that is O(tags).
+        migrator.registerMigration("v8-one-vocabulary") { db in
+            try db.execute(
+                sql: """
+                    CREATE TABLE tags (
+                        id       INTEGER PRIMARY KEY,
+                        name     TEXT NOT NULL,
+                        emoji    TEXT,
+                        -- Where this category falls when no list has said otherwise.
+                        -- The screen that manages them belongs to no list, so it needs
+                        -- an order of its own rather than borrowing one.
+                        position INTEGER NOT NULL
+                    )
+                    """
+            )
+            try db.execute(
+                sql: """
+                    CREATE TABLE list_tag_order (
+                        list_id  INTEGER NOT NULL,
+                        tag_id   INTEGER NOT NULL,
+                        position INTEGER NOT NULL,
+                        PRIMARY KEY (list_id, tag_id)
+                    ) WITHOUT ROWID
+                    """
+            )
+
+            // Carried over rather than re-fetched: a device with no server has nowhere
+            // to re-fetch from, and the rows it holds are the only copy in the world.
+            //
+            // The lowest list_id wins where the copies disagree, which they should not.
+            // `MIN` rather than an arbitrary pick so the result does not depend on the
+            // order rows come back in.
+            try db.execute(
+                sql: """
+                    INSERT INTO tags (id, name, emoji, position)
+                    SELECT id, name, emoji, MIN(position)
+                      FROM reference WHERE kind = 'tag'
+                     GROUP BY id
+                    """
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO list_tag_order (list_id, tag_id, position)
+                    SELECT list_id, id, position FROM reference WHERE kind = 'tag'
+                    """
+            )
+            try db.execute(sql: "DELETE FROM reference WHERE kind = 'tag'")
+        }
+
         try? migrator.migrate(queue)
     }
 
@@ -559,63 +620,86 @@ final class Cache: @unchecked Sendable {
         )
     }
 
+    /// The vocabulary in this list's order.
+    ///
+    /// A join, because those are two different things: `tags` is what the categories
+    /// *are* and `list_tag_order` is where this list puts them. A category this list has
+    /// never ordered still appears -- at its own position, which is what a list that has
+    /// never been reordered gets.
+    ///
+    /// `sortOrder` is filled from the row's rank rather than from the stored position:
+    /// position already holds the order this person resolved, and a stored zero would
+    /// read as a tie everywhere downstream.
     func tags(on list: List) -> [Tag] {
-        // `sortOrder` is filled from the stored position rather than from the server's
-        // own column: position already holds the order this person resolved, and a
-        // stored zero would read as a tie everywhere downstream.
-        reference(kind: Kind.tag, listID: list.id).enumerated().map { at, row in
-            Tag(id: row.id, name: row.name, emoji: row.emoji, sortOrder: Int64(at))
+        read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT t.id, t.name, t.emoji
+                      FROM tags t
+                      LEFT JOIN list_tag_order o ON o.tag_id = t.id AND o.list_id = ?
+                     ORDER BY COALESCE(o.position, t.position), t.id
+                    """,
+                arguments: [list.id]
+            )
+        }
+        .enumerated()
+        .map { at, row in
+            Tag(id: row["id"], name: row["name"], emoji: row["emoji"], sortOrder: Int64(at))
         }
     }
 
+    /// What the server said this list's categories are, and in what order.
+    ///
+    /// Both halves, because the server sends both in one answer -- but into their own
+    /// tables. The vocabulary is upserted rather than replaced: this list's answer is
+    /// evidence about the categories, not the whole truth about them, and a list that
+    /// happens to carry a subset must not delete the rest.
     func remember(tags: [Tag], on list: List) {
-        replaceReference(
-            kind: Kind.tag,
-            listID: list.id,
-            rows: tags.map { (id: $0.id, name: $0.name, emoji: $0.emoji, bare: false) }
-        )
+        write { db in
+            for (at, tag) in tags.enumerated() {
+                try db.execute(
+                    sql: """
+                        INSERT INTO tags (id, name, emoji, position) VALUES (?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET name = excluded.name, emoji = excluded.emoji
+                        """,
+                    arguments: [tag.id, tag.name, tag.emoji, at]
+                )
+            }
+
+            try db.execute(sql: "DELETE FROM list_tag_order WHERE list_id = ?", arguments: [list.id])
+            for (at, tag) in tags.enumerated() {
+                try db.execute(
+                    sql: "INSERT INTO list_tag_order (list_id, tag_id, position) VALUES (?, ?, ?)",
+                    arguments: [list.id, tag.id, at]
+                )
+            }
+        }
     }
 
 
     // MARK: - The aisles, which belong to no one list
 
-    /// Every aisle this device knows, in the order the first list walks them.
+    /// Every category this device knows.
     ///
-    /// Tags are global — one vocabulary for everything on a server — but they are
-    /// cached per list, because the *order* is per list and the two share a table.
-    /// So "what aisles are there" is the union, and this reads it off whichever list
-    /// has one.
+    /// One statement, and no list involved, which is the point of the shape: categories
+    /// are global and lists carry an order over them. This used to walk `lists()`
+    /// looking for one whose rows it could read the vocabulary off, and answered nothing
+    /// when there were none -- so the screen for managing them opened empty on a device
+    /// that had not made a list yet.
     ///
-    /// **With no lists there is still a vocabulary.** This used to iterate `lists()`
-    /// and stop, so a device that had not made a list yet answered "there are no
-    /// categories" — and the settings screen for managing them opened empty on a fresh
-    /// install, which is exactly when somebody would go and look. The twenty-one names
-    /// are not a property of having a list; they are what the app ships with. So the
-    /// rows filed under no list are read next, and the bundled set after that.
+    /// The bundled set stands in while the table is empty. The categories are not a
+    /// property of having a list or of having a server; they are what the app ships
+    /// with, and `seedReference` writes them down the first time a list is opened.
     func allTags() -> [Tag] {
-        for list in lists() {
-            let found = tags(on: list)
-            if !found.isEmpty { return found }
+        let stored = read { db in
+            try Row.fetchAll(db, sql: "SELECT id, name, emoji FROM tags ORDER BY position, id")
         }
-
-        let unfiled = reference(kind: Kind.tag, listID: Kind.global).enumerated().map { at, row in
-            Tag(id: row.id, name: row.name, emoji: row.emoji, sortOrder: Int64(at))
+        .enumerated()
+        .map { at, row in
+            Tag(id: row["id"], name: row["name"], emoji: row["emoji"], sortOrder: Int64(at))
         }
-        return unfiled.isEmpty ? Reference.tags : unfiled
-    }
-
-    /// Where the vocabulary lives when there is no list to hang it on.
-    ///
-    /// Every one of the three functions below wrote to `lists()` and nothing else, so
-    /// on a device with no lists adding a category returned one that was never stored,
-    /// and renaming or deleting did nothing at all. They write here as well, which is
-    /// the same row set `allTags` falls back to.
-    private func rememberGlobally(tags: [Tag]) {
-        replaceReference(
-            kind: Kind.tag,
-            listID: Kind.global,
-            rows: tags.map { (id: $0.id, name: $0.name, emoji: $0.emoji, bare: false) }
-        )
+        return stored.isEmpty ? Reference.tags : stored
     }
 
     /// Renames an aisle, or changes its glyph, everywhere.
@@ -627,18 +711,34 @@ final class Cache: @unchecked Sendable {
     /// Each list keeps its own order: this replaces rows in place rather than
     /// rewriting the sequence.
     func rename(tag id: Int64, to name: String, emoji: String?) {
-        func renamed(_ tags: [Tag]) -> [Tag] {
-            tags.map { tag in
-                tag.id == id ? Tag(id: id, name: name, emoji: emoji, sortOrder: tag.sortOrder) : tag
-            }
+        seedTagsIfEmpty()
+        write { db in
+            try db.execute(
+                sql: "UPDATE tags SET name = ?, emoji = ? WHERE id = ?",
+                arguments: [name, emoji, id]
+            )
         }
+    }
 
-        // The list-less set first, so a device with no lists is not a device where
-        // renaming a category silently does nothing.
-        rememberGlobally(tags: renamed(allTags()))
+    /// Writes the shipped categories down, if nothing has yet.
+    ///
+    /// `allTags` answers with them either way, so a screen looks right before this runs
+    /// -- but an UPDATE against an empty table changes nothing, and the rename would
+    /// have looked like it worked and been gone on the next read. Anything that edits
+    /// the vocabulary makes sure there is one first.
+    private func seedTagsIfEmpty() {
+        let stored = readOne { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tags")
+        } ?? 0
+        guard stored == 0 else { return }
 
-        for list in lists() {
-            remember(tags: renamed(tags(on: list)), on: list)
+        write { db in
+            for (at, tag) in Reference.tags.enumerated() {
+                try db.execute(
+                    sql: "INSERT OR IGNORE INTO tags (id, name, emoji, position) VALUES (?, ?, ?, ?)",
+                    arguments: [tag.id, tag.name, tag.emoji, at]
+                )
+            }
         }
     }
 
@@ -648,24 +748,20 @@ final class Cache: @unchecked Sendable {
     /// same reason a locally-made row's is: it is a placeholder, and a server that
     /// arrives later brings its own vocabulary with its own numbering.
     func addTag(named name: String, emoji: String?) -> Tag {
+        seedTagsIfEmpty()
         let id = -Int64(Date().timeIntervalSince1970 * 1000)
-        for list in lists() {
-            let existing = tags(on: list)
-            let made = Tag(
-                id: id,
-                name: name,
-                emoji: emoji,
-                sortOrder: Int64(existing.count)
-            )
-            remember(tags: existing + [made], on: list)
-        }
 
-        // And to the set that belongs to no list, so it survives on a device that has
-        // not made one yet -- where this used to return a category it had not stored.
-        let vocabulary = allTags()
-        rememberGlobally(
-            tags: vocabulary + [Tag(id: id, name: name, emoji: emoji, sortOrder: Int64(vocabulary.count))]
-        )
+        // At the end of the vocabulary, and of nothing else. A list that has never been
+        // reordered picks this up from `tags.position`; one that has gets it at the end
+        // too, because `tags(on:)` falls back to that position for a category the list
+        // has no row for. Neither needs writing to.
+        write { db in
+            let last = try Int.fetchOne(db, sql: "SELECT COALESCE(MAX(position), -1) FROM tags") ?? -1
+            try db.execute(
+                sql: "INSERT INTO tags (id, name, emoji, position) VALUES (?, ?, ?, ?)",
+                arguments: [id, name, emoji, last + 1]
+            )
+        }
 
         return Tag(id: id, name: name, emoji: emoji, sortOrder: 0)
     }
@@ -676,11 +772,18 @@ final class Cache: @unchecked Sendable {
     /// exists is filed nowhere the screen can show, and would sort as though it were
     /// still first. The server cascades exactly this on its side.
     func removeTag(_ id: Int64) {
-        rememberGlobally(tags: allTags().filter { $0.id != id })
+        seedTagsIfEmpty()
+        write { db in
+            try db.execute(sql: "DELETE FROM tags WHERE id = ?", arguments: [id])
+            // The order rows go with it. Nothing enforces that for us: the cache has no
+            // foreign keys, because it is rebuilt from the server rather than trusted.
+            try db.execute(sql: "DELETE FROM list_tag_order WHERE tag_id = ?", arguments: [id])
+        }
 
+        // The unfiling still walks the lists, and has to: it is the items that carry
+        // the id, and they are per list by their nature rather than by an accident of
+        // storage.
         for list in lists() {
-            remember(tags: tags(on: list).filter { $0.id != id }, on: list)
-
             let items = items(on: list)
             let touched = items.filter { $0.tagIDs.contains(id) }
             guard !touched.isEmpty else { continue }
@@ -711,6 +814,12 @@ final class Cache: @unchecked Sendable {
             try db.execute(sql: "DELETE FROM lists")
             try db.execute(sql: "DELETE FROM items")
             try db.execute(sql: "DELETE FROM reference")
+            // The categories go too. They are one server's vocabulary, and this is the
+            // moment somebody stops being on that server -- keeping them would show a
+            // stranger's aisles under nobody's name. The bundled set answers until the
+            // next server does.
+            try db.execute(sql: "DELETE FROM tags")
+            try db.execute(sql: "DELETE FROM list_tag_order")
         }
         outbox.forgetEverything()
     }

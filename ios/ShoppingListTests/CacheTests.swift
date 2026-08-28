@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import GRDB
 
 @testable import ShoppingList
 
@@ -188,5 +189,175 @@ struct CacheTests {
         )
 
         #expect(cache.allTags().map(\.name) == ["Last", "First"])
+    }
+
+    /// The shape the server has always had, and the cache did not: one vocabulary, and
+    /// an order over it per list. Renaming is one statement against one row, so two
+    /// lists cannot come to disagree about what a category is called -- which under the
+    /// old per-list copies was prevented only by remembering to loop over all of them.
+    @Test func aRenameReachesEveryList() {
+        let cache = Cache.inMemory()
+        let one = list(id: 1, name: "Home")
+        let two = list(id: 2, name: "Boat")
+        cache.remember(lists: [one, two])
+        let shared = [
+            Tag(id: 900, name: "Produce", emoji: "🥬", sortOrder: 0),
+            Tag(id: 901, name: "Dairy", emoji: "🧀", sortOrder: 1),
+        ]
+        cache.remember(tags: shared, on: one)
+        cache.remember(tags: shared, on: two)
+
+        cache.rename(tag: 900, to: "Greengrocer", emoji: "🥕")
+
+        #expect(cache.tags(on: one).first { $0.id == 900 }?.name == "Greengrocer")
+        #expect(cache.tags(on: two).first { $0.id == 900 }?.name == "Greengrocer")
+        #expect(cache.allTags().first { $0.id == 900 }?.emoji == "🥕")
+    }
+
+    /// The other half of the split: a list keeps its own order, and reordering one does
+    /// not reach the other.
+    @Test func eachListKeepsItsOwnOrder() {
+        let cache = Cache.inMemory()
+        let one = list(id: 1, name: "Home")
+        let two = list(id: 2, name: "Boat")
+        cache.remember(lists: [one, two])
+        let a = Tag(id: 900, name: "Produce", emoji: nil, sortOrder: 0)
+        let b = Tag(id: 901, name: "Dairy", emoji: nil, sortOrder: 1)
+        cache.remember(tags: [a, b], on: one)
+        cache.remember(tags: [b, a], on: two)
+
+        #expect(cache.tags(on: one).map(\.id) == [900, 901])
+        #expect(cache.tags(on: two).map(\.id) == [901, 900])
+    }
+
+    /// A category added anywhere is a category everywhere, including on a list that has
+    /// its own order and has never heard of it.
+    @Test func anAddedCategoryReachesAListThatWasNotAskedAboutIt() {
+        let cache = Cache.inMemory()
+        let list = list()
+        cache.remember(lists: [list])
+        cache.remember(
+            tags: [Tag(id: 900, name: "Produce", emoji: nil, sortOrder: 0)],
+            on: list
+        )
+
+        let made = cache.addTag(named: "Bakery", emoji: "🥐")
+
+        #expect(cache.allTags().contains { $0.id == made.id })
+        #expect(
+            cache.tags(on: list).map(\.id).contains(made.id),
+            "a list with an order of its own never saw the new category"
+        )
+        #expect(
+            cache.tags(on: list).last?.id == made.id,
+            "it did not land at the end of the walk"
+        )
+    }
+
+    @Test func aRemovedCategoryLeavesNoOrderBehindIt() {
+        let cache = Cache.inMemory()
+        let list = list()
+        cache.remember(lists: [list])
+        cache.remember(
+            tags: [
+                Tag(id: 900, name: "Produce", emoji: nil, sortOrder: 0),
+                Tag(id: 901, name: "Dairy", emoji: nil, sortOrder: 1),
+            ],
+            on: list
+        )
+        cache.remember(items: [item(id: 1, name: "Milk")], on: list)
+
+        cache.removeTag(901)
+
+        #expect(cache.allTags().map(\.id) == [900])
+        #expect(cache.tags(on: list).map(\.id) == [900], "the order still names a category that is gone")
+    }
+
+    /// A list's answer is evidence about the vocabulary, not the whole of it. A list
+    /// carrying a subset must not delete the categories it does not mention.
+    @Test func onelistsAnswerDoesNotNarrowTheVocabulary() {
+        let cache = Cache.inMemory()
+        let one = list(id: 1, name: "Home")
+        let two = list(id: 2, name: "Boat")
+        cache.remember(lists: [one, two])
+        cache.remember(
+            tags: [
+                Tag(id: 900, name: "Produce", emoji: nil, sortOrder: 0),
+                Tag(id: 901, name: "Dairy", emoji: nil, sortOrder: 1),
+            ],
+            on: one
+        )
+
+        cache.remember(tags: [Tag(id: 900, name: "Produce", emoji: nil, sortOrder: 0)], on: two)
+
+        #expect(cache.allTags().count == 2, "a list that mentioned one category deleted the other")
+    }
+
+    /// Signing out takes the vocabulary with it: it is one server's, and the next person
+    /// on this device is a different person.
+    @Test func signingOutForgetsTheCategories() {
+        let cache = Cache.inMemory()
+        let list = list()
+        cache.remember(lists: [list])
+        cache.remember(tags: [Tag(id: 900, name: "Produce", emoji: nil, sortOrder: 0)], on: list)
+
+        cache.forgetEverything()
+
+        #expect(!cache.allTags().contains { $0.id == 900 })
+        #expect(cache.allTags().count == Reference.tags.count, "the shipped set did not come back")
+    }
+
+    /// The migration off the old per-list copies, driven against a database in the
+    /// shape a real device is in: one list, twenty-one categories written under it.
+    @Test func theOldPerListCopiesBecomeOneVocabulary() throws {
+        let path = NSTemporaryDirectory() + "v8-\(UUID().uuidString).sqlite"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        // Built by hand in the pre-v8 shape, because that is the state on disk that has
+        // to survive -- a cache made by today's code would already be migrated.
+        let old = try DatabaseQueue(path: path)
+        try old.write { db in
+            try db.execute(sql: """
+                CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY);
+                CREATE TABLE reference (
+                    kind TEXT NOT NULL, list_id INTEGER NOT NULL, id INTEGER NOT NULL,
+                    name TEXT NOT NULL, emoji TEXT, position INTEGER NOT NULL,
+                    bare BOOLEAN NOT NULL DEFAULT 0,
+                    PRIMARY KEY (kind, list_id, id)
+                );
+                """)
+            for row in ["v1", "v2-outbox", "v3-history", "v4-history-amount",
+                        "v5-units-that-stand-alone", "v6-reread-units", "v7-history-display"] {
+                try db.execute(sql: "INSERT INTO grdb_migrations VALUES (?)", arguments: [row])
+            }
+            try db.execute(sql: """
+                CREATE TABLE lists (id INTEGER PRIMARY KEY, uuid TEXT NOT NULL, name TEXT NOT NULL,
+                                    owner_id INTEGER NOT NULL, role TEXT NOT NULL, position INTEGER NOT NULL);
+                CREATE TABLE items (id INTEGER NOT NULL, list_id INTEGER NOT NULL, uuid TEXT NOT NULL,
+                                    name TEXT NOT NULL, amount DOUBLE, unit_id INTEGER, done_at DOUBLE,
+                                    tag_ids TEXT NOT NULL, position INTEGER NOT NULL, PRIMARY KEY (list_id, id));
+                CREATE TABLE history (list_id INTEGER NOT NULL, name TEXT NOT NULL, display TEXT NOT NULL DEFAULT '',
+                                      unit_id INTEGER, amount DOUBLE, tag_ids TEXT NOT NULL,
+                                      uses INTEGER NOT NULL, last_used_at INTEGER NOT NULL,
+                                      PRIMARY KEY (list_id, name));
+                """)
+            try db.execute(sql: "INSERT INTO lists VALUES (-1, 'u', 'Home', 0, 'owner', 0)")
+            for (at, name) in ["tesco", "produce", "dairy"].enumerated() {
+                try db.execute(
+                    sql: "INSERT INTO reference VALUES ('tag', -1, ?, ?, NULL, ?, 0)",
+                    arguments: [at + 1, name, at]
+                )
+            }
+        }
+        try old.close()
+
+        // Opening it is what migrates it.
+        let cache = Cache(path: path)
+
+        #expect(cache.allTags().map(\.name) == ["tesco", "produce", "dairy"],
+                "the vocabulary did not survive the move off per-list rows")
+        #expect(cache.tags(on: List(id: -1, uuid: "u", name: "Home", ownerID: 0, role: .owner))
+                    .map(\.name) == ["tesco", "produce", "dairy"],
+                "the list lost the order it had")
     }
 }
