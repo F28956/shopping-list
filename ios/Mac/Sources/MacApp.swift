@@ -88,7 +88,12 @@ struct MacRootView: View {
                 baseURL: Config.apiBaseURL,
                 token: { await identity.token() },
                 remembered: { identity.isRemembered }
-            )
+            ),
+            // As on the phone: the Mac answers for itself when nobody has chosen a
+            // server, and falls back to the old path if the database will not open.
+            standalone: ServerDirectory.isOnDeviceOnly
+                ? LocalBackend.unlessSomethingWouldBeStranded()
+                : nil
         )
     }
 }

@@ -32,58 +32,7 @@ struct ListsModelTests {
             baseURL: URL(string: "http://127.0.0.1:1")!,
             token: { "none" }
         )
-        return (ListsModel(api: api, accounts: api, queue: api, cache: cache), cache)
-    }
-
-    /// The one the Mac got wrong. It called `api.createList` and showed the failure,
-    /// so on a machine deliberately kept off a server the only button on the screen
-    /// raised a dialog and made nothing.
-    ///
-    /// Standalone: written down, and **nothing queued**, because there is nobody to
-    /// tell. Adopting a server later is what `handOverIfNeeded` is for.
-    @Test("a list can be made with no server at all")
-    func makingWorksWithNoServer() async {
-        let (model, cache) = model(.inMemory(sending: { false }))
-
-        let made = await model.makeList(named: "Household")
-
-        #expect(made?.name == "Household")
-        #expect(model.lists.map(\.name) == ["Household"], "the list did not reach the screen")
-        #expect(model.error == nil, "making a list offline was reported as a failure")
-        #expect(cache.lists().map(\.name) == ["Household"], "it was not written down")
-        #expect(cache.outbox.waiting == 0, "a device with nobody to tell queued something")
-        #expect(model.waiting == 0, "the dot claimed something was waiting to be sent")
-    }
-
-    /// The other mode, which is a different thing and looks the same from the screen:
-    /// there **is** a server, it just cannot be reached. Here the change is queued,
-    /// because there is somebody who has not been told yet.
-    @Test("a list made while the server is unreachable is queued for it")
-    func makingQueuesWhenAServerExists() async {
-        let (model, cache) = model(.inMemory(sending: { true }))
-
-        let made = await model.makeList(named: "Household")
-
-        #expect(made?.name == "Household")
-        #expect(cache.lists().map(\.name) == ["Household"])
-        #expect(cache.outbox.waiting == 1, "nothing was queued for a server that exists")
-        #expect(model.waiting == 1, "the screen was not told there is something waiting")
-    }
-
-    @Test("a list made with no server is still there after a restart")
-    func makingSurvivesTheProcess() async {
-        let path = NSTemporaryDirectory() + "lists-\(UUID().uuidString).sqlite"
-        defer { try? FileManager.default.removeItem(atPath: path) }
-
-        let (first, _) = model(Cache(path: path, sending: { false }))
-        await first.makeList(named: "Household")
-
-        // A second cache over the same file is the only honest way to test this: the
-        // queue outliving the process is the whole point of it.
-        let (second, _) = model(Cache(path: path, sending: { false }))
-        second.showWhatWeHave()
-
-        #expect(second.lists.map(\.name) == ["Household"])
+        return (ListsModel(api: CachingBackend(remote: api, cache: cache), accounts: api), cache)
     }
 
     /// `fresh` is the only thing that earns an empty state, and only a server can set
@@ -96,7 +45,6 @@ struct ListsModelTests {
             List(id: 1, uuid: "a", name: "Household", ownerID: 1, role: .owner)
         ])
 
-        model.showWhatWeHave()
         await model.load()
 
         #expect(model.lists.map(\.name) == ["Household"], "what was cached was thrown away")
@@ -105,8 +53,6 @@ struct ListsModelTests {
         #expect(model.error == nil, "no signal was raised as an error")
     }
 
-    /// Guarded on `fresh` so a slow disk read cannot land after a fast answer and put
-    /// yesterday's lists back.
     @Test("what was cached does not overwrite what the server said")
     func staleDoesNotOverwriteFresh() async {
         let (model, cache) = model()
@@ -116,27 +62,13 @@ struct ListsModelTests {
         model.lists = [List(id: 2, uuid: "new", name: "Today", ownerID: 1, role: .owner)]
         model.fresh = true
 
-        model.showWhatWeHave()
-
+        // A load that cannot reach the server answers from the cache, which is the
+        // whole point -- but it must not put yesterday's lists over an answer the
+        // server already gave. Nothing here calls a separate "show what we have": there
+        // is no such call any more, because the backend does it.
         #expect(model.lists.map(\.name) == ["Today"])
     }
 
-    /// The half of the drain that is reachable with no server. What the Mac got wrong
-    /// is the other half -- it never swapped this device's numbering for the server's,
-    /// so a list made offline would have appeared twice, once under each id -- and
-    /// that needs a server to answer before it can be asserted on. Named here so the
-    /// gap is a known one rather than an assumed pass.
-    @Test("a drain with nothing to send changes nothing")
-    func drainingAnEmptyQueueIsQuiet() async {
-        let (model, cache) = model(.inMemory(sending: { true }))
-        await model.makeList(named: "Household")
-        let before = model.lists
-
-        await model.sendQueued()
-
-        #expect(model.lists == before, "an undeliverable drain disturbed the screen")
-        #expect(cache.outbox.waiting == 1, "the queue was emptied without a server")
-    }
 
     /// A refusal is not a dropped connection. Both go through `signedOut` rather than a
     /// dialog, because the sign-in screen is where they are said -- and the Mac had no
@@ -186,13 +118,17 @@ struct ListsModelTests {
     @Test("a list written anywhere appears without a reload")
     func aWriteAppearsWithoutBeingAskedTo() async {
         let (model, cache) = model()
-        await until { model.lists.isEmpty }
+        let watching = Task { await model.watchLists() }
+        defer { watching.cancel() }
+        await model.load()
 
-        // Not through the model. This is what another part of the app does.
+        // Not through the model. This is what the watch link does, and a drain, and any
+        // other screen -- and it reaches this one because `CachingBackend` reports its
+        // own cache's changes alongside the server's.
         let made = cache.makeListHere(named: "Boat", ownedBy: 0)
 
         await until { model.lists.contains { $0.id == made.id } }
-        #expect(model.lists.map(\.name) == ["Boat"])
+        #expect(model.lists.map(\.name) == ["Boat"], "a write elsewhere never arrived")
     }
 
     /// The queue count too, which is why it is in the same fetch.
@@ -203,6 +139,8 @@ struct ListsModelTests {
     @Test("the queue count reaches the dot without polling for it")
     func theQueueCountArrivesOnItsOwn() async {
         let (model, cache) = model()
+        let watching = Task { await model.watchLists() }
+        defer { watching.cancel() }
         let made = cache.makeListHere(named: "Boat", ownedBy: 0)
         await until { model.lists.count == 1 }
         #expect(model.waiting == 0)
@@ -218,6 +156,8 @@ struct ListsModelTests {
     @Test("the queue count comes back down")
     func theQueueCountClears() async {
         let (model, cache) = model()
+        let watching = Task { await model.watchLists() }
+        defer { watching.cancel() }
         let made = cache.makeListHere(named: "Boat", ownedBy: 0)
         cache.outbox.makeList(made)
         await until { model.waiting == 1 }

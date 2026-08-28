@@ -34,10 +34,10 @@ struct ListsView: View {
     /// not offered without one.
     init(api: API, standalone: LocalBackend? = nil) {
         self.api = api
-        _model = State(
-            initialValue: standalone.map { ListsModel(api: $0) }
-                ?? ListsModel(api: api, accounts: api, queue: api)
-        )
+        // One or the other, decided once. `CachingBackend` is what makes a server's
+        // unreliability the backend's problem rather than this screen's.
+        let backend: any Backend = standalone ?? CachingBackend(remote: api)
+        _model = State(initialValue: ListsModel(api: backend, accounts: api))
     }
     /// The two screens behind the menu, as one piece of state.
     ///
@@ -51,6 +51,62 @@ struct ListsView: View {
     }
 
     @State private var elsewhere: Elsewhere?
+
+    /// One list, with everything that can be done to it.
+    ///
+    /// Its own function because the body had grown past what the type checker will
+    /// attempt: `SwiftUI.List` with a `ForEach` carrying a context menu and two sets of
+    /// swipe actions is one expression, and it stopped compiling. Extracting it is the
+    /// fix Swift asks for, and the screen reads better for it.
+    @ViewBuilder
+    private func row(_ list: List) -> some View {
+        NavigationLink(value: list) {
+            Text(list.name)
+        }
+        // Renaming and deleting are the owner's. An editor was given a list, not the
+        // say over whether it exists.
+        .contextMenu {
+            // Sharing is the mirror of joining: a share link names a server, and with
+            // no server there is no link to make. Absent rather than present and
+            // failing.
+            if !onDeviceOnly {
+                Button("Share…", systemImage: "person.badge.plus") { sharing = list }
+            }
+            if list.role >= .owner {
+                Button("Rename…", systemImage: "pencil") { naming = .rename(list) }
+                Divider()
+                Button("Delete…", systemImage: "trash", role: .destructive) {
+                    deleting = list
+                }
+            }
+        }
+        .swipeActions(edge: .leading) {
+            if !onDeviceOnly {
+                Button {
+                    sharing = list
+                } label: {
+                    Label("Share", systemImage: "person.badge.plus")
+                }
+                .tint(.accentColor)
+            }
+        }
+        .swipeActions(edge: .trailing) {
+            if list.role >= .owner {
+                Button(role: .destructive) {
+                    deleting = list
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+
+                Button {
+                    naming = .rename(list)
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+                .tint(.accentColor)
+            }
+        }
+    }
 
     /// The one action this screen has.
     private var newListButton: some View {
@@ -119,58 +175,7 @@ struct ListsView: View {
                             OfflineNote()
                         }
 
-                        ForEach(model.lists) { list in
-                            NavigationLink(value: list) {
-                                Text(list.name)
-                            }
-                            // Renaming and deleting are the owner's. An editor was
-                            // given a list, not the say over whether it exists.
-                            .contextMenu {
-                                // Sharing is the mirror of joining: a share link names
-                                // a server, and with no server there is no link to
-                                // make. Absent rather than present and failing.
-                                if !onDeviceOnly {
-                                    Button("Share…", systemImage: "person.badge.plus") {
-                                        sharing = list
-                                    }
-                                }
-                                if list.role >= .owner {
-                                    Button("Rename…", systemImage: "pencil") {
-                                        naming = .rename(list)
-                                    }
-                                    Divider()
-                                    Button("Delete…", systemImage: "trash", role: .destructive) {
-                                        deleting = list
-                                    }
-                                }
-                            }
-                            .swipeActions(edge: .leading) {
-                                if !onDeviceOnly {
-                                    Button {
-                                        sharing = list
-                                    } label: {
-                                        Label("Share", systemImage: "person.badge.plus")
-                                    }
-                                    .tint(.accentColor)
-                                }
-                            }
-                            .swipeActions(edge: .trailing) {
-                                if list.role >= .owner {
-                                    Button(role: .destructive) {
-                                        deleting = list
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
-
-                                    Button {
-                                        naming = .rename(list)
-                                    } label: {
-                                        Label("Rename", systemImage: "pencil")
-                                    }
-                                    .tint(.accentColor)
-                                }
-                            }
-                        }
+                        ForEach(model.lists) { list in row(list) }
 
                         // The lists that did not fit are not missing, and saying so
                         // is the difference between "elsewhere" and "deleted".
@@ -275,7 +280,9 @@ struct ListsView: View {
                         identity.signOut()
                     }
                 }
-                model.showWhatWeHave()
+                // No separate "show what we have" any more: a backend answers from its
+                // own memory when it cannot reach further, so the first load is already
+                // the fastest thing it can say.
                 await model.load()
             }
             .task { await model.watchLists() }

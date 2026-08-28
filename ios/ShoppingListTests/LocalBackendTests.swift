@@ -279,8 +279,8 @@ struct LocalBackendTests {
         defer { try? FileManager.default.removeItem(at: path) }
         let backend = try #require(LocalBackend(at: path))
 
-        // No `accounts`, no `queue`, and a cache that is never touched.
-        let model = ListsModel(api: backend, cache: .inMemory(sending: { false }))
+        // A backend and nothing else: no accounts, no cache, no queue.
+        let model = ListsModel(api: backend)
 
         await model.load()
 
@@ -300,28 +300,32 @@ struct LocalBackendTests {
         #expect(model.waiting == 0, "a list made on the device was queued for a server")
     }
 
-    /// The cache is the fallback if this has to be backed out, so nothing here may
-    /// write to it.
+    /// The transition's one safety rule, and it was found by breaking it.
+    ///
+    /// This backend reads `device.sqlite`; a device that has been used keeps its lists
+    /// in `cache.sqlite`, and nothing migrates one to the other yet. Switching such a
+    /// device shows an empty app with somebody's shopping still on disk. That is exactly
+    /// what happened on the first Mac it was tried on -- one list, three items, gone from
+    /// the screen and safe on disk, which is the worst of both.
     @MainActor
-    @Test("the device's backend leaves the old cache alone")
-    func theOldCacheIsUntouched() async throws {
-        let path = FileManager.default.temporaryDirectory
-            .appendingPathComponent("screen-\(UUID().uuidString).sqlite")
-        defer { try? FileManager.default.removeItem(at: path) }
-        let backend = try #require(LocalBackend(at: path))
+    @Test("a device with lists to lose is not switched over")
+    func nothingIsStrandedByTheSwitch() {
+        let used = Cache.inMemory(sending: { false })
+        _ = used.makeListHere(named: "Everything I own", ownedBy: 0)
 
-        let cache = Cache.inMemory(sending: { false })
-        // As the old path left it: a list this device made before the switch.
-        let before = cache.makeListHere(named: "From the old path", ownedBy: 0)
-
-        let model = ListsModel(api: backend, cache: cache)
-        await model.load()
-        _ = await model.makeList(named: "Household")
-
-        #expect(model.lists.map(\.name) == ["Household"], "the screen read the wrong store")
         #expect(
-            cache.lists().map(\.name) == [before.name],
-            "the cache was written to, so backing this out would not find it as it was"
+            LocalBackend.unlessSomethingWouldBeStranded(cache: used) == nil,
+            "a device with lists was switched to a backend that cannot see them"
         )
+    }
+
+    @MainActor
+    @Test("a device with nothing to lose is switched over")
+    func afreshDeviceIsSwitched() {
+        let fresh = Cache.inMemory(sending: { false })
+
+        let backend = LocalBackend.unlessSomethingWouldBeStranded(cache: fresh)
+
+        #expect(backend != nil, "a fresh device was left on the old path for no reason")
     }
 }

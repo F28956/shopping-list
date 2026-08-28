@@ -27,9 +27,16 @@ struct MacShoppingView: View {
     /// change the answer, because storage is not observable state.
     @State private var onDeviceOnly = ServerDirectory.isOnDeviceOnly
 
-    init(api: API) {
+    /// `standalone` is the device answering for itself; nil means a server.
+    ///
+    /// The same choice the phone makes, and it has to be made here too: `ListsModel`
+    /// takes a `Backend`, and handing it a bare `API` would be a Mac with no cache and
+    /// no queue -- offline reads failing and offline edits lost. `CachingBackend` is
+    /// what those used to be, moved behind the protocol.
+    init(api: API, standalone: LocalBackend? = nil) {
         self.api = api
-        _model = State(initialValue: ListsModel(api: api))
+        let backend: any Backend = standalone ?? CachingBackend(remote: api)
+        _model = State(initialValue: ListsModel(api: backend, accounts: api))
     }
 
     private var selected: List? { model.lists.first { $0.id == chosen } }
@@ -254,7 +261,8 @@ struct MacShoppingView: View {
                     identity.signOut()
                 }
             }
-            model.showWhatWeHave()
+            // See the phone: the backend answers from its memory, so one load does what
+            // two calls used to.
             await model.load()
         }
         .task { await model.watchLists() }

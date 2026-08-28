@@ -84,6 +84,32 @@ protocol Backend: Sendable {
     /// failing.
     func listChanges() async throws -> AsyncThrowingStream<Void, Error>
     func changes(on list: List) async throws -> AsyncThrowingStream<Void, Error>
+
+    // MARK: - What a screen can ask about the backend itself
+
+    /// Whether the last attempt to reach the far end got there.
+    ///
+    /// The difference between "you have no lists" and "I could not find out", which is
+    /// the bug the cache was built for. A screen reads this rather than inferring it
+    /// from an error, because a backend that answers from its memory does not raise one.
+    var reachable: Bool { get async }
+
+    /// How much this backend is holding that has not reached where it is going.
+    ///
+    /// What the status dot counts.
+    var pending: Int { get async }
+}
+
+extension Backend {
+    /// True, for a backend that is its own far end.
+    ///
+    /// `LocalBackend` cannot be out of reach of the device it is on, so the default is
+    /// the answer rather than a placeholder. Only `CachingBackend` overrides it, because
+    /// only it has somewhere to fail to get to.
+    var reachable: Bool { get async { true } }
+
+    /// Nothing, for a backend that has already stored what it was given.
+    var pending: Int { get async { 0 } }
 }
 
 /// Who may sign in to this server, and who this is.

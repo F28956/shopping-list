@@ -63,6 +63,23 @@ actor LocalBackend {
         embedded_close(handle)
     }
 
+    /// The device's backend, but only where switching to it cannot strand anything.
+    ///
+    /// This reads `device.sqlite`. A device that has been *used* keeps its lists in
+    /// `cache.sqlite`, and nothing has migrated one to the other yet -- so handing this
+    /// to a screen on such a device shows an empty app with somebody's shopping still on
+    /// disk, unreachable. That is not hypothetical: it is what happened on the first Mac
+    /// this was tried on, which had a list and three items.
+    ///
+    /// So the switch happens where there is nothing to lose, and everywhere else waits
+    /// for a migration. That keeps the old cache exactly what it was meant to be during
+    /// this transition -- the thing to fall back to -- rather than the thing quietly
+    /// left behind.
+    static func unlessSomethingWouldBeStranded(cache: Cache = .shared) -> LocalBackend? {
+        guard cache.lists().isEmpty else { return nil }
+        return LocalBackend()
+    }
+
     // MARK: - Reading
 
     func lists() async throws -> Listing<List> {

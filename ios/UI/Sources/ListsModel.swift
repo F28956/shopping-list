@@ -30,10 +30,10 @@ final class ListsModel {
     /// administers the server, which decides whether a screen exists. `Accounts` is
     /// separate from ``Backend`` because a device with no server has no answer to it --
     /// see the note there.
-    /// `Destination` as well, because this screen is where the queue is emptied --
-    /// see `sendQueued`. It is a separate protocol from ``Backend`` deliberately: the
-    /// queue's other conformer is the watch's link to its phone, which is not a server
-    /// and does not pretend to be one.
+    /// One backend, and this model no longer knows which. `CachingBackend` over a
+    /// server, `LocalBackend` over the device's own database -- the cache and the queue
+    /// live behind the first of those, because they exist to survive a *remote* that can
+    /// fail rather than to serve one mode of the app.
     private let api: any Backend
 
     /// Who administers the server, when there is one.
@@ -44,27 +44,7 @@ final class ListsModel {
     /// answer `embedded` gives when it makes them an owner of their own database.
     private let accounts: (any Accounts)?
 
-    /// Where the queue goes, when there is a queue.
-    ///
-    /// Absent for a backend that keeps its own store, and that absence is the whole
-    /// transition: a queue exists because a remote can fail, and one that cannot has
-    /// nothing to queue. `keepsItsOwnStore` reads off it rather than off a flag, so the
-    /// two cannot disagree.
-    private let queue: (any Destination)?
 
-    private let cache: Cache
-
-    /// Whether the backend is its own memory.
-    ///
-    /// True for `LocalBackend`, where the device's database *is* the answer, so the
-    /// cache is neither read nor written and updates arrive from the backend's own
-    /// stream. False for `API`, which is remote, may fail, and needs both.
-    ///
-    /// A fork, and a deliberately temporary one. The end of this is a `CachingBackend`
-    /// wrapping `API` so that the cache and the queue live behind the protocol and this
-    /// model asks no such question -- but that shape should be argued for by a screen
-    /// that has actually run both ways, which is what this is.
-    private var keepsItsOwnStore: Bool { queue == nil }
 
     /// Says this person is no longer signed in, and why if there is a reason.
     ///
@@ -100,98 +80,19 @@ final class ListsModel {
 
     /// Guards against a drain and a reload calling each other round in a circle.
     private var draining = false
-    /// See ``ItemsModel/watching``, which explains the whole of this: the screen is a
-    /// query over the database rather than a copy of what it once said.
-    ///
-    /// `nonisolated(unsafe)` because `deinit` is not on the main actor and has to cancel
-    /// it. Safe by construction: written once in `init`, read once in `deinit`.
-    nonisolated(unsafe) private var watching: Task<Void, Never>?
-
-    init(
-        api: any Backend,
-        accounts: (any Accounts)? = nil,
-        queue: (any Destination)? = nil,
-        cache: Cache = .shared
-    ) {
+    init(api: any Backend, accounts: (any Accounts)? = nil) {
         self.api = api
         self.accounts = accounts
-        self.queue = queue
-        self.cache = cache
 
-        watching = Task { [weak self] in
-            // A backend that keeps its own store tells the screen itself -- see
-            // `watchLists`, which is where that stream is consumed. There is nothing in
-            // the cache to observe, because nothing writes to it.
-            guard queue != nil else { return }
-
-            while !Task.isCancelled {
-                guard let stream = cache.observeLists() else { return }
-                do {
-                    for try await overview in stream {
-                        guard let self else { return }
-                        self.adopt(overview)
-                    }
-                    return
-                } catch {
-                    // Restarted rather than given up on: a screen that has quietly
-                    // stopped updating looks exactly like one that is working.
-                    try? await Task.sleep(for: .seconds(1))
-                }
-            }
-        }
+        // Nothing to watch here any more. The screen is kept in step by
+        // `watchLists`, which consumes the backend's own stream -- SSE from a server,
+        // `domain`'s broadcast channel from the device. One loop, either way.
     }
-
-    deinit {
-        watching?.cancel()
-    }
-
-    /// What the database currently says, put on screen.
-    ///
-    /// The guard is about emptiness rather than staleness: a cache not filled yet must
-    /// not blank a screen the server has already answered. `waiting` has no such guard
-    /// -- nothing queued is a real answer, and the honest one the moment a drain lands.
-    private func adopt(_ overview: Cache.Overview) {
-        if !overview.lists.isEmpty || lists.isEmpty {
-            lists = overview.lists
-            if !fresh { total = Int64(overview.lists.count) }
-        }
-        waiting = overview.waiting
-        if !lists.isEmpty { loaded = true }
-    }
-
-    /// Re-reads the lists and the queue.
-    ///
-    /// Kept for the tests, and for the few places that want the answer in this turn
-    /// rather than on the observation's next one. Nothing else calls it.
-    func reloadFromCache() {
-        // Nothing to re-read: the cache is not this backend's memory, and reading it
-        // would put another backend's lists on screen. This is the sharpest edge of
-        // running two stores side by side, and the reason the old one is read-only for
-        // the duration rather than merely unused.
-        guard !keepsItsOwnStore else { return }
-        guard let overview = cache.overview() else { return }
-        adopt(overview)
-    }
-
     // MARK: - Reading
-
-    /// Puts the last-loaded lists up before asking the server anything.
-    ///
-    /// The screen is never blank while a request is in flight, and on a device with no
-    /// signal it is never blank at all. Guarded on `fresh` so a slow disk read cannot
-    /// land after a fast answer and put yesterday's lists back.
-    func showWhatWeHave() {
-        guard !fresh else { return }
-        reloadFromCache()
-    }
 
     func load() async {
         do {
             let listing = try await api.lists()
-            // Not written down when the backend is already the place it would be
-            // written to. The cache is left exactly as the old path left it, so that
-            // path still works if this one has to be backed out.
-            if !keepsItsOwnStore { cache.remember(lists: listing.items) }
             lists = listing.items
             total = listing.total
             truncated = listing.truncated
@@ -213,12 +114,13 @@ final class ListsModel {
                 isOwner = true
             }
 
-            // The server is reachable, so anything queued anywhere goes now.
-            //
-            // Here as well as on the list screen, because the app opens here: a phone
-            // that came out of a shop and was put in a pocket would otherwise hold its
-            // ticks until somebody happened to open the list they were made on.
-            await sendQueued()
+            // What the backend is holding, and whether it got where it was going. Both
+            // are read rather than inferred: a backend that answers from its memory
+            // raises no error to infer from, which is exactly the trap the old code fell
+            // into when it treated "no server" as "no signal".
+            offline = !(await api.reachable)
+            fresh = !offline
+            waiting = await api.pending
         } catch let problem as APIError {
             report(problem)
         } catch {
@@ -248,8 +150,10 @@ final class ListsModel {
             // Not shown. Being out of signal is a state, not an event: a phone in a
             // basement would raise this every few seconds, and a dialog for each is an
             // interruption on top of an app that is still usable.
+            //
+            // Rare now: `CachingBackend` answers reads from its memory rather than
+            // failing, so this is what is left -- a write that could not be queued.
             offline = true
-            if !fresh { showWhatWeHave() }
         default:
             error = problem.localizedDescription
         }
@@ -275,84 +179,26 @@ final class ListsModel {
         }
     }
 
-    /// Makes a list, wherever it can.
+    /// Makes a list.
     ///
-    /// The server first, because a list made online should arrive with an id and no
-    /// queue behind it. A transport failure is not an error here and never shows one:
-    /// no signal and no server are the same state, and writing the list down locally is
-    /// what the person asked for either way. It is queued, and the queue is what carries
-    /// it to a server if one ever appears.
+    /// No fallback here any more, and that is the change: a list made with no signal is
+    /// still a list, but where it goes in the meantime is the backend's business.
+    /// `CachingBackend` writes it down and queues it; `LocalBackend` has already stored
+    /// it. This asks for a list and gets one.
     ///
-    /// This is S1 -- the app is useful before it has anywhere to send anything. The Mac
-    /// did not have it, so on a Mac deliberately kept off a server the only button on
-    /// the screen raised a dialog.
-    ///
-    /// Answers the list, so a caller that wants to select what was just made can.
+    /// Answers it, so a caller that wants to select what it just made can.
     @discardableResult
     func makeList(named name: String) async -> List? {
         do {
             let made = try await api.createList(named: name)
             await load()
             return lists.first { $0.id == made.id } ?? made
-        } catch APIError.transport where !keepsItsOwnStore {
-            let made = cache.makeListHere(named: name, ownedBy: mine)
-            cache.outbox.makeList(made)
-            // The observation will deliver this too, a hop later. Read now as well so
-            // the row is there in the same turn -- a caller that selects what it just
-            // made would otherwise select something not yet on screen. Through the same
-            // fetch, not field by field, so the two cannot say different things.
-            reloadFromCache()
-            offline = true
-            return made
         } catch {
             self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
             return nil
         }
     }
 
-    /// This person's id, for a list made with nobody to ask.
-    ///
-    /// Zero where there is no server and so no account. It is only ever compared with
-    /// itself on this device -- the server decides ownership from who sent the
-    /// operation, not from what the device claimed.
-    private var mine: Int64 { 0 }
-
-    /// Empties the outbox, wherever its contents belong.
-    ///
-    /// A change queued on any list goes: the operation carries the list it was made
-    /// against, so nothing here needs to know which screen it came from. Failures are
-    /// the outbox's business -- see ``Outbox/drain(through:)`` -- and what is left stays
-    /// queued for the next successful load.
-    func sendQueued() async {
-        // Nothing to send, and nowhere to send it. A backend that keeps its own store
-        // has already stored it.
-        guard let queue else { return }
-
-        // Before the count is looked at, because it is what puts something in the queue
-        // on a device that has just been given a server: nothing was queued while it had
-        // none, so the lists made there are known to this device and to nothing else.
-        cache.handOverIfNeeded()
-
-        guard !draining, cache.outbox.waiting > 0 else { return }
-        draining = true
-        let drained = await cache.outbox.drain(through: queue)
-        draining = false
-        reloadFromCache()
-
-        // Lists made here have just been given the server's own ids. Done before the
-        // reload below, so the screen never shows the same list twice -- once under this
-        // device's numbering and once under the server's. The Mac never did this, so on
-        // the Mac it would have.
-        for adopted in drained.adopted {
-            if let local = cache.lists().first(where: { $0.uuid == adopted.uuid }) {
-                cache.adopt(local, as: adopted.real)
-            }
-        }
-
-        if !drained.adopted.isEmpty {
-            reloadFromCache()
-        }
-    }
 
     // MARK: - Staying in step
 
