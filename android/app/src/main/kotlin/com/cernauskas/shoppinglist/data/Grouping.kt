@@ -142,7 +142,21 @@ fun tokenIn(pasted: String): String? {
     if (trimmed.isEmpty()) return null
 
     if (trimmed.contains("://")) {
-        return trimmed.trimEnd('/').substringAfterLast('/').ifEmpty { null }
+        // The fragment, after the `#`. A browser never sends a fragment to a server,
+        // so a token there is written into no access log and no proxy log on the way
+        // to somebody's home server, for the week it stays valid.
+        if (trimmed.contains('#')) {
+            return trimmed.substringAfterLast('#').ifEmpty { null }
+        }
+        // The older shape, with the token in the path. Still read, so that a link sent
+        // before a server was updated keeps working in somebody's inbox.
+        //
+        // The scheme comes off first. Without that, "http://localhost:8080/" reduces
+        // to "localhost:8080" and a bare origin is read as an invitation -- so an app
+        // pointed at a server, with no link at all, would try to redeem its own host.
+        val afterHost = trimmed.substringAfter("://").substringAfter('/', "")
+        return afterHost.trimEnd('/').substringAfterLast('/')
+            .takeIf { it.isNotEmpty() && it != "join" }
     }
     return if (trimmed.contains(' ') || trimmed.contains('/')) null else trimmed
 }
@@ -177,5 +191,5 @@ fun serverAddressIn(pasted: String): ServerAddress? {
         if (uri.port != -1) append(':').append(uri.port)
     }
 
-    return ServerAddress.parse(origin, allowingCleartext = true).getOrNull()
+    return ServerAddress.parse(origin).getOrNull()
 }

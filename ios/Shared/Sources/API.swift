@@ -321,7 +321,9 @@ actor API {
     /// Follows a link. Answers with the list, so a caller can go straight to it.
     @discardableResult
     func join(withToken token: String) async throws -> List {
-        let data = try await send("POST", "/api/invites/\(token)", nil)
+        // In the body, not the path. A path is what a proxy or an access log writes
+        // down, and a share token is a credential that stays valid for a week.
+        let data = try await send("POST", "/api/invites", ["token": token])
         do {
             return try Self.decoder.decode(List.self, from: data)
         } catch {

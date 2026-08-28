@@ -54,9 +54,19 @@ struct ServerAddress: Equatable {
     ///
     /// Refused: a path, a query or a fragment. Those are *not* beyond doubt; see the
     /// note on the type.
-    static func parse(_ typed: String, allowingCleartext: Bool = allowsCleartext) -> Result<
-        ServerAddress, Problem
-    > {
+    ///
+    /// There is deliberately **no way to ask for cleartext**. There used to be a
+    /// parameter for it, and five call sites passed `true` -- including the one that
+    /// reads a host out of a pasted share link, which is untrusted text from whoever
+    /// sent it. The release guarantee then held only because the one path that stores
+    /// an address happened to use the default. An invariant that depends on five
+    /// callers agreeing is not an invariant.
+    ///
+    /// Nothing was lost by removing it. A debug build allows cleartext through
+    /// `allowsCleartext` anyway, which is the case the parameter existed for; a release
+    /// build refuses `http://` everywhere, including from a pasted link, which is what
+    /// it should always have done.
+    static func parse(_ typed: String) -> Result<ServerAddress, Problem> {
         let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .failure(.empty) }
 
@@ -72,7 +82,7 @@ struct ServerAddress: Equatable {
         else { return .failure(.notAnAddress) }
 
         guard scheme == "https" || scheme == "http" else { return .failure(.notAnAddress) }
-        guard scheme == "https" || allowingCleartext else { return .failure(.insecure) }
+        guard scheme == "https" || allowsCleartext else { return .failure(.insecure) }
 
         // A lone trailing slash is what a browser's location bar shows and is not a
         // path anybody meant. Anything more is.

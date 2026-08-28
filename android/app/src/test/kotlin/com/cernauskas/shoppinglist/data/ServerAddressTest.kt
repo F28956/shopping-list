@@ -23,11 +23,11 @@ import org.robolectric.annotation.Config
 // same parser; this line moves when Robolectric catches up.
 @Config(sdk = [35])
 class ServerAddressTest {
-    private fun origin(typed: String, cleartext: Boolean = true): String? =
-        ServerAddress.parse(typed, cleartext).getOrNull()?.origin
+    private fun origin(typed: String): String? =
+        ServerAddress.parse(typed).getOrNull()?.origin
 
-    private fun problem(typed: String, cleartext: Boolean = true): ServerAddress.Problem? =
-        ServerAddress.parse(typed, cleartext).exceptionOrNull()?.addressProblem
+    private fun problem(typed: String): ServerAddress.Problem? =
+        ServerAddress.parse(typed).exceptionOrNull()?.addressProblem
 
     @Test
     fun `an ordinary address survives unchanged`() {
@@ -70,11 +70,20 @@ class ServerAddressTest {
         assertEquals("http://10.0.2.2:8080", origin("http://10.0.2.2:8080"))
     }
 
-    /** C6. */
+    /**
+     * C6. Which way this goes is decided by the build, not by the caller — there is no
+     * longer a parameter to pass, so no call site can opt itself out. Both halves are
+     * said here, so that whichever build this runs under it asserts the rule that build
+     * is meant to keep.
+     */
     @Test
-    fun `cleartext is refused when it is not allowed`() {
-        assertEquals(ServerAddress.Problem.INSECURE, problem("http://example.com", cleartext = false))
-        assertEquals("https://example.com", origin("https://example.com", cleartext = false))
+    fun `cleartext follows the build`() {
+        if (ServerAddress.allowsCleartext()) {
+            assertEquals("http://example.com", origin("http://example.com"))
+        } else {
+            assertEquals(ServerAddress.Problem.INSECURE, problem("http://example.com"))
+        }
+        assertEquals("https://example.com", origin("https://example.com"))
     }
 
     @Test

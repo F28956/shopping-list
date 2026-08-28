@@ -118,6 +118,21 @@ async fn callback(
     // 6. New session id, then store who they are
     session.cycle_id().await?;
     session.insert(auth::USER_ID, user.id.0).await?;
+
+    // 7. The share link that sent them here, if that is why they signed in. Taken out
+    //    of the session whether or not it works: a token that has expired or been
+    //    withdrawn should not be retried on every later sign-in.
+    if let Some(token) = session
+        .remove::<String>(auth::PENDING_INVITE)
+        .await?
+        .filter(|t| !t.is_empty())
+        && let Ok(list) =
+            domain::service::lists::join(&s.ctx, &actor, &domain::models::invite::Token(token))
+                .await
+    {
+        return Ok(Redirect::to(&format!("/lists/{}", list.id.0)));
+    }
+
     Ok(Redirect::to("/"))
 }
 
@@ -216,7 +231,10 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
         .route("/lists/{id}/suggestions", get(pages::items::suggestions))
         .route("/lists/{id}/tags", get(pages::items::tag_order))
         .route("/lists/{id}/tags/move", post(pages::items::move_tag))
-        .route("/lists/{id}/tags/reset", post(pages::items::reset_tag_order))
+        .route(
+            "/lists/{id}/tags/reset",
+            post(pages::items::reset_tag_order),
+        )
         .route("/lists/{id}/clear-done", post(pages::items::clear_done))
         .route("/lists/{id}/share", get(pages::sharing::show))
         .route("/lists/{id}/invites", post(pages::sharing::invite))
@@ -227,7 +245,10 @@ pub fn router(state: AppState, sessions: sessions::SqliteSessions) -> Router {
         )
         .route("/lists/{id}/leave", post(pages::sharing::leave))
         // An invitation is followed, not submitted, so this one is a GET
-        .route("/join/{token}", get(pages::sharing::join))
+        .route(
+            "/join",
+            get(pages::sharing::joining).post(pages::sharing::join),
+        )
         // A browser form can only GET or POST, so ticking off and deleting are POSTs
         // to their own paths rather than PUT and DELETE on the item.
         .route(

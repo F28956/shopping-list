@@ -532,7 +532,10 @@ async fn a_change_reaches_a_watcher(#[future(awt)] pool: SqlitePool) {
 
     let frame = next_event(&mut body).await;
     assert!(frame.contains("event: changed"), "got: {frame:?}");
-    assert!(frame.contains(&format!("data: {list_id}")), "got: {frame:?}");
+    assert!(
+        frame.contains(&format!("data: {list_id}")),
+        "got: {frame:?}"
+    );
 }
 
 /// Asserts nothing arrives. The window is short because the events under test are
@@ -597,7 +600,10 @@ async fn a_watcher_hears_only_its_own_list(#[future(awt)] pool: SqlitePool) {
     )
     .await;
     let frame = next_event(&mut body).await;
-    assert!(frame.contains(&format!("data: {watched}")), "got: {frame:?}");
+    assert!(
+        frame.contains(&format!("data: {watched}")),
+        "got: {frame:?}"
+    );
 }
 
 /// Watching is a read, and reads are authorised.
@@ -609,7 +615,12 @@ async fn a_stranger_cannot_watch_my_list(#[future(awt)] pool: SqlitePool) {
 
     let (status, _) = send(
         &app,
-        req("GET", &format!("/api/lists/{list_id}/events"), &them(), None),
+        req(
+            "GET",
+            &format!("/api/lists/{list_id}/events"),
+            &them(),
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "a hidden list stays hidden");
@@ -648,7 +659,10 @@ async fn a_typed_line_is_read_the_way_a_person_means_it(
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(item["name"], "Apples", "the quantity is not part of the name");
+    assert_eq!(
+        item["name"], "Apples",
+        "the quantity is not part of the name"
+    );
     assert_eq!(item["amount"], 2.0);
     assert!(!item["unit_id"].is_null(), "kg was recognised as the unit");
 }
@@ -748,7 +762,11 @@ async fn items_come_with_their_tags(
     let (list_id, item_id) = a_list_with_an_item(&app).await;
     let items = format!("/api/lists/{list_id}/items");
 
-    let (_, page) = send(&app, req("GET", &format!("{items}?order_by=id"), &me(), None)).await;
+    let (_, page) = send(
+        &app,
+        req("GET", &format!("{items}?order_by=id"), &me(), None),
+    )
+    .await;
     assert_eq!(
         page["items"][0]["tag_ids"].as_array().unwrap().len(),
         0,
@@ -769,7 +787,11 @@ async fn items_come_with_their_tags(
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (_, page) = send(&app, req("GET", &format!("{items}?order_by=id"), &me(), None)).await;
+    let (_, page) = send(
+        &app,
+        req("GET", &format!("{items}?order_by=id"), &me(), None),
+    )
+    .await;
     let row = &page["items"][0];
     assert_eq!(row["tag_ids"], json!([tag_id]));
     // Flattened, so the item's own fields are still where they were.
@@ -793,7 +815,11 @@ async fn a_list_carries_the_callers_role(#[future(awt)] pool: SqlitePool) {
     // Flattened, so the list's own fields are where they were.
     assert_eq!(page["items"][0]["id"], list_id);
 
-    let (_, one) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &me(), None)).await;
+    let (_, one) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}"), &me(), None),
+    )
+    .await;
     assert_eq!(one["role"], "owner", "and on the single-list route too");
 
     // Somebody invited to read it is told they may read it, and nothing more.
@@ -808,11 +834,19 @@ async fn a_list_carries_the_callers_role(#[future(awt)] pool: SqlitePool) {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{invite}");
-    let token = invite["token"].as_str().expect("no token in {invite}").to_string();
+    let token = invite["token"]
+        .as_str()
+        .expect("no token in {invite}")
+        .to_string();
 
     let (status, _) = send(
         &app,
-        req("POST", &format!("/api/invites/{token}"), &them(), None),
+        req(
+            "POST",
+            "/api/invites",
+            &them(),
+            Some(json!({"token": token})),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "following the link failed");
@@ -854,7 +888,9 @@ async fn a_lists_tag_order(
     });
 
     // Placing one puts it in front, and leaves the rest where they were.
-    let last = order.as_array().unwrap().last().unwrap()["id"].as_i64().unwrap();
+    let last = order.as_array().unwrap().last().unwrap()["id"]
+        .as_i64()
+        .unwrap();
     let (status, _) = send(
         &app,
         req("PUT", &path, &me(), Some(json!({"tag_ids": [last]}))),
@@ -889,7 +925,9 @@ async fn a_tag_order_is_per_person_and_inherited(
     let path = format!("/api/lists/{list_id}/tag-order");
 
     let (_, order) = send(&app, req("GET", &path, &me(), None)).await;
-    let last = order.as_array().unwrap().last().unwrap()["id"].as_i64().unwrap();
+    let last = order.as_array().unwrap().last().unwrap()["id"]
+        .as_i64()
+        .unwrap();
     send(
         &app,
         req("PUT", &path, &me(), Some(json!({"tag_ids": [last]}))),
@@ -911,7 +949,12 @@ async fn a_tag_order_is_per_person_and_inherited(
     let token = invite["token"].as_str().unwrap().to_string();
     send(
         &app,
-        req("POST", &format!("/api/invites/{token}"), &them(), None),
+        req(
+            "POST",
+            "/api/invites",
+            &them(),
+            Some(json!({"token": token})),
+        ),
     )
     .await;
 
@@ -972,8 +1015,14 @@ async fn sharing_a_list(#[future(awt)] pool: SqlitePool) {
     // signs people in from a bearer subject alone, so they have no name or address.
     // That they are filled from the user is checked where users have one -- see the
     // service's `people_on` tests.
-    assert!(people[0].get("name").is_some(), "no name field at all: {people}");
-    assert!(people[0].get("email").is_some(), "no email field at all: {people}");
+    assert!(
+        people[0].get("name").is_some(),
+        "no name field at all: {people}"
+    );
+    assert!(
+        people[0].get("email").is_some(),
+        "no email field at all: {people}"
+    );
 
     let (status, invite) = send(
         &app,
@@ -995,7 +1044,12 @@ async fn sharing_a_list(#[future(awt)] pool: SqlitePool) {
 
     let (status, joined) = send(
         &app,
-        req("POST", &format!("/api/invites/{token}"), &them(), None),
+        req(
+            "POST",
+            "/api/invites",
+            &them(),
+            Some(json!({"token": token})),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1050,17 +1104,43 @@ async fn a_used_invitation_admits_nobody_else(#[future(awt)] pool: SqlitePool) {
     )
     .await;
     let token = invite["token"].as_str().unwrap().to_string();
-    let follow = format!("/api/invites/{token}");
 
-    let (status, _) = send(&app, req("POST", &follow, &them(), None)).await;
+    let (status, _) = send(
+        &app,
+        req(
+            "POST",
+            "/api/invites",
+            &them(),
+            Some(json!({"token": token})),
+        ),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // The same person again: a double-click, and harmless.
-    let (status, _) = send(&app, req("POST", &follow, &them(), None)).await;
+    let (status, _) = send(
+        &app,
+        req(
+            "POST",
+            "/api/invites",
+            &them(),
+            Some(json!({"token": token})),
+        ),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "a double-click was refused");
 
     // Somebody else with the same link: not admitted.
-    let (status, _) = send(&app, req("POST", &follow, &third(), None)).await;
+    let (status, _) = send(
+        &app,
+        req(
+            "POST",
+            "/api/invites",
+            &third(),
+            Some(json!({"token": token})),
+        ),
+    )
+    .await;
     assert_eq!(
         status,
         StatusCode::NOT_FOUND,
@@ -1078,10 +1158,19 @@ async fn a_used_invitation_admits_nobody_else(#[future(awt)] pool: SqlitePool) {
 
     let (status, _) = send(
         &app,
-        req("POST", &format!("/api/invites/{token}"), &third(), None),
+        req(
+            "POST",
+            "/api/invites",
+            &third(),
+            Some(json!({"token": token})),
+        ),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "a withdrawn link still worked");
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a withdrawn link still worked"
+    );
 }
 
 /// Clearing takes the ticked-off rows and nothing else.
@@ -1111,7 +1200,11 @@ async fn clearing_done_items(#[future(awt)] pool: SqlitePool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(cleared["cleared"], 1, "one row was ticked off");
 
-    let (_, page) = send(&app, req("GET", &format!("{items}?order_by=id"), &me(), None)).await;
+    let (_, page) = send(
+        &app,
+        req("GET", &format!("{items}?order_by=id"), &me(), None),
+    )
+    .await;
     let left: Vec<i64> = page["items"]
         .as_array()
         .unwrap()
@@ -1309,7 +1402,11 @@ async fn a_batch_replays_over_the_wire(#[future(awt)] pool: SqlitePool) {
     let app = app(pool);
     let (list_id, _) = a_list_with_an_item(&app).await;
 
-    let (_, list) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &me(), None)).await;
+    let (_, list) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}"), &me(), None),
+    )
+    .await;
     let list_uuid = list["uuid"].as_str().unwrap().to_string();
 
     let (_, page) = send(
@@ -1379,7 +1476,11 @@ async fn a_refused_batch_is_still_a_two_hundred(#[future(awt)] pool: SqlitePool)
     let app = app(pool);
     let (list_id, _) = a_list_with_an_item(&app).await;
 
-    let (_, list) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &me(), None)).await;
+    let (_, list) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}"), &me(), None),
+    )
+    .await;
     let list_uuid = list["uuid"].as_str().unwrap().to_string();
 
     let (status, replayed) = send(
@@ -1466,7 +1567,11 @@ async fn one_device_signing_out_leaves_the_others_alone(#[future(awt)] pool: Sql
     send(&app, req("DELETE", "/api/sessions", &phone, None)).await;
 
     let (status, _) = send(&app, req("GET", "/api/me", &mac, None)).await;
-    assert_eq!(status, StatusCode::OK, "the other device was signed out too");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the other device was signed out too"
+    );
 }
 
 /// An invented token of the right shape is still nobody.
@@ -1498,7 +1603,11 @@ async fn a_session_carries_one_identity_and_not_another(#[future(awt)] pool: Sql
     let (_, issued) = send(&app, req("POST", "/api/sessions", &them(), None)).await;
     let auth = format!("Bearer {}", issued["token"].as_str().unwrap());
 
-    let (status, _) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &auth, None)).await;
+    let (status, _) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}"), &auth, None),
+    )
+    .await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
@@ -1521,7 +1630,12 @@ async fn a_claimed_server(pool: &SqlitePool) -> Router {
 
     let (status, body) = send(
         &app,
-        req("POST", "/api/server/claim", &me(), Some(json!({"code": "TEST-CODE"}))),
+        req(
+            "POST",
+            "/api/server/claim",
+            &me(),
+            Some(json!({"code": "TEST-CODE"})),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -1580,14 +1694,22 @@ async fn the_wrong_code_claims_nothing_over_the_wire(#[future(awt)] pool: Sqlite
 
     let (status, _) = send(
         &app,
-        req("POST", "/api/server/claim", &them(), Some(json!({"code": "NOPE-NOPE"}))),
+        req(
+            "POST",
+            "/api/server/claim",
+            &them(),
+            Some(json!({"code": "NOPE-NOPE"})),
+        ),
     )
     .await;
 
     assert_eq!(status, StatusCode::FORBIDDEN);
 
     let (_, body) = send(&app, req("GET", "/api/server", &me(), None)).await;
-    assert_eq!(body["admission"], "unclaimed", "a wrong code claimed the server anyway");
+    assert_eq!(
+        body["admission"], "unclaimed",
+        "a wrong code claimed the server anyway"
+    );
 }
 
 #[rstest]
@@ -1597,7 +1719,12 @@ async fn an_owner_manages_who_may_sign_in(#[future(awt)] pool: SqlitePool) {
 
     let (status, _) = send(
         &app,
-        req("POST", "/api/admissions", &me(), Some(json!({"email": "her@example.com", "note": "mum"}))),
+        req(
+            "POST",
+            "/api/admissions",
+            &me(),
+            Some(json!({"email": "her@example.com", "note": "mum"})),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
@@ -1606,7 +1733,10 @@ async fn an_owner_manages_who_may_sign_in(#[future(awt)] pool: SqlitePool) {
     assert_eq!(status, StatusCode::OK);
     let rows = listed.as_array().unwrap();
     assert_eq!(rows.len(), 2, "{listed}");
-    assert!(rows.iter().any(|r| r["email"] == "her@example.com" && r["note"] == "mum"));
+    assert!(
+        rows.iter()
+            .any(|r| r["email"] == "her@example.com" && r["note"] == "mum")
+    );
 
     let (status, _) = send(
         &app,
@@ -1628,13 +1758,22 @@ async fn a_guest_is_refused_every_owner_route(#[future(awt)] pool: SqlitePool) {
     // Admitted, so this is about administering and not about signing in.
     send(
         &app,
-        req("POST", "/api/admissions", &me(), Some(json!({"email": "google-oauth2|someone-else@example.com"}))),
+        req(
+            "POST",
+            "/api/admissions",
+            &me(),
+            Some(json!({"email": "google-oauth2|someone-else@example.com"})),
+        ),
     )
     .await;
 
     for (method, path, body) in [
         ("GET", "/api/admissions", None),
-        ("POST", "/api/admissions", Some(json!({"email": "x@example.com"}))),
+        (
+            "POST",
+            "/api/admissions",
+            Some(json!({"email": "x@example.com"})),
+        ),
         ("DELETE", "/api/admissions/x@example.com", None),
         ("POST", "/api/admissions/x@example.com/owner", None),
         ("DELETE", "/api/admissions/x@example.com/owner", None),
@@ -1656,13 +1795,26 @@ async fn the_last_owner_cannot_demote_themselves_over_the_wire(#[future(awt)] po
 
     let (status, _) = send(
         &app,
-        req("DELETE", &format!("/api/admissions/{mine}/owner"), &me(), None),
+        req(
+            "DELETE",
+            &format!("/api/admissions/{mine}/owner"),
+            &me(),
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
 
-    let (status, _) = send(&app, req("DELETE", &format!("/api/admissions/{mine}"), &me(), None)).await;
-    assert_eq!(status, StatusCode::CONFLICT, "the last owner withdrew themselves");
+    let (status, _) = send(
+        &app,
+        req("DELETE", &format!("/api/admissions/{mine}"), &me(), None),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "the last owner withdrew themselves"
+    );
 }
 
 /// A6: open is a setting somebody turned on, and it works.
@@ -1677,13 +1829,22 @@ async fn an_owner_can_open_the_server(#[future(awt)] pool: SqlitePool) {
 
     let (status, _) = send(
         &app,
-        req("PUT", "/api/server", &me(), Some(json!({"admits_anyone": true}))),
+        req(
+            "PUT",
+            "/api/server",
+            &me(),
+            Some(json!({"admits_anyone": true})),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _) = send(&app, req("GET", "/api/me", &third(), None)).await;
-    assert_eq!(status, StatusCode::OK, "the server was opened and still refused somebody");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the server was opened and still refused somebody"
+    );
 
     // And it says so, so a sign-in screen can stop promising a refusal that will not
     // come.
@@ -1710,7 +1871,11 @@ async fn closing_an_account_takes_it_all(#[future(awt)] pool: SqlitePool) {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(listed["items"].as_array().unwrap().len(), 0, "{listed}");
 
-    let (status, _) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &me(), None)).await;
+    let (status, _) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}"), &me(), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -1738,13 +1903,30 @@ async fn a_shared_list_survives_its_owner_leaving(#[future(awt)] pool: SqlitePoo
     assert!(status.is_success(), "{status} {invite}");
     let token = invite["token"].as_str().expect("no token").to_string();
 
-    let (status, joined) = send(&app, req("POST", &format!("/api/invites/{token}"), &them(), None)).await;
+    let (status, joined) = send(
+        &app,
+        req(
+            "POST",
+            "/api/invites",
+            &them(),
+            Some(json!({"token": token})),
+        ),
+    )
+    .await;
     assert!(status.is_success(), "{status} {joined}");
 
     send(&app, req("DELETE", "/api/me", &me(), None)).await;
 
-    let (status, list) = send(&app, req("GET", &format!("/api/lists/{list_id}"), &them(), None)).await;
-    assert_eq!(status, StatusCode::OK, "the list went with its owner: {list}");
+    let (status, list) = send(
+        &app,
+        req("GET", &format!("/api/lists/{list_id}"), &them(), None),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the list went with its owner: {list}"
+    );
     assert_eq!(list["role"], "owner", "it survived but nobody owns it");
 }
 
@@ -1772,7 +1954,12 @@ async fn closing_an_account_forgets_the_address(#[future(awt)] pool: SqlitePool)
     let guest = "google-oauth2|someone-else@example.com";
     send(
         &app,
-        req("POST", "/api/admissions", &me(), Some(json!({"email": guest}))),
+        req(
+            "POST",
+            "/api/admissions",
+            &me(),
+            Some(json!({"email": guest})),
+        ),
     )
     .await;
     // Signing in binds the address to them.
@@ -1782,7 +1969,11 @@ async fn closing_an_account_forgets_the_address(#[future(awt)] pool: SqlitePool)
 
     let (_, listed) = send(&app, req("GET", "/api/admissions", &me(), None)).await;
     assert!(
-        !listed.as_array().unwrap().iter().any(|r| r["email"] == guest),
+        !listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["email"] == guest),
         "the address outlived the account: {listed}"
     );
 }
@@ -1824,7 +2015,11 @@ async fn a_list_made_offline_arrives_with_its_items(#[future(awt)] pool: SqliteP
 
     // The id the device could not have known, handed back so the next batch can use it.
     let id = outcomes[0]["list"]["id"].as_i64().unwrap();
-    let (status, items) = send(&app, req("GET", &format!("/api/lists/{id}/items"), &me(), None)).await;
+    let (status, items) = send(
+        &app,
+        req("GET", &format!("/api/lists/{id}/items"), &me(), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     // Capitalised on the way in, as every other route does.
     assert_eq!(items["items"][0]["name"], "Potatoes");
@@ -1892,8 +2087,16 @@ async fn making_a_list_over_somebody_elses_uuid(#[future(awt)] pool: SqlitePool)
     let (_, mine) = send(&app, req("GET", "/api/lists", &me(), None)).await;
     assert_eq!(mine["items"][0]["name"], "Mine", "the name was taken over");
     let id = mine["items"][0]["id"].as_i64().unwrap();
-    let (_, items) = send(&app, req("GET", &format!("/api/lists/{id}/items"), &me(), None)).await;
-    assert_eq!(items["items"].as_array().unwrap().len(), 0, "somebody wrote to my list");
+    let (_, items) = send(
+        &app,
+        req("GET", &format!("/api/lists/{id}/items"), &me(), None),
+    )
+    .await;
+    assert_eq!(
+        items["items"].as_array().unwrap().len(),
+        0,
+        "somebody wrote to my list"
+    );
 }
 
 /// A phone with no signal files something under an aisle, and the filing arrives.
@@ -1947,7 +2150,10 @@ async fn a_tag_filed_offline_arrives(
         req("GET", &format!("/api/lists/{list_id}/items"), &me(), None),
     )
     .await;
-    assert_eq!(items["items"][0]["tag_ids"][0], tag_id, "not filed: {items}");
+    assert_eq!(
+        items["items"][0]["tag_ids"][0], tag_id,
+        "not filed: {items}"
+    );
 }
 
 /// And taking it off again, which is the same wire with the other kind.
@@ -2052,7 +2258,12 @@ async fn the_history_can_be_taken_whole(
 
     let (status, entries) = send(
         &app,
-        req("GET", &format!("/api/lists/{list_id}/history/entries"), &me(), None),
+        req(
+            "GET",
+            &format!("/api/lists/{list_id}/history/entries"),
+            &me(),
+            None,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{entries}");
@@ -2064,9 +2275,15 @@ async fn the_history_can_be_taken_whole(
         .find(|e| e["name"] == "apples")
         .unwrap_or_else(|| panic!("apples is not remembered: {entries}"));
 
-    assert!(apples["unit_id"].as_i64().is_some(), "the unit was not carried");
+    assert!(
+        apples["unit_id"].as_i64().is_some(),
+        "the unit was not carried"
+    );
     assert_eq!(apples["amount"], 2.0, "how much was not carried");
-    assert_eq!(apples["tags"][0], tag_id, "where it is filed was not carried");
+    assert_eq!(
+        apples["tags"][0], tag_id,
+        "where it is filed was not carried"
+    );
 }
 
 /// Somebody who cannot read the list cannot read what it remembers.
@@ -2078,11 +2295,20 @@ async fn the_history_is_the_lists_and_not_the_worlds(#[future(awt)] pool: Sqlite
 
     let (status, _) = send(
         &app,
-        req("GET", &format!("/api/lists/{list_id}/history/entries"), &them(), None),
+        req(
+            "GET",
+            &format!("/api/lists/{list_id}/history/entries"),
+            &them(),
+            None,
+        ),
     )
     .await;
 
-    assert_eq!(status, StatusCode::NOT_FOUND, "somebody else read the memory");
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "somebody else read the memory"
+    );
 }
 
 // ------------------------------------------------------------------ the aisles
@@ -2102,7 +2328,12 @@ async fn an_owner_may_make_rename_and_remove_an_aisle(
 
     let (status, made) = send(
         &app,
-        req("POST", "/api/tags", &me(), Some(json!({"name": "butcher", "emoji": "🥩"}))),
+        req(
+            "POST",
+            "/api/tags",
+            &me(),
+            Some(json!({"name": "butcher", "emoji": "🥩"})),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{made}");
@@ -2134,7 +2365,10 @@ async fn an_owner_may_make_rename_and_remove_an_aisle(
         .iter()
         .filter_map(|t| t["name"].as_str())
         .collect();
-    assert!(!names.contains(&"the butcher"), "it is still there: {listed}");
+    assert!(
+        !names.contains(&"the butcher"),
+        "it is still there: {listed}"
+    );
 }
 
 /// Somebody who merely uses the server does not get to rename everybody's aisles.
@@ -2157,7 +2391,11 @@ async fn somebody_who_is_not_an_owner_may_not_change_the_aisles(
         .unwrap();
 
     let (status, listed) = send(&app, req("GET", "/api/tags?order_by=name", &them(), None)).await;
-    assert_eq!(status, StatusCode::OK, "they cannot even read the aisles: {listed}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "they cannot even read the aisles: {listed}"
+    );
     let id = listed["items"][0]["id"].as_i64().expect("no seeded tags");
 
     for (method, body) in [
@@ -2173,6 +2411,10 @@ async fn somebody_who_is_not_an_owner_may_not_change_the_aisles(
         let (status, body) = send(&app, req(method, &path, &them(), body)).await;
         // Hidden rather than forbidden: somebody who may not administer a server
         // should not learn what it would let them do.
-        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path} answered {status}: {body}");
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{method} {path} answered {status}: {body}"
+        );
     }
 }

@@ -117,7 +117,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
         if snapshot.onDeviceOnly {
             mode = .onDevice
         } else if let raw = snapshot.server,
-                  case .success(let address) = ServerAddress.parse(raw, allowingCleartext: true) {
+                  case .success(let address) = ServerAddress.parse(raw) {
             let was = mode
             mode = .server(address)
             // A different server is a different world: its ids, its uuids, its people.

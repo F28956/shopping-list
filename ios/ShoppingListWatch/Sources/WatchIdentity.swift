@@ -85,7 +85,7 @@ final class WatchIdentity: NSObject, WCSessionDelegate {
         cachedServer = server
         // Where `Config.apiBaseURL` reads from, so the rest of the watch app needs to
         // know nothing about how the address arrived.
-        if case .success(let address) = ServerAddress.parse(server, allowingCleartext: true) {
+        if case .success(let address) = ServerAddress.parse(server) {
             ServerDirectory.remember(address)
         }
         state = .ready

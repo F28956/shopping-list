@@ -298,8 +298,17 @@ class Api(
         send("DELETE", "/api/lists/${list.id}/members/invites", null)
     }
 
+    /**
+     * Follows a share link.
+     *
+     * The token goes in the body, not the path. A path is the part every proxy and
+     * access log between here and somebody's home server writes down, and this token
+     * is a credential that stays valid for a week.
+     */
     suspend fun join(token: String): ShoppingList =
-        json.decodeFromString(send("POST", "/api/invites/$token", null))
+        json.decodeFromString(
+            send("POST", "/api/invites", json.encodeToString(Invitation.serializer(), Invitation(token))),
+        )
 
     suspend fun remove(person: Person, list: ShoppingList) {
         send("DELETE", "/api/lists/${list.id}/members/${person.userId}", null)

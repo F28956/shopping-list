@@ -8,12 +8,12 @@ import Testing
 /// The cases that matter are not the well-formed ones. They are the paste out of a
 /// location bar, the missing scheme, and the trailing slash — see `ServerAddress`.
 struct ServerAddressTests {
-    private func origin(_ typed: String, cleartext: Bool = true) -> String? {
-        try? ServerAddress.parse(typed, allowingCleartext: cleartext).get().origin
+    private func origin(_ typed: String) -> String? {
+        try? ServerAddress.parse(typed).get().origin
     }
 
-    private func problem(_ typed: String, cleartext: Bool = true) -> ServerAddress.Problem? {
-        switch ServerAddress.parse(typed, allowingCleartext: cleartext) {
+    private func problem(_ typed: String) -> ServerAddress.Problem? {
+        switch ServerAddress.parse(typed) {
         case .success: nil
         case .failure(let problem): problem
         }
@@ -58,9 +58,18 @@ struct ServerAddressTests {
 
     /// C6. The alternative is every user's shopping and bearer token in the clear on
     /// whatever café Wi-Fi they are on.
-    @Test func cleartextIsRefusedWhenItIsNotAllowed() {
-        #expect(problem("http://example.com", cleartext: false) == .insecure)
-        #expect(origin("https://example.com", cleartext: false) == "https://example.com")
+    ///
+    /// Which way this goes is decided by the build, not by the caller — there is no
+    /// longer a parameter to pass, so no call site can opt itself out. The test says
+    /// both halves so that whichever configuration it runs under, it asserts the rule
+    /// that configuration is meant to keep.
+    @Test func cleartextFollowsTheBuild() {
+        if ServerAddress.allowsCleartext {
+            #expect(origin("http://example.com") == "http://example.com")
+        } else {
+            #expect(problem("http://example.com") == .insecure)
+        }
+        #expect(origin("https://example.com") == "https://example.com")
     }
 
     @Test func nonsenseIsRefused() {

@@ -52,7 +52,7 @@ object ServerDirectory {
             // [suggested] -- but it is offered rather than assumed.
             val stored = prefs.getString(KEY, null) ?: return null
             if (stored == ON_DEVICE_ONLY || stored.isEmpty()) return null
-            return ServerAddress.parse(stored, allowingCleartext = true).getOrNull()
+            return ServerAddress.parse(stored).getOrNull()
         }
 
     /**
@@ -94,7 +94,7 @@ object ServerDirectory {
 
     private val built: ServerAddress?
         get() = if (BuildConfig.DEBUG) {
-            ServerAddress.parse(BuildConfig.API_BASE_URL, allowingCleartext = true).getOrNull()
+            ServerAddress.parse(BuildConfig.API_BASE_URL).getOrNull()
         } else {
             // A shipped build starts on its own. The build setting exists so a debug
             // build can talk to the machine on the desk, not so that everybody who

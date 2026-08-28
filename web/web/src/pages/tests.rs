@@ -523,7 +523,10 @@ async fn a_change_reaches_a_browser_watcher(#[future(awt)] pool: SqlitePool) {
         .expect("the body errored");
     let frame = String::from_utf8_lossy(&chunk).into_owned();
     assert!(frame.contains("event: changed"), "got: {frame:?}");
-    assert!(frame.contains(&format!("data: {list_id}")), "got: {frame:?}");
+    assert!(
+        frame.contains(&format!("data: {list_id}")),
+        "got: {frame:?}"
+    );
 }
 
 /// Filing an item is a change to the list like any other.
@@ -544,7 +547,13 @@ async fn a_tag_change_reaches_a_watcher(
     post(&app, "/lists", &cookie, "name=Groceries").await;
     let (_, body) = get(&app, "/", &cookie).await;
     let list_id = first_list_id(&body);
-    post(&app, &format!("/lists/{list_id}/items"), &cookie, "line=Apples").await;
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &cookie,
+        "line=Apples",
+    )
+    .await;
 
     let (_, page) = get(&app, &format!("/lists/{list_id}"), &cookie).await;
     let item_id: i64 = page[page.find("/items/").expect("no item on the page") + 7..]
@@ -1313,7 +1322,13 @@ async fn suggestions_wait_until_something_is_typed(#[future(awt)] pool: SqlitePo
     post(&app, "/lists", &mine, "name=Mine").await;
     let (_, body) = get(&app, "/", &mine).await;
     let list_id = first_list_id(&body);
-    post(&app, &format!("/lists/{list_id}/items"), &mine, "line=Sourdough").await;
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &mine,
+        "line=Sourdough",
+    )
+    .await;
 
     let (_, page) = get(&app, &format!("/lists/{list_id}"), &mine).await;
     assert!(
@@ -1342,7 +1357,13 @@ async fn suggestions_are_matched_loosely(#[future(awt)] pool: SqlitePool) {
     post(&app, "/lists", &mine, "name=Mine").await;
     let (_, body) = get(&app, "/", &mine).await;
     let list_id = first_list_id(&body);
-    post(&app, &format!("/lists/{list_id}/items"), &mine, "line=Sourdough").await;
+    post(
+        &app,
+        &format!("/lists/{list_id}/items"),
+        &mine,
+        "line=Sourdough",
+    )
+    .await;
 
     for typed in ["srdgh", "dough", "SOUR"] {
         let (_, offered) = get(
@@ -1666,7 +1687,7 @@ async fn a_list_can_be_shared_by_link(#[future(awt)] pool: SqlitePool) {
     );
 
     let shown = post_page(&app, &format!("/lists/{list_id}/invites"), &mine, "").await;
-    let at = shown.find("/join/").expect("no link on the page");
+    let at = shown.find("/join#").expect("no link on the page");
     let token: String = shown[at + 6..]
         .chars()
         .take_while(|c| c.is_ascii_hexdigit())
@@ -1679,7 +1700,7 @@ async fn a_list_can_be_shared_by_link(#[future(awt)] pool: SqlitePool) {
 
     // somebody else follows it
     let (app2, theirs) = signed_in(&pool, "google-oauth2|housemate").await;
-    let (status, _) = get(&app2, &format!("/join/{token}"), &theirs).await;
+    let status = follow(&app2, &theirs, &token).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
 
     // and now has the list
@@ -1743,7 +1764,7 @@ async fn a_viewer_is_not_offered_the_controls(#[future(awt)] pool: SqlitePool) {
     .unwrap();
 
     let (app2, theirs) = signed_in(&pool, "google-oauth2|looker").await;
-    get(&app2, &format!("/join/{}", token.0), &theirs).await;
+    follow(&app2, &theirs, &token.0).await;
 
     let (status, page) = get(&app2, &format!("/lists/{list_id}"), &theirs).await;
     assert_eq!(status, StatusCode::OK);
@@ -1788,14 +1809,14 @@ async fn an_editor_is_offered_the_controls_but_not_the_owners(#[future(awt)] poo
     post(&app, &format!("/lists/{list_id}/items"), &mine, "line=Milk").await;
 
     let shown = post_page(&app, &format!("/lists/{list_id}/invites"), &mine, "").await;
-    let at = shown.find("/join/").unwrap();
+    let at = shown.find("/join#").unwrap();
     let token: String = shown[at + 6..]
         .chars()
         .take_while(|c| c.is_ascii_hexdigit())
         .collect();
 
     let (app2, theirs) = signed_in(&pool, "google-oauth2|helper").await;
-    get(&app2, &format!("/join/{token}"), &theirs).await;
+    follow(&app2, &theirs, &token).await;
 
     let (_, page) = get(&app2, &format!("/lists/{list_id}"), &theirs).await;
     assert!(page.contains("Add an item"), "an editor cannot add: {page}");
@@ -1838,12 +1859,126 @@ async fn a_stranger_still_sees_a_404(#[future(awt)] pool: SqlitePool) {
 async fn a_guessed_link_gets_nowhere(#[future(awt)] pool: SqlitePool) {
     let (app, cookie) = signed_in(&pool, "google-oauth2|guesser").await;
 
-    let (status, _) = get(&app, "/join/0000000000000000", &cookie).await;
+    let status = follow(&app, &cookie, "0000000000000000").await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// The token is after the `#`, and nowhere a server could write it down.
+///
+/// This is the whole reason the link has that shape. A path is logged by every proxy,
+/// reverse proxy and access log between a phone and somebody's home server, and a
+/// share token stays valid for a week. A fragment is never sent at all.
+#[rstest]
+#[tokio::test]
+async fn a_share_link_keeps_its_token_out_of_the_path(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|host").await;
+    post(&app, "/lists", &mine, "name=Household").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+
+    let shown = post_page(&app, &format!("/lists/{list_id}/invites"), &mine, "").await;
+
+    let at = shown.find("/join#").expect("no link on the page");
+    let token: String = shown[at + 6..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+    assert_eq!(token.len(), 64, "the token is not 256 bits of hex: {token}");
+    assert!(
+        !shown.contains(&format!("/join/{token}")),
+        "the token is in the path as well, which defeats the fragment: {shown}"
+    );
+}
+
+/// Following a link on a device nobody has signed in on yet.
+///
+/// The invitation has to survive the trip to Google and back, and it cannot make that
+/// trip in the fragment -- the browser drops it the moment it leaves the page. So it
+/// goes into the session instead. Losing it here means somebody who was sent a link
+/// signs in, lands on their own empty list of lists, and has nothing left to try.
+#[rstest]
+#[tokio::test]
+async fn a_link_followed_before_signing_in_is_not_lost(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|host").await;
+    post(&app, "/lists", &mine, "name=Household").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+    let shown = post_page(&app, &format!("/lists/{list_id}/invites"), &mine, "").await;
+    let at = shown.find("/join#").unwrap();
+    let token: String = shown[at + 6..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+
+    // No cookie: a stranger, on a phone that has never signed in.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/join")
+                .method("POST")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(format!("token={token}")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        res.headers().get(header::LOCATION).unwrap(),
+        "/auth/login",
+        "a signed-out visitor was not sent to sign in"
+    );
+    assert!(
+        res.headers().get(header::SET_COOKIE).is_some(),
+        "nothing was kept, so the invitation is gone once they come back"
+    );
+}
+
+/// Without scripting there is nobody to read the address bar, so the whole link is
+/// pasted. The part after the `#` is the token.
+#[rstest]
+#[tokio::test]
+async fn a_pasted_link_is_accepted_whole(#[future(awt)] pool: SqlitePool) {
+    let (app, mine) = signed_in(&pool, "google-oauth2|host").await;
+    post(&app, "/lists", &mine, "name=Household").await;
+    let (_, body) = get(&app, "/", &mine).await;
+    let list_id = first_list_id(&body);
+    let shown = post_page(&app, &format!("/lists/{list_id}/invites"), &mine, "").await;
+    let at = shown.find("/join#").unwrap();
+    let token: String = shown[at + 6..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+
+    let (app2, theirs) = signed_in(&pool, "google-oauth2|housemate").await;
+    let status = follow(
+        &app2,
+        &theirs,
+        &format!("https://example.com/join%23{token}"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (_, their_page) = get(&app2, "/", &theirs).await;
+    assert!(
+        their_page.contains("Household"),
+        "a pasted link did not work: {their_page}"
+    );
+}
+
 // ------------------------------------------------------- coming back to it
+
+/// Following a share link, the way the page at `/join` does.
+///
+/// A post rather than a GET of a path: the token travels in the fragment, which never
+/// reaches the server, so the browser reads it out of its own address bar and hands it
+/// back in a form body. See `pages::sharing::joining`.
+async fn follow(app: &axum::Router, cookie: &str, token: &str) -> StatusCode {
+    post(app, "/join", cookie, &format!("token={token}")).await
+}
 
 /// Returns the Location of a redirect, or None if the response was a page.
 async fn location(app: &axum::Router, uri: &str, cookie: &str) -> Option<String> {
@@ -1921,14 +2056,14 @@ async fn a_list_you_were_removed_from_is_forgotten(#[future(awt)] pool: SqlitePo
     let id = first_list_id(&body);
 
     let shown = post_page(&app, &format!("/lists/{id}/invites"), &mine, "").await;
-    let at = shown.find("/join/").unwrap();
+    let at = shown.find("/join#").unwrap();
     let token: String = shown[at + 6..]
         .chars()
         .take_while(|c| c.is_ascii_hexdigit())
         .collect();
 
     let (app2, theirs) = signed_in(&pool, "google-oauth2|guest").await;
-    get(&app2, &format!("/join/{token}"), &theirs).await;
+    follow(&app2, &theirs, &token).await;
     get(&app2, &format!("/lists/{id}"), &theirs).await;
     assert!(
         location(&app2, "/", &theirs).await.is_some(),
@@ -1970,14 +2105,14 @@ async fn leaving_a_list_forgets_it(#[future(awt)] pool: SqlitePool) {
     let (_, body) = get(&app, "/lists", &mine).await;
     let id = first_list_id(&body);
     let shown = post_page(&app, &format!("/lists/{id}/invites"), &mine, "").await;
-    let at = shown.find("/join/").unwrap();
+    let at = shown.find("/join#").unwrap();
     let token: String = shown[at + 6..]
         .chars()
         .take_while(|c| c.is_ascii_hexdigit())
         .collect();
 
     let (app2, theirs) = signed_in(&pool, "google-oauth2|leaver").await;
-    get(&app2, &format!("/join/{token}"), &theirs).await;
+    follow(&app2, &theirs, &token).await;
     get(&app2, &format!("/lists/{id}"), &theirs).await;
 
     post(&app2, &format!("/lists/{id}/leave"), &theirs, "").await;

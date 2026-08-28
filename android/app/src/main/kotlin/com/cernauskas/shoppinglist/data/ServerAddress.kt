@@ -56,8 +56,19 @@ data class ServerAddress(
          * person meant beyond doubt.
          *
          * Refused: a path, a query or a fragment. Those are not beyond doubt.
+         *
+         * There is deliberately **no way to ask for cleartext**. There used to be a
+         * parameter for it and every caller but one passed `true` — including the one
+         * that reads a host out of a pasted share link, which is untrusted text from
+         * whoever sent it. The release guarantee then held only because the single path
+         * that stores an address happened to pass the flag. An invariant that depends
+         * on four callers agreeing is not an invariant.
+         *
+         * Nothing is lost by removing it: a debug build allows cleartext through
+         * [allowsCleartext] anyway, which is the case the parameter existed for, and a
+         * release build now refuses `http://` everywhere including from a pasted link.
          */
-        fun parse(typed: String, allowingCleartext: Boolean): Result<ServerAddress> {
+        fun parse(typed: String): Result<ServerAddress> {
             val trimmed = typed.trim()
             if (trimmed.isEmpty()) return Result.failure(Refused(Problem.EMPTY))
 
@@ -75,7 +86,7 @@ data class ServerAddress(
             if (scheme != "https" && scheme != "http") {
                 return Result.failure(Refused(Problem.NOT_AN_ADDRESS))
             }
-            if (scheme != "https" && !allowingCleartext) {
+            if (scheme != "https" && !allowsCleartext()) {
                 return Result.failure(Refused(Problem.INSECURE))
             }
 

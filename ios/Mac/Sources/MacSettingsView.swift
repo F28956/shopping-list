@@ -90,7 +90,7 @@ struct MacSettingsView: View {
     }
 
     private func use(_ entered: String) async {
-        switch ServerAddress.parse(entered, allowingCleartext: ServerAddress.allowsCleartext) {
+        switch ServerAddress.parse(entered) {
         case .failure(let refusal):
             problem = refusal.localizedDescription
         case .success(let address):

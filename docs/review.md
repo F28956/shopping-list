@@ -45,20 +45,31 @@ does not return as a ghost.
 **`ListsView` and `MacShoppingView` still hold their own copies** of the smaller list
 logic — loading, joining, renaming, deleting. Same argument, not yet done.
 
-## 2. An invitation token travels in the URL path
+## ~~2. An invitation token travels in the URL path~~ — fixed
 
-`POST /api/invites/{token}` puts a bearer credential in a URL, where it is written to
-every access log, proxy log and analytics trace between here and the server. It
-belongs in the body. It is also not percent-encoded, so it depends on `token(in:)`
-having rejected a `/` further up.
+`POST /api/invites/{token}` put a bearer credential in a URL, where it is written to
+every access log, proxy log and analytics trace between here and the server — for the
+week the token stays valid.
 
-## 3. The cleartext rule has five doors and one lock
+Two changes, because there were two places it appeared. The API takes it in the body:
+`POST /api/invites` with `{"token": …}`. The share link carries it in the **fragment**,
+`https://host/join#TOKEN`, which is the one part of a URL a browser never sends — so it
+reaches no log at all, and the link is still one thing to paste into a message. The
+page at `/join` reads it back out of the address bar and hands it over in a form post,
+holding it in the session across a sign-in so that following a link on a device nobody
+has signed in on yet does not throw the invitation away. Both clients read either
+shape, so links already sent keep working.
 
-`ServerAddress.allowsCleartext` is `false` in release. Five call sites pass
-`allowingCleartext: true` regardless, including `JoinLink.swift:51`, which parses a
-**pasted, untrusted** share link. The release guarantee survives only because
-`remember` happens to be reached through a default-rule parse. That is an invariant
-held by convention rather than by a type.
+## ~~3. The cleartext rule has five doors and one lock~~ — fixed
+
+`ServerAddress.allowsCleartext` is `false` in release. Five call sites passed
+`allowingCleartext: true` regardless, including the one that parses a **pasted,
+untrusted** share link. The release guarantee survived only because the one path that
+stores an address happened to use the default — an invariant held by convention.
+
+The parameter is gone, on both iOS and Android, where the same four-caller version of
+it existed. There is nothing to pass, so nothing can opt out: a debug build allows
+cleartext, a release build refuses it, and that is the whole rule.
 
 ## 4. Six `catch {}` blocks swallow everything
 

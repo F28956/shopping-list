@@ -54,7 +54,7 @@ enum ServerDirectory {
 
         if stored == onDeviceOnly || stored.isEmpty { return .none }
 
-        guard case .success(let address) = ServerAddress.parse(stored, allowingCleartext: true)
+        guard case .success(let address) = ServerAddress.parse(stored)
         else { return .none }
 
         return .server(address)
@@ -95,7 +95,7 @@ enum ServerDirectory {
         guard
             let raw = Bundle.main.object(forInfoDictionaryKey: "ShoppingListAPIBaseURL")
                 as? String,
-            case .success(let address) = ServerAddress.parse(raw, allowingCleartext: true)
+            case .success(let address) = ServerAddress.parse(raw)
         else { return nil }
 
         return address

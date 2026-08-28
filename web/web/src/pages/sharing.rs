@@ -4,6 +4,7 @@
 //! you do *to* a list, alongside renaming and deleting it, not something you do while
 //! shopping.
 
+use axum::Form;
 use axum::extract::{Path, State};
 use axum::response::Redirect;
 use domain::models::invite::Token;
@@ -93,7 +94,11 @@ pub async fn invite(
     let list = lists::get(&s.ctx, &actor, list::Id(id)).await?;
 
     let token = lists::invite(&s.ctx, &actor, list::Id(id), Role::Editor).await?;
-    let link = format!("{}/join/{}", origin(), token.0);
+    // In the fragment, after the `#`, and that is the whole point: a browser never
+    // sends a fragment to a server. The token therefore appears in no access log, no
+    // proxy log and no `Referer` header, on the way to a self-hosted server nobody
+    // audits. The page at `/join` reads it back out of the address bar itself.
+    let link = format!("{}/join#{}", origin(), token.0);
 
     Ok(view::page(
         &format!("Sharing {}", list.name.0),
@@ -168,13 +173,64 @@ pub(super) async fn forget_if_last(session: &Session, id: i64) -> Result<(), App
     Ok(())
 }
 
+/// Where an invitation link lands.
+///
+/// Deliberately **not** behind sign-in. The token is in the fragment, which lives only
+/// in the browser, so it has to reach a page before anything can be done with it --
+/// and bouncing a signed-out visitor to Google first would throw the fragment away on
+/// the way. So the page loads, the script hands the token back in a form post, and
+/// [`join`] is the one that insists on knowing who this is.
+pub async fn joining() -> Markup {
+    view::page(
+        "Joining a list",
+        None,
+        html! {
+            h2 style="font-size:1.1rem;margin:.5rem 0" { "Joining a shared list" }
+            // Submitted by app.js, which fills the token in from the fragment. The
+            // field is visible only without scripting, where somebody has to paste
+            // the whole link in themselves -- the browser will not read its own
+            // address bar for them.
+            form class="add" method="post" action="/join" {
+                noscript {
+                    p { "Paste the link you were sent." }
+                    input type="text" name="token" placeholder="https://…/join#…"
+                          autocomplete="off" required;
+                }
+                noscript { button class="primary" { "Join" } }
+            }
+            p id="joining" class="truncated" { "One moment…" }
+        },
+    )
+}
+
+/// What the fragment carried, handed back by the page at [`joining`].
+#[derive(Debug, serde::Deserialize)]
+pub struct Redemption {
+    pub token: String,
+}
+
 /// Following an invitation link.
+///
+/// A signed-out visitor is not turned away: the token is put in their session and
+/// picked up again the moment they come back from Google, because otherwise following
+/// a share link on a device you have never signed in on simply loses the invitation.
 pub async fn join(
     session: Session,
     State(s): State<AppState>,
-    Path(token): Path<String>,
+    Form(redemption): Form<Redemption>,
 ) -> Result<Redirect, AppError> {
-    let actor = auth::require_actor(&session, &s.ctx).await?;
+    // Without scripting the whole link is pasted, so take the fragment off it. Any
+    // other shape is left alone and fails as an unknown token, which is what it is.
+    let token = match redemption.token.rsplit_once('#') {
+        Some((_, after)) => after.to_string(),
+        None => redemption.token,
+    };
+
+    let Some(actor) = auth::current_actor(&session, &s.ctx).await? else {
+        session.insert(auth::PENDING_INVITE, &token).await?;
+        return Ok(Redirect::to("/auth/login"));
+    };
+
     let list = lists::join(&s.ctx, &actor, &Token(token)).await?;
     Ok(Redirect::to(&format!("/lists/{}", list.id.0)))
 }

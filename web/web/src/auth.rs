@@ -21,6 +21,15 @@ pub const USER_ID: &str = "user_id";
 /// different places.
 pub const LAST_LIST: &str = "last_list";
 
+/// A share-link token held over a sign-in.
+///
+/// Somebody who follows a link on a device they have never signed in on has to go to
+/// Google and come back, and the token cannot make that trip: it arrives in a URL
+/// fragment, which is gone the moment the browser leaves the page. So it waits here,
+/// in the session, and the OIDC callback redeems it. Session storage is server-side
+/// and the entry is removed as it is used.
+pub const PENDING_INVITE: &str = "pending_invite";
+
 /// Loads the signed-in person, if there is one.
 ///
 /// Returns `None` rather than an error when nobody is signed in: the index page is

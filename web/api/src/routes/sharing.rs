@@ -32,16 +32,28 @@ pub fn router() -> Router<AppState> {
 /// someone and then only opened on a laptop -- and it is why the API could not be
 /// tested for what a viewer is told about their own role.
 pub fn invites_router() -> Router<AppState> {
-    Router::new().route("/{token}", post(join))
+    Router::new().route("/", post(join))
+}
+
+/// The token a share link carries, in the body rather than the path.
+///
+/// A path is the part of a request that gets written down: access logs, proxy logs,
+/// error trackers, and anything sitting between a phone and a self-hosted server all
+/// keep the line `POST /api/invites/9f3c...`. A token in there is a credential in
+/// somebody's log file, waiting for the seven days it stays valid. A body is not
+/// logged by any of them.
+#[derive(Debug, serde::Deserialize)]
+pub struct Redemption {
+    pub token: String,
 }
 
 async fn join(
     State(state): State<AppState>,
     user: CurrentUser,
-    Path(token): Path<String>,
+    Json(redemption): Json<Redemption>,
 ) -> Result<Json<List>, AppError> {
     Ok(Json(
-        lists::join(&state.ctx, &user.actor(), &Token(token)).await?,
+        lists::join(&state.ctx, &user.actor(), &Token(redemption.token)).await?,
     ))
 }
 

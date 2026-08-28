@@ -57,7 +57,7 @@ fun ServerAddressScreen(
     fun check(entered: String) {
         if (asking) return
 
-        val parsed = ServerAddress.parse(entered, allowingCleartext = ServerAddress.allowsCleartext())
+        val parsed = ServerAddress.parse(entered)
         val address = parsed.getOrElse { failure ->
             problem = failure.addressProblem?.sentence()
             return

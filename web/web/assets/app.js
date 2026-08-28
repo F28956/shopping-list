@@ -71,6 +71,27 @@
     });
   }
 
+  // A share link carries its token after the `#`, where no server ever sees it. Only
+  // the browser can read it back, so this hands it to /join in a form post and takes
+  // it out of the address bar in the same breath -- a fragment otherwise stays there,
+  // gets bookmarked, and is read over somebody's shoulder.
+  var joining = document.getElementById("joining");
+  if (joining) {
+    var token = window.location.hash.replace(/^#/, "");
+    var form = joining.parentNode.querySelector("form");
+    if (token && form) {
+      history.replaceState(null, "", window.location.pathname);
+      var field = document.createElement("input");
+      field.type = "hidden";
+      field.name = "token";
+      field.value = decodeURIComponent(token);
+      form.appendChild(field);
+      form.submit();
+    } else if (!token) {
+      joining.textContent = "That link is missing its invitation. Ask for another.";
+    }
+  }
+
   // Cancel is a <label> pointing at the panel switch: the browser closes the editor.
   // This only drops the unsaved typing, so that reopening shows what is stored.
   document.body.addEventListener("click", function (event) {

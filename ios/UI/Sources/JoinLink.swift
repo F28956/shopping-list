@@ -9,10 +9,20 @@ func token(in pasted: String) -> String? {
     let trimmed = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
 
-    // A link: the token is the last path component of `/join/<token>`.
+    // A link: the token is the fragment of `/join#<token>`, after the `#`.
+    //
+    // The fragment rather than the path, because a fragment is the one part of a URL
+    // a browser never sends -- so a token there is written into no access log on the
+    // way to somebody's home server, for the week it stays valid.
+    //
+    // The last path component is still read, for a link made by an older server that
+    // still puts it there. That falls away once nothing issues those any more.
     if let url = URL(string: trimmed), url.scheme != nil {
+        if let fragment = url.fragment(percentEncoded: false), !fragment.isEmpty {
+            return fragment
+        }
         let last = url.lastPathComponent
-        return last.isEmpty || last == "/" ? nil : last
+        return last.isEmpty || last == "/" || last == "join" ? nil : last
     }
 
     // A bare token: no spaces, and nothing that could be a path.
@@ -48,5 +58,5 @@ func server(in pasted: String) -> ServerAddress? {
         origin += ":\(port)"
     }
 
-    return try? ServerAddress.parse(origin, allowingCleartext: true).get()
+    return try? ServerAddress.parse(origin).get()
 }
