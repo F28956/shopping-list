@@ -186,6 +186,37 @@ final class Cache: @unchecked Sendable {
         //
         // Its own migration rather than a change to `v3-history`: a device that has
         // already run that one has a history worth keeping.
+        // Whether a unit means something written with no number in front of it.
+        //
+        // The reference table held a name and an emoji, and `bare` was dropped on the
+        // way in and read back as false for everything -- so `pint milk` was a unit of
+        // "pint milk" on any device that had cached its units, which is every device
+        // after its first run. The rule was right and the storage forgot its input.
+        migrator.registerMigration("v5-units-that-stand-alone") { db in
+            try db.alter(table: "reference") { t in
+                t.add(column: "bare", .boolean).notNull().defaults(to: false)
+            }
+        }
+
+        // Throws the cached units away, so they are read again with the flag set.
+        //
+        // A new column defaults every existing row to `false`, which is the same wrong
+        // answer the missing column gave -- and units are only re-read when the cache
+        // is empty, so without this they would stay wrong for ever on any device that
+        // had opened a list once.
+        //
+        // **Its own migration, and that is the point.** This began as two more lines
+        // inside the one above, which had already run: a migrator records what it has
+        // applied and never runs it again, so the delete simply did not happen and the
+        // units stayed as they were. A fix to an applied migration is a new migration.
+        //
+        // Safe because units are the server's to give, or the bundle's: unlike the
+        // aisles beside them in this table, nothing about them is somebody's own
+        // choice. The walking order is, which is why only units go.
+        migrator.registerMigration("v6-reread-units") { db in
+            try db.execute(sql: "DELETE FROM reference WHERE kind = 'unit'")
+        }
+
         migrator.registerMigration("v4-history-amount") { db in
             try db.alter(table: "history") { t in
                 // Nullable: a name remembered before this knows its unit and not its
@@ -476,14 +507,15 @@ final class Cache: @unchecked Sendable {
     // MARK: - Units and tags
 
     func units() -> [Unit] {
-        reference(kind: Kind.unit, listID: Kind.global).map { Unit(id: $0.id, name: $0.name) }
+        reference(kind: Kind.unit, listID: Kind.global)
+            .map { Unit(id: $0.id, name: $0.name, bare: $0.bare) }
     }
 
     func remember(units: [Unit]) {
         replaceReference(
             kind: Kind.unit,
             listID: Kind.global,
-            rows: units.map { (id: $0.id, name: $0.name, emoji: nil) }
+            rows: units.map { (id: $0.id, name: $0.name, emoji: nil, bare: $0.bare) }
         )
     }
 
@@ -500,7 +532,7 @@ final class Cache: @unchecked Sendable {
         replaceReference(
             kind: Kind.tag,
             listID: list.id,
-            rows: tags.map { (id: $0.id, name: $0.name, emoji: $0.emoji) }
+            rows: tags.map { (id: $0.id, name: $0.name, emoji: $0.emoji, bare: false) }
         )
     }
 
@@ -528,20 +560,22 @@ final class Cache: @unchecked Sendable {
     private func reference(
         kind: String,
         listID: Int64
-    ) -> [(id: Int64, name: String, emoji: String?)] {
+    ) -> [(id: Int64, name: String, emoji: String?, bare: Bool)] {
         read { db in
             try Row.fetchAll(
                 db,
                 sql: "SELECT * FROM reference WHERE kind = ? AND list_id = ? ORDER BY position",
                 arguments: [kind, listID]
-            ).map { (id: $0["id"], name: $0["name"], emoji: $0["emoji"]) }
+            ).map {
+                (id: $0["id"], name: $0["name"], emoji: $0["emoji"], bare: $0["bare"])
+            }
         }
     }
 
     private func replaceReference(
         kind: String,
         listID: Int64,
-        rows: [(id: Int64, name: String, emoji: String?)]
+        rows: [(id: Int64, name: String, emoji: String?, bare: Bool)]
     ) {
         write { db in
             try db.execute(
@@ -551,10 +585,10 @@ final class Cache: @unchecked Sendable {
             for (at, row) in rows.enumerated() {
                 try db.execute(
                     sql: """
-                    INSERT INTO reference (kind, list_id, id, name, emoji, position)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO reference (kind, list_id, id, name, emoji, bare, position)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    arguments: [kind, listID, row.id, row.name, row.emoji, at]
+                    arguments: [kind, listID, row.id, row.name, row.emoji, row.bare, at]
                 )
             }
         }

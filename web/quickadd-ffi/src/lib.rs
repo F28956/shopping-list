@@ -354,9 +354,13 @@ struct AskedUnit {
     id: i64,
     name: String,
     /// Whether it may be written with no number in front of it -- `pint milk`.
-    /// Defaulted, so a caller that has not learned about this yet keeps the old
-    /// behaviour rather than reading every unit that way.
-    #[serde(default)]
+    ///
+    /// **Deliberately not `#[serde(default)]`.** It was, so that a caller which had
+    /// not learned about the field would keep the old behaviour -- and the effect was
+    /// that a caller which *forgot* it got the old behaviour too, silently, which is
+    /// how `pint milk` came to mean one unit of "pint milk" on a phone. There is no
+    /// older caller: this library is compiled from the same tree as the apps that
+    /// link it. A field left out is a mistake, and it should say so.
     bare: bool,
 }
 

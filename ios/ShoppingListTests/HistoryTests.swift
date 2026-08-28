@@ -251,3 +251,81 @@ struct BareUnitTests {
         #expect(unit.bare == false)
     }
 }
+
+/// What the cache must carry into the shared rules.
+///
+/// The rules live in one place — `parsing::add` — but each platform hand-carries the
+/// data into them, and a field dropped on the way is a wrong answer from a right rule.
+/// That is exactly what happened: the reference table held a name and an emoji, `bare`
+/// was dropped writing units and read back false for all of them, and `pint milk`
+/// became an item called "pint milk" on every device that had cached its units.
+///
+/// So these are round trips. Anything the shared decision reads must survive one.
+struct CacheCarriesTheInputsTests {
+    private let list = List(id: 1, uuid: "list-1", name: "Shop", ownerID: 9, role: .editor)
+
+    @Test("a unit that stands alone still does after a round trip")
+    func unitsKeepTheirBareFlag() {
+        let cache = Cache.inMemory()
+        cache.remember(units: [
+            Unit(id: 1, name: "unit", bare: false),
+            Unit(id: 3, name: "pint", bare: true),
+        ])
+
+        let read = cache.units()
+        #expect(read.first { $0.name == "pint" }?.bare == true, "the flag was dropped")
+        #expect(read.first { $0.name == "unit" }?.bare == false)
+    }
+
+    @Test("what the cache carries is enough to read a line the same way twice")
+    func aLineReadsTheSameThroughTheCache() {
+        // The end-to-end version of the above, through the shared decision rather than
+        // through a field: `pint milk` must mean the same after a round trip as before.
+        let cache = Cache.inMemory()
+        let units = [Unit(id: 1, name: "unit", bare: false), Unit(id: 3, name: "pint", bare: true)]
+        cache.remember(units: units)
+
+        guard case .new(let direct) = QuickAdd.resolve(
+            "pint milk", units: units, rows: [], remembered: nil
+        ), case .new(let throughCache) = QuickAdd.resolve(
+            "pint milk", units: cache.units(), rows: [], remembered: nil
+        ) else {
+            Issue.record("expected new rows")
+            return
+        }
+
+        #expect(direct.name == throughCache.name)
+        #expect(direct.unitID == throughCache.unitID)
+        #expect(throughCache.name == "milk", "the cache changed what the line means")
+        #expect(throughCache.unitID == 3)
+    }
+
+    @Test("aisles keep their glyph and order through a round trip")
+    func tagsKeepTheirEmoji() {
+        let cache = Cache.inMemory()
+        cache.remember(
+            tags: [
+                Tag(id: 40, name: "dairy", emoji: "🧀", sortOrder: 0),
+                Tag(id: 10, name: "produce", emoji: nil, sortOrder: 1),
+            ],
+            on: list
+        )
+
+        let read = cache.tags(on: list)
+        #expect(read.map(\.name) == ["dairy", "produce"], "the order moved")
+        #expect(read.first?.emoji == "🧀")
+    }
+}
+
+/// The bundled reference data, which is what a device with no server resolves against.
+struct BundledReferenceTests {
+    @Test("the units that ship with the app know which of them stand alone")
+    func theBundleCarriesTheFlag() {
+        // Read from the app's own bundle, so this fails if the resource is stale or the
+        // decoder drops the field -- both of which have happened.
+        let pint = Reference.units.first { $0.name == "pint" }
+        #expect(pint != nil, "no pint in the bundled units")
+        #expect(pint?.bare == true, "the bundle says pint cannot stand alone")
+        #expect(Reference.units.first { $0.name == "unit" }?.bare == false)
+    }
+}
