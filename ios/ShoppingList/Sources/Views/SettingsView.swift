@@ -25,6 +25,7 @@ struct SettingsView: View {
     @State private var choosing = false
     @State private var leaving = false
     @State private var managingServer = false
+    @State private var managingTags = false
     /// Why the suggested address could not be used, if it could not.
     @State private var suggestedRefused: String?
 
@@ -50,6 +51,20 @@ struct SettingsView: View {
                         }
                     } header: {
                         Text("Lists")
+                    }
+                }
+
+                // Global, so not on a list. Whoever may change them differs: with a
+                // server they are the household's vocabulary and the owner's to
+                // change; with none there is no household, so anybody using the app
+                // may. Absent rather than refusing for somebody who may not -- the
+                // service hides the routes from them anyway.
+                if ServerDirectory.isOnDeviceOnly || isOwner {
+                    Section {
+                        Button("Aisles", systemImage: "tag") { managingTags = true }
+                            .accessibilityIdentifier("manage-tags")
+                    } footer: {
+                        Text("The categories items are grouped under.")
                     }
                 }
 
@@ -102,6 +117,9 @@ struct SettingsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+            .sheet(isPresented: $managingTags) {
+                TagsView(cache: cache, api: api, onDeviceOnly: ServerDirectory.isOnDeviceOnly)
             }
             .sheet(isPresented: $managingServer) {
                 ServerPeopleView(api: api)

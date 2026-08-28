@@ -387,3 +387,108 @@ struct RecallTests {
         #expect(cache.history(on: list).count == 1, "it was written twice")
     }
 }
+
+/// The aisles, which belong to no one list.
+///
+/// They are global — one vocabulary for everything — but cached per list, because the
+/// walking order is per list and the two share a table. So an edit has to reach every
+/// list, and these are about that.
+struct TagEditingTests {
+    private func lists(_ cache: Cache) -> [List] {
+        let made = [
+            List(id: 1, uuid: "a", name: "Shop", ownerID: 9, role: .owner),
+            List(id: 2, uuid: "b", name: "Office", ownerID: 9, role: .owner),
+        ]
+        cache.remember(lists: made)
+        for list in made {
+            cache.remember(
+                tags: [
+                    Tag(id: 10, name: "produce", emoji: "🥬", sortOrder: 0),
+                    Tag(id: 40, name: "dairy", emoji: "🧀", sortOrder: 1),
+                ],
+                on: list
+            )
+        }
+        return made
+    }
+
+    @Test("renaming an aisle renames it on every list")
+    func renamingReachesEveryList() {
+        // Renaming it on the list somebody happens to be looking at would leave one id
+        // under two names, and the next screen would disagree with this one.
+        let cache = Cache.inMemory()
+        let made = lists(cache)
+
+        cache.rename(tag: 10, to: "veg", emoji: "🥕")
+
+        for list in made {
+            let found = cache.tags(on: list).first { $0.id == 10 }
+            #expect(found?.name == "veg", "\(list.name) still says produce")
+            #expect(found?.emoji == "🥕")
+        }
+    }
+
+    @Test("renaming leaves each list's own order alone")
+    func renamingKeepsTheOrder() {
+        let cache = Cache.inMemory()
+        let made = lists(cache)
+        // One list walks it the other way round.
+        cache.remember(
+            tags: [
+                Tag(id: 40, name: "dairy", emoji: "🧀", sortOrder: 0),
+                Tag(id: 10, name: "produce", emoji: "🥬", sortOrder: 1),
+            ],
+            on: made[1]
+        )
+
+        cache.rename(tag: 10, to: "veg", emoji: nil)
+
+        #expect(cache.tags(on: made[0]).map(\.id) == [10, 40])
+        #expect(cache.tags(on: made[1]).map(\.id) == [40, 10], "the order was rewritten")
+    }
+
+    @Test("a new aisle appears on every list, at the end of each")
+    func addingReachesEveryList() {
+        let cache = Cache.inMemory()
+        let made = lists(cache)
+
+        let added = cache.addTag(named: "butcher", emoji: "🥩")
+
+        for list in made {
+            let names = cache.tags(on: list).map(\.name)
+            #expect(names.last == "butcher", "\(list.name) did not get it, or not last")
+        }
+        #expect(added.id < 0, "a locally made aisle should carry a placeholder id")
+    }
+
+    @Test("removing an aisle unfiles what was in it")
+    func removingUnfiles() {
+        // Not a nicety: an item carrying the id of an aisle that no longer exists is
+        // filed nowhere the screen can show, and sorts as though it were still first.
+        let cache = Cache.inMemory()
+        let made = lists(cache)
+        cache.remember(
+            items: [
+                Item(id: 1, uuid: "i1", name: "Milk", amount: 1, unitID: nil, doneAt: nil, tagIDs: [40]),
+                Item(id: 2, uuid: "i2", name: "Leeks", amount: 1, unitID: nil, doneAt: nil, tagIDs: [10, 40]),
+            ],
+            on: made[0]
+        )
+
+        cache.removeTag(40)
+
+        #expect(cache.tags(on: made[0]).map(\.id) == [10])
+        #expect(cache.tags(on: made[1]).map(\.id) == [10], "it survived on the other list")
+
+        let items = cache.items(on: made[0])
+        #expect(items.first { $0.uuid == "i1" }?.tagIDs == [])
+        #expect(items.first { $0.uuid == "i2" }?.tagIDs == [10], "the other aisle went too")
+    }
+
+    @Test("the aisles are readable without naming a list")
+    func allTagsIsTheUnion() {
+        let cache = Cache.inMemory()
+        _ = lists(cache)
+        #expect(cache.allTags().map(\.name) == ["produce", "dairy"])
+    }
+}

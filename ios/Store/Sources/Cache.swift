@@ -561,6 +561,91 @@ final class Cache: @unchecked Sendable {
         )
     }
 
+
+    // MARK: - The aisles, which belong to no one list
+
+    /// Every aisle this device knows, in the order the first list walks them.
+    ///
+    /// Tags are global — one vocabulary for everything on a server — but they are
+    /// cached per list, because the *order* is per list and the two share a table.
+    /// So "what aisles are there" is the union, and this reads it off whichever list
+    /// has one.
+    func allTags() -> [Tag] {
+        for list in lists() {
+            let found = tags(on: list)
+            if !found.isEmpty { return found }
+        }
+        return []
+    }
+
+    /// Renames an aisle, or changes its glyph, everywhere.
+    ///
+    /// Every list, because a tag is one thing that happens to be written down once per
+    /// list. Renaming it on the list somebody happens to be looking at would leave the
+    /// same id under two names, and the next screen would disagree with this one.
+    ///
+    /// Each list keeps its own order: this replaces rows in place rather than
+    /// rewriting the sequence.
+    func rename(tag id: Int64, to name: String, emoji: String?) {
+        for list in lists() {
+            let updated = tags(on: list).map { tag in
+                tag.id == id ? Tag(id: id, name: name, emoji: emoji, sortOrder: tag.sortOrder) : tag
+            }
+            remember(tags: updated, on: list)
+        }
+    }
+
+    /// Adds an aisle to every list, at the end of each one's order.
+    ///
+    /// The id is this device's to mint when there is no server, and negative for the
+    /// same reason a locally-made row's is: it is a placeholder, and a server that
+    /// arrives later brings its own vocabulary with its own numbering.
+    func addTag(named name: String, emoji: String?) -> Tag {
+        let id = -Int64(Date().timeIntervalSince1970 * 1000)
+        for list in lists() {
+            let existing = tags(on: list)
+            let made = Tag(
+                id: id,
+                name: name,
+                emoji: emoji,
+                sortOrder: Int64(existing.count)
+            )
+            remember(tags: existing + [made], on: list)
+        }
+        return Tag(id: id, name: name, emoji: emoji, sortOrder: 0)
+    }
+
+    /// Removes an aisle from every list, and unfiles whatever was in it.
+    ///
+    /// The unfiling is not a nicety: an item carrying the id of an aisle that no longer
+    /// exists is filed nowhere the screen can show, and would sort as though it were
+    /// still first. The server cascades exactly this on its side.
+    func removeTag(_ id: Int64) {
+        for list in lists() {
+            remember(tags: tags(on: list).filter { $0.id != id }, on: list)
+
+            let items = items(on: list)
+            let touched = items.filter { $0.tagIDs.contains(id) }
+            guard !touched.isEmpty else { continue }
+
+            remember(
+                items: items.map { item in
+                    guard item.tagIDs.contains(id) else { return item }
+                    return Item(
+                        id: item.id,
+                        uuid: item.uuid,
+                        name: item.name,
+                        amount: item.amount,
+                        unitID: item.unitID,
+                        doneAt: item.doneAt,
+                        tagIDs: item.tagIDs.filter { $0 != id }
+                    )
+                },
+                on: list
+            )
+        }
+    }
+
     /// Everything this person had. Called on sign-out: the next person to sign in on
     /// this device is a different person, and must not be shown somebody else's
     /// shopping.

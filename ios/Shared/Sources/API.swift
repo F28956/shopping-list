@@ -194,6 +194,44 @@ actor API {
 
     // MARK: - Writing
 
+    // MARK: - The aisles
+
+    /// Makes an aisle. Refused unless this person owns the server.
+    ///
+    /// A tag is not one person's — it is the vocabulary every list on the server is
+    /// filed under — which is why it is the owner's to change and nobody else's.
+    func createTag(named name: String, emoji: String?) async throws -> Tag {
+        try Self.decoder.decode(
+            Tag.self,
+            from: try await send("POST", "/api/tags", body(name, emoji))
+        )
+    }
+
+    /// Renames one, or changes its glyph.
+    ///
+    /// A whole replacement rather than a patch: leaving `emoji` out is how somebody
+    /// removes one, and a partial update has no way to say that.
+    func updateTag(_ tag: Tag, named name: String, emoji: String?) async throws -> Tag {
+        try Self.decoder.decode(
+            Tag.self,
+            from: try await send("PATCH", "/api/tags/\(tag.id)", body(name, emoji))
+        )
+    }
+
+    /// Removes one. What was filed under it becomes unfiled, and it leaves everyone's
+    /// walking order — the server cascades both.
+    func deleteTag(_ tag: Tag) async throws {
+        _ = try await send("DELETE", "/api/tags/\(tag.id)", nil)
+    }
+
+    /// An emoji that is absent and one that is empty mean the same thing — no glyph —
+    /// and the model turns one into the other, so either spelling is fine to send.
+    private func body(_ name: String, _ emoji: String?) -> [String: Any] {
+        var fields: [String: Any] = ["name": name]
+        if let emoji, !emoji.isEmpty { fields["emoji"] = emoji }
+        return fields
+    }
+
     // MARK: - Sharing
 
     /// Who this is, so a screen can tell which member is you.
