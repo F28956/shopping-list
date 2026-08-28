@@ -1,0 +1,25 @@
+[package]
+name = "embedded"
+version = "0.1.0"
+edition = "2024"
+
+# The server, on the device.
+#
+# Not a second implementation of it: this links `domain` itself, so a standalone phone
+# and a self-hosted server run the same code over the same schema. See src/lib.rs.
+[lib]
+name = "embedded"
+# `staticlib` for Apple, `cdylib` for Android -- the same pairing quickadd-ffi uses,
+# and for the same reasons. `rlib` as well so the Rust tests can link it.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+domain = { path = "../domain" }
+# `rt` and `sync` only: one current-thread runtime, driven by `block_on` at the FFI
+# boundary. Nothing here starts a server or opens a socket -- the async is sqlx's, and
+# it has to be driven by something.
+tokio = { version = "1.53.1", features = ["rt", "sync", "macros"] }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite", "migrate"] }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["full"] }

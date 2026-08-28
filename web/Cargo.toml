@@ -1,5 +1,5 @@
 [workspace]
-members = ["parsing", "domain", "api", "quickadd-ffi", "web", "server"]
+members = ["parsing", "domain", "api", "quickadd-ffi", "embedded", "web", "server"]
 resolver = "2"
 
 [profile.release]
