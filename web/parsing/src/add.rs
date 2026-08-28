@@ -39,6 +39,9 @@ pub struct Unit {
 /// What this list's history knows about a name.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Remembered {
+    /// The name this is remembered under, as stored. Folded before it is matched, so
+    /// it does not matter whether the caller has folded it already.
+    pub name: String,
     pub unit_id: Option<i64>,
     /// How much of it was last bought.
     ///
@@ -106,6 +109,28 @@ pub fn amount_for(parsed: &quick_add::QuickAdd, remembered: Option<&Remembered>)
         .unwrap_or(parsed.amount)
 }
 
+/// The one key a name is remembered under.
+///
+/// Trimmed and lowercased, so `Milk`, `milk ` and `MILK` are one memory. Shared
+/// because both ends look things up by it and a fold written twice folds differently:
+/// the phone lowercased without trimming, which is the same key for every name anybody
+/// actually types and a different one the moment somebody types a trailing space.
+pub fn fold(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+/// What the history knows about a name, if anything.
+///
+/// **The name is the parsed one, not the line.** That was the bug this exists to stop:
+/// the phone looked up what somebody typed, so `2 kg apples` went looking for a memory
+/// of "2 kg apples" and never found "apples" -- the history it had just been given was
+/// consulted for every bare word and for nothing else. Reading the line is what tells
+/// you the name, so the lookup cannot happen before it.
+pub fn recall<'a>(history: &'a [Remembered], name: &str) -> Option<&'a Remembered> {
+    let wanted = fold(name);
+    history.iter().find(|r| fold(&r.name) == wanted)
+}
+
 /// The row a line naming `name` in `unit_id` lands on, if the list has one.
 ///
 /// Trimmed and case-folded, because somebody typing the same word twice has not named
@@ -123,12 +148,10 @@ pub fn alike<'a>(rows: &'a [Row], name: &str, unit_id: Option<i64>) -> Option<&'
 }
 
 /// The whole of it: read the line, then decide.
-pub fn resolve(
-    line: &str,
-    units: &[Unit],
-    rows: &[Row],
-    remembered: Option<&Remembered>,
-) -> Decision {
+/// `history` is the whole of what the list remembers; the entry for this line is found
+/// here rather than by the caller, because which entry that is depends on reading the
+/// line first — see [`recall`].
+pub fn resolve(line: &str, units: &[Unit], rows: &[Row], history: &[Remembered]) -> Decision {
     let names: Vec<String> = units.iter().map(|u| u.name.clone()).collect();
     let standalone: Vec<String> = units
         .iter()
@@ -136,13 +159,19 @@ pub fn resolve(
         .map(|u| u.name.clone())
         .collect();
     let parsed = quick_add::parse_with(line, &names, &standalone);
+    // After the parse, and it has to be: the name is what the line turned out to mean.
+    let remembered = recall(history, &parsed.name);
     let unit_id = unit_for(parsed.unit.as_deref(), remembered, units);
     let amount = amount_for(&parsed, remembered);
 
     match alike(rows, &parsed.name, unit_id) {
         Some(row) => Decision::Existing { uuid: row.uuid.clone(), put_back: row.done },
         None => Decision::New {
-            name: parsed.name,
+            // Named the way it will be stored. The server capitalises when it writes a
+            // row; a device with no server has nobody to do that for it, so the same
+            // keystrokes gave `milk` on a phone and `Milk` through a server. See
+            // `crate::capitalise`.
+            name: crate::capitalise(&parsed.name),
             amount,
             unit_id,
             tag_ids: remembered.map(|r| r.tag_ids.clone()).unwrap_or_default(),
@@ -173,13 +202,13 @@ mod tests {
 
     #[test]
     fn the_line_outranks_the_memory() {
-        let remembered = Remembered { unit_id: Some(3), amount: None, tag_ids: vec![] };
+        let remembered = Remembered { name: "milk".into(), unit_id: Some(3), amount: None, tag_ids: vec![] };
         assert_eq!(unit_for(Some("kg"), Some(&remembered), &units()), Some(2));
     }
 
     #[test]
     fn the_memory_outranks_the_fallback() {
-        let remembered = Remembered { unit_id: Some(3), amount: None, tag_ids: vec![] };
+        let remembered = Remembered { name: "milk".into(), unit_id: Some(3), amount: None, tag_ids: vec![] };
         assert_eq!(unit_for(None, Some(&remembered), &units()), Some(3));
     }
 
@@ -206,7 +235,7 @@ mod tests {
     fn adding_something_already_on_the_list_changes_nothing() {
         let rows = vec![row("a", "milk", Some(3), false)];
         assert_eq!(
-            resolve("2 pint milk", &units(), &rows, None),
+            resolve("2 pint milk", &units(), &rows, &[]),
             Decision::Existing { uuid: "a".into(), put_back: false },
             "the amount moved, or a second row appeared"
         );
@@ -217,9 +246,9 @@ mod tests {
         // With the history, which is the real path: `milk` was last bought in pints,
         // so the bare word resolves to pints and finds the row.
         let rows = vec![row("a", "milk", Some(3), true)];
-        let remembered = Remembered { unit_id: Some(3), amount: None, tag_ids: vec![] };
+        let remembered = Remembered { name: "milk".into(), unit_id: Some(3), amount: None, tag_ids: vec![] };
         assert_eq!(
-            resolve("milk", &units(), &rows, Some(&remembered)),
+            resolve("milk", &units(), &rows, std::slice::from_ref(&remembered)),
             Decision::Existing { uuid: "a".into(), put_back: true }
         );
     }
@@ -235,18 +264,18 @@ mod tests {
     fn a_bare_name_with_no_memory_does_not_match_a_measured_row() {
         let rows = vec![row("a", "milk", Some(3), false)];
         assert!(matches!(
-            resolve("milk", &units(), &rows, None),
+            resolve("milk", &units(), &rows, &[]),
             Decision::New { unit_id: Some(1), .. }
         ));
     }
 
     #[test]
     fn a_new_line_arrives_filed_where_it_was_filed_last_time() {
-        let remembered = Remembered { unit_id: Some(3), amount: None, tag_ids: vec![7, 9] };
+        let remembered = Remembered { name: "milk".into(), unit_id: Some(3), amount: None, tag_ids: vec![7, 9] };
         assert_eq!(
-            resolve("milk", &units(), &[], Some(&remembered)),
+            resolve("milk", &units(), &[], std::slice::from_ref(&remembered)),
             Decision::New {
-                name: "milk".into(),
+                name: "Milk".into(),
                 amount: 1.0,
                 unit_id: Some(3),
                 tag_ids: vec![7, 9],
@@ -257,9 +286,9 @@ mod tests {
     #[test]
     fn a_bare_name_is_one_of_something_counted() {
         assert_eq!(
-            resolve("bread", &units(), &[], None),
+            resolve("bread", &units(), &[], &[]),
             Decision::New {
-                name: "bread".into(),
+                name: "Bread".into(),
                 amount: 1.0,
                 unit_id: Some(1),
                 tag_ids: vec![],
@@ -269,11 +298,11 @@ mod tests {
 
     #[test]
     fn how_much_you_usually_buy_comes_back() {
-        let remembered = Remembered { unit_id: Some(2), amount: Some(2.0), tag_ids: vec![] };
+        let remembered = Remembered { name: "apples".into(), unit_id: Some(2), amount: Some(2.0), tag_ids: vec![] };
         assert_eq!(
-            resolve("apples", &units(), &[], Some(&remembered)),
+            resolve("apples", &units(), &[], std::slice::from_ref(&remembered)),
             Decision::New {
-                name: "apples".into(),
+                name: "Apples".into(),
                 amount: 2.0,
                 unit_id: Some(2),
                 tag_ids: vec![],
@@ -283,9 +312,9 @@ mod tests {
 
     #[test]
     fn a_number_on_the_line_outranks_what_you_usually_buy() {
-        let remembered = Remembered { unit_id: Some(2), amount: Some(2.0), tag_ids: vec![] };
+        let remembered = Remembered { name: "apples".into(), unit_id: Some(2), amount: Some(2.0), tag_ids: vec![] };
         assert!(matches!(
-            resolve("1 kg apples", &units(), &[], Some(&remembered)),
+            resolve("1 kg apples", &units(), &[], std::slice::from_ref(&remembered)),
             Decision::New { amount, .. } if amount == 1.0
         ));
     }
@@ -293,13 +322,54 @@ mod tests {
     #[test]
     fn a_unit_with_no_number_is_still_a_unit() {
         assert_eq!(
-            resolve("pint milk", &units(), &[], None),
+            resolve("pint milk", &units(), &[], &[]),
             Decision::New {
-                name: "milk".into(),
+                name: "Milk".into(),
                 amount: 1.0,
                 unit_id: Some(3),
                 tag_ids: vec![],
             }
         );
+    }
+
+    #[test]
+    fn a_line_with_a_quantity_still_finds_what_it_names() {
+        // The bug: the caller looked the history up by what somebody *typed*, so this
+        // went looking for a memory of "2 kg apples" and found nothing -- history
+        // applied to bare words and to nothing else. The name is what the line turned
+        // out to mean, so the lookup cannot happen before the parse.
+        let history = vec![Remembered {
+            name: "apples".into(),
+            unit_id: Some(2),
+            amount: Some(5.0),
+            tag_ids: vec![7],
+        }];
+
+        let Decision::New { tag_ids, .. } = resolve("2 kg apples", &units(), &[], &history) else {
+            panic!("expected a new row");
+        };
+        assert_eq!(tag_ids, vec![7], "the aisle it is always filed under was not applied");
+    }
+
+    #[test]
+    fn a_name_is_recalled_however_it_was_spelled() {
+        let history = vec![Remembered {
+            name: "  Milk ".into(),
+            unit_id: Some(3),
+            amount: None,
+            tag_ids: vec![],
+        }];
+        assert!(recall(&history, "MILK").is_some(), "the fold differs by end");
+    }
+
+    #[test]
+    fn a_name_nothing_remembers_recalls_nothing() {
+        let history = vec![Remembered {
+            name: "milk".into(),
+            unit_id: Some(3),
+            amount: None,
+            tag_ids: vec![],
+        }];
+        assert!(recall(&history, "bread").is_none());
     }
 }

@@ -70,7 +70,7 @@ macro_rules! capitalised {
     ($($t:ident),* $(,)?) => {$(
         impl $t {
             pub fn capitalised(self) -> Self {
-                Self($crate::models::capitalise(&self.0))
+                Self($crate::capitalise(&self.0))
             }
         }
     )*};

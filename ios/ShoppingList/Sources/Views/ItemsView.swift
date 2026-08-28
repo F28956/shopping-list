@@ -463,8 +463,15 @@ struct ItemsView: View {
         // server. Written out in Swift instead, these drifted immediately: this screen
         // showed three rows for `milk`, `milk` and `Milk` where a server would have
         // shown one, and nothing was ever going to merge them.
-        let remembered = cache.remembered(typed, on: list)
-        let decision = QuickAdd.resolve(typed, units: units, rows: items, remembered: remembered)
+        // The whole memory. Picking one entry here meant picking it by the typed
+        // line, which found nothing for anything carrying a quantity -- see
+        // `QuickAdd.resolve`.
+        let decision = QuickAdd.resolve(
+            typed,
+            units: units,
+            rows: items,
+            history: cache.history(on: list)
+        )
 
         switch decision {
         case .existing(let uuid, let putBack):

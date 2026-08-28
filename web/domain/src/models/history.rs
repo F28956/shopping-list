@@ -45,7 +45,10 @@ pub struct Entry {
 /// In Rust rather than SQL because SQLite's `lower()` folds ASCII only — the same
 /// reason [`super::unit`] normalises here.
 pub fn key(name: &item::Name) -> String {
-    name.0.trim().to_lowercase()
+    // The clients look entries up by this too -- see `parsing::add::recall`. A fold
+    // written twice folds differently eventually, and this one already had: the phone
+    // lowercased without trimming.
+    parsing::add::fold(&name.0)
 }
 
 impl Entry {

@@ -111,6 +111,7 @@ struct HistoryTests {
         let now = Date()
         let weekly = Cache.Remembered(
             name: "milk",
+            display: "Milk",
             unitID: nil,
             amount: nil,
             tagIDs: [],
@@ -119,6 +120,7 @@ struct HistoryTests {
         )
         let once = Cache.Remembered(
             name: "milk chocolate",
+            display: "Milk chocolate",
             unitID: nil,
             amount: nil,
             tagIDs: [],
@@ -127,13 +129,14 @@ struct HistoryTests {
         )
 
         let offered = QuickAdd.suggest("mil", from: [once, weekly], now: now)
-        #expect(offered.first == "milk", "the staple lost to a one-off: \(offered)")
+        #expect(offered.first == "Milk", "the staple lost to a one-off: \(offered)")
     }
 
     @Test("nothing that does not match is offered")
     func suggestionsAreFiltered() {
         let remembered = Cache.Remembered(
             name: "bread",
+            display: "Bread",
             unitID: nil,
             amount: nil,
             tagIDs: [],
@@ -170,7 +173,7 @@ struct HistoryTests {
             "1 kg apples",
             units: units,
             rows: [],
-            remembered: remembered
+            history: remembered.map { [$0] } ?? []
         ) else {
             Issue.record("expected a new row")
             return
@@ -188,7 +191,7 @@ struct HistoryTests {
             "apples",
             units: [Unit(id: 2, name: "kg")],
             rows: [],
-            remembered: remembered
+            history: remembered.map { [$0] } ?? []
         ) else {
             Issue.record("expected a new row")
             return
@@ -216,12 +219,13 @@ struct BareUnitTests {
             "pint milk",
             units: units,
             rows: [],
-            remembered: nil
+            history: []
         ) else {
             Issue.record("expected a new row")
             return
         }
-        #expect(row.name == "milk")
+        // Capitalised, as the server would store it -- see `parsing::capitalise`.
+        #expect(row.name == "Milk")
         #expect(row.amount == 1)
         #expect(row.unitID == 3)
     }
@@ -232,12 +236,12 @@ struct BareUnitTests {
             "can opener",
             units: units,
             rows: [],
-            remembered: nil
+            history: []
         ) else {
             Issue.record("expected a new row")
             return
         }
-        #expect(row.name == "can opener", "it was read as a quantity")
+        #expect(row.name == "Can opener", "it was read as a quantity")
         #expect(row.unitID == 1, "it should be counted, not measured in cans")
     }
 
@@ -286,9 +290,9 @@ struct CacheCarriesTheInputsTests {
         cache.remember(units: units)
 
         guard case .new(let direct) = QuickAdd.resolve(
-            "pint milk", units: units, rows: [], remembered: nil
+            "pint milk", units: units, rows: [], history: []
         ), case .new(let throughCache) = QuickAdd.resolve(
-            "pint milk", units: cache.units(), rows: [], remembered: nil
+            "pint milk", units: cache.units(), rows: [], history: []
         ) else {
             Issue.record("expected new rows")
             return
@@ -296,7 +300,7 @@ struct CacheCarriesTheInputsTests {
 
         #expect(direct.name == throughCache.name)
         #expect(direct.unitID == throughCache.unitID)
-        #expect(throughCache.name == "milk", "the cache changed what the line means")
+        #expect(throughCache.name == "Milk", "the cache changed what the line means")
         #expect(throughCache.unitID == 3)
     }
 
@@ -327,5 +331,59 @@ struct BundledReferenceTests {
         #expect(pint != nil, "no pint in the bundled units")
         #expect(pint?.bare == true, "the bundle says pint cannot stand alone")
         #expect(Reference.units.first { $0.name == "unit" }?.bare == false)
+    }
+}
+
+/// Looking a name up in the memory.
+struct RecallTests {
+    private let list = List(id: 1, uuid: "list-1", name: "Shop", ownerID: 9, role: .editor)
+
+    private func remembered(_ name: String, unit: Int64?, tags: [Int64]) -> Cache.Remembered {
+        Cache.Remembered(
+            name: name,
+            display: name,
+            unitID: unit,
+            amount: nil,
+            tagIDs: tags,
+            uses: 1,
+            lastUsedAt: 0
+        )
+    }
+
+    @Test("a line with a quantity still finds what it names")
+    func aQuantityDoesNotHideTheName() {
+        // The bug: the history was looked up by what somebody *typed*, so this went
+        // looking for a memory of "2 kg apples" and found nothing. History applied to
+        // bare words and to nothing else, which is why a re-added `2 kg apples` came
+        // back unfiled while a re-added `apples` came back filed.
+        let history = [remembered("apples", unit: 19, tags: [7])]
+
+        guard case .new(let row) = QuickAdd.resolve(
+            "2 kg apples",
+            units: [Unit(id: 19, name: "kg", bare: true)],
+            rows: [],
+            history: history
+        ) else {
+            Issue.record("expected a new row")
+            return
+        }
+        #expect(row.tagIDs == [7], "the aisle it is always filed under was not applied")
+    }
+
+    @Test("a name is written and read under the same key")
+    func theFoldIsOneFold() {
+        // Two folds drifted here: the store lowercased and the lookup lowercased, but
+        // neither trimmed the same way, so a name with a stray space was written under
+        // one key and looked for under another.
+        let cache = Cache.inMemory()
+        cache.remember(
+            Item(id: 1, uuid: "u", name: "  Milk ", amount: 1, unitID: 4, doneAt: nil, tagIDs: []),
+            on: list,
+            isNew: true
+        )
+
+        #expect(cache.remembered("milk", on: list)?.unitID == 4)
+        #expect(cache.remembered("  MILK  ", on: list)?.unitID == 4)
+        #expect(cache.history(on: list).count == 1, "it was written twice")
     }
 }

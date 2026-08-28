@@ -338,6 +338,7 @@ pub async fn quick_add(
         .map(|u| parsing::add::Unit { id: u.id.0, name: u.name.0.clone(), bare: u.bare })
         .collect();
     let held = remembered.as_ref().map(|e| parsing::add::Remembered {
+        name: e.name.0.clone(),
         unit_id: e.unit_id.map(|u| u.0),
         amount: e.amount.map(|a| a.0),
         tag_ids: Vec::new(),

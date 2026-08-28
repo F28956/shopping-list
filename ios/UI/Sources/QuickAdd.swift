@@ -63,7 +63,9 @@ enum QuickAdd {
             now: Int64(now.timeIntervalSince1970),
             candidates: remembered.map {
                 AskSuggestions.Candidate(
-                    name: $0.name,
+                    // The spelling last used, not the folded key -- a suggestion
+                    // arriving lowercase is the key leaking out.
+                    name: $0.display,
                     uses: $0.uses,
                     lastUsedAt: $0.lastUsedAt
                 )
@@ -105,11 +107,16 @@ enum QuickAdd {
     /// a crossed-off row comes back are all rules the server has always had — and
     /// writing them out again here is how a phone came to show three rows where a
     /// server would have shown one. See `parsing::add`.
+    /// `history` is everything this list remembers. Which entry applies is worked out
+    /// on the other side, because it depends on what the line turns out to name — see
+    /// `parsing::add::recall`. Handing over one entry meant choosing it by the typed
+    /// line, so `2 kg apples` looked for a memory of "2 kg apples" and never found
+    /// "apples": history applied to bare words and to nothing else.
     static func resolve(
         _ line: String,
         units: [Unit],
         rows: [Item],
-        remembered: Cache.Remembered?
+        history: [Cache.Remembered]
     ) -> Resolution {
         let ask = Ask(
             line: line,
@@ -117,8 +124,13 @@ enum QuickAdd {
             rows: rows.map {
                 Ask.Row(uuid: $0.uuid, name: $0.name, unitID: $0.unitID, done: $0.isDone)
             },
-            remembered: remembered.map {
-                Ask.Remembered(unitID: $0.unitID, amount: $0.amount, tagIDs: $0.tagIDs)
+            history: history.map {
+                Ask.Remembered(
+                    name: $0.name,
+                    unitID: $0.unitID,
+                    amount: $0.amount,
+                    tagIDs: $0.tagIDs
+                )
             }
         )
 
@@ -151,7 +163,7 @@ enum QuickAdd {
         var line: String
         var units: [Unit]
         var rows: [Row]
-        var remembered: Remembered?
+        var history: [Remembered]
 
         struct Unit: Encodable {
             var id: Int64
@@ -172,12 +184,13 @@ enum QuickAdd {
         }
 
         struct Remembered: Encodable {
+            var name: String
             var unitID: Int64?
             var amount: Double?
             var tagIDs: [Int64]
 
             enum CodingKeys: String, CodingKey {
-                case amount
+                case name, amount
                 case unitID = "unit_id"
                 case tagIDs = "tag_ids"
             }

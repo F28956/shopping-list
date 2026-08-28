@@ -272,7 +272,7 @@ struct Remembered {
 /// {"line": "2 pint milk",
 ///  "units": [{"id": 3, "name": "pint"}],
 ///  "rows": [{"uuid": "abc", "name": "milk", "unit_id": 3, "done": true}],
-///  "remembered": {"unit_id": 3, "tag_ids": [7]}}
+///  "history": [{"name": "milk", "unit_id": 3, "amount": 2.0, "tag_ids": [7]}]}
 /// ```
 ///
 /// answers with one of:
@@ -312,13 +312,21 @@ pub unsafe extern "C" fn quickadd_resolve(input: *const c_char) -> *mut c_char {
                     done: r.done,
                 })
                 .collect();
-            let remembered = asked.remembered.map(|r| parsing::add::Remembered {
-                unit_id: r.unit_id,
-                amount: r.amount,
-                tag_ids: r.tag_ids,
-            });
+            // The whole memory, not one entry. Which entry applies depends on what
+            // the line turns out to name, so the caller cannot know it in advance --
+            // see `parsing::add::recall`.
+            let history: Vec<parsing::add::Remembered> = asked
+                .history
+                .into_iter()
+                .map(|r| parsing::add::Remembered {
+                    name: r.name,
+                    unit_id: r.unit_id,
+                    amount: r.amount,
+                    tag_ids: r.tag_ids,
+                })
+                .collect();
 
-            match parsing::add::resolve(&asked.line, &units, &rows, remembered.as_ref()) {
+            match parsing::add::resolve(&asked.line, &units, &rows, &history) {
                 parsing::add::Decision::Existing { uuid, put_back } => {
                     serde_json::json!({ "existing": { "uuid": uuid, "put_back": put_back } })
                 }
@@ -345,8 +353,10 @@ struct Asked {
     units: Vec<AskedUnit>,
     #[serde(default)]
     rows: Vec<AskedRow>,
+    /// Everything this list remembers. Empty is a list that remembers nothing, which
+    /// is an ordinary state and not a missing field.
     #[serde(default)]
-    remembered: Option<AskedRemembered>,
+    history: Vec<AskedRemembered>,
 }
 
 #[derive(serde::Deserialize)]
@@ -374,6 +384,7 @@ struct AskedRow {
 
 #[derive(serde::Deserialize)]
 struct AskedRemembered {
+    name: String,
     unit_id: Option<i64>,
     #[serde(default)]
     amount: Option<f64>,

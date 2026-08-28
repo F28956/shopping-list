@@ -393,8 +393,15 @@ struct MacItemsView: View {
         // comes back -- all of it is `parsing::add`, compiled in and shared with the
         // server. This screen used to make its own row every time, so typing the same
         // thing twice made two of them and nothing was going to merge them.
-        let remembered = cache.remembered(typed, on: list)
-        let decision = QuickAdd.resolve(typed, units: units, rows: items, remembered: remembered)
+        // The whole memory. Picking one entry here meant picking it by the typed
+        // line, which found nothing for anything carrying a quantity -- see
+        // `QuickAdd.resolve`.
+        let decision = QuickAdd.resolve(
+            typed,
+            units: units,
+            rows: items,
+            history: cache.history(on: list)
+        )
 
         switch decision {
         case .existing(let uuid, let putBack):

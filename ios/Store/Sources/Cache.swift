@@ -213,6 +213,20 @@ final class Cache: @unchecked Sendable {
         // Safe because units are the server's to give, or the bundle's: unlike the
         // aisles beside them in this table, nothing about them is somebody's own
         // choice. The walking order is, which is why only units go.
+        // The spelling last used, beside the key it is stored under.
+        //
+        // The key is folded so `Milk` and `milk ` are one memory, and offering that key
+        // back meant every suggestion arrived lowercase where the server's arrive as
+        // somebody wrote them. Two columns for the same reason the server has two.
+        migrator.registerMigration("v7-history-display") { db in
+            try db.alter(table: "history") { t in
+                t.add(column: "display", .text).notNull().defaults(to: "")
+            }
+            // Backfilled from the key, which is the best that is known: it is what has
+            // been shown all along, and the next use writes the real spelling.
+            try db.execute(sql: "UPDATE history SET display = name WHERE display = ''")
+        }
+
         migrator.registerMigration("v6-reread-units") { db in
             try db.execute(sql: "DELETE FROM reference WHERE kind = 'unit'")
         }
@@ -232,7 +246,10 @@ final class Cache: @unchecked Sendable {
 
     /// One remembered line: what it was called, and what it turned out to be.
     struct Remembered: Equatable {
+        /// The key: trimmed and lowercased, so one habit has one entry.
         var name: String
+        /// The spelling last used, which is what to show back.
+        var display: String
         var unitID: Int64?
         /// How much of it was last bought, if this name has been bought since the
         /// memory learned to hold a number.
@@ -257,7 +274,8 @@ final class Cache: @unchecked Sendable {
                 sql: HistorySQL.remember,
                 arguments: [
                     list.id,
-                    item.name.lowercased(),
+                    foldedName(item.name),
+                    item.name.trimmingCharacters(in: .whitespacesAndNewlines),
                     item.unitID,
                     item.amount,
                     tags,
@@ -276,7 +294,11 @@ final class Cache: @unchecked Sendable {
             try Row.fetchAll(
                 db,
                 sql: "SELECT * FROM history WHERE list_id = ? AND name = ?",
-                arguments: [list.id, name.lowercased()]
+                // Trimmed as well as folded, matching `parsing::add::fold` — the one
+                // key a name is remembered under. Lowercasing alone is the same answer
+                // for every name anybody actually types and a different one the moment
+                // somebody types a trailing space.
+                arguments: [list.id, foldedName(name)]
             ).map(Self.remembered)
         }.first
     }
@@ -313,12 +335,14 @@ final class Cache: @unchecked Sendable {
                 try db.execute(
                     sql: """
                     INSERT INTO history
-                        (list_id, name, unit_id, amount, tag_ids, uses, last_used_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (list_id, name, display, unit_id, amount, tag_ids, uses,
+                         last_used_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     arguments: [
                         list.id,
-                        entry.name.lowercased(),
+                        foldedName(entry.name),
+                        entry.display,
                         entry.unitID,
                         entry.amount,
                         entry.tags.map(String.init).joined(separator: ","),
@@ -335,7 +359,7 @@ final class Cache: @unchecked Sendable {
         write { db in
             try db.execute(
                 sql: "DELETE FROM history WHERE list_id = ? AND name = ?",
-                arguments: [list.id, name.lowercased()]
+                arguments: [list.id, foldedName(name)]
             )
         }
     }
@@ -344,6 +368,7 @@ final class Cache: @unchecked Sendable {
         let tags: String = row["tag_ids"]
         return Remembered(
             name: row["name"],
+            display: row["display"],
             unitID: row["unit_id"],
             amount: row["amount"],
             tagIDs: tags.split(separator: ",").compactMap { Int64($0) },
@@ -635,9 +660,11 @@ private enum HistorySQL {
     /// what the last one learned, while an **edit** that clears them is somebody
     /// saying "not there" and is obeyed.
     static let remember = """
-        INSERT INTO history (list_id, name, unit_id, amount, tag_ids, uses, last_used_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO history
+            (list_id, name, display, unit_id, amount, tag_ids, uses, last_used_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(list_id, name) DO UPDATE SET
+            display = excluded.display,
             unit_id = COALESCE(excluded.unit_id, history.unit_id),
             amount = COALESCE(excluded.amount, history.amount),
             tag_ids = CASE WHEN ? THEN history.tag_ids ELSE excluded.tag_ids END,

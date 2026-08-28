@@ -7,7 +7,7 @@
 pub mod models;
 // Re-exported rather than defined here: both are pure, and living in a crate with no
 // dependencies is what lets the phones compile them. See `parsing`.
-pub use parsing::{fuzzy, history_rank, quick_add};
+pub use parsing::{capitalise, fuzzy, history_rank, quick_add};
 pub mod reference;
 pub mod service;
 

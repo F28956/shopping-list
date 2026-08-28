@@ -368,3 +368,16 @@ struct RememberedEntry: Decodable {
         case lastUsedAt = "last_used_at"
     }
 }
+
+/// The one key a name is remembered under.
+///
+/// Trimmed and lowercased, so `Milk`, `milk ` and `MILK` are one memory.
+///
+/// Mirrors `parsing::add::fold`, and is spelled out here rather than called across the
+/// boundary because the watch links the store without linking the parser. What is
+/// being avoided is not a mirror — it is the *second* mirror: the store folded one way
+/// and the lookup another, so a name with a trailing space was written under one key
+/// and looked for under a different one. One definition, used by both.
+func foldedName(_ name: String) -> String {
+    name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+}
