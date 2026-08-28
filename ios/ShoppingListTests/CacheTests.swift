@@ -127,4 +127,66 @@ struct CacheTests {
         #expect(cache.items(on: list()).isEmpty)
         #expect(cache.tags(on: list()).isEmpty)
     }
+
+    // MARK: - The categories, which belong to no one list
+
+    /// The bug the Mac's settings screen showed: with no lists, the screen for managing
+    /// categories opened empty. `allTags` walked `lists()` and stopped, so a device that
+    /// had not made a list yet answered "there are none" -- on a fresh install, which is
+    /// exactly when somebody goes and looks.
+    @Test func categoriesExistBeforeAnyListDoes() {
+        let cache = Cache.inMemory()
+
+        #expect(!cache.allTags().isEmpty, "a device with no lists has no vocabulary")
+        #expect(
+            cache.allTags().count == Reference.tags.count,
+            "the shipped categories are not what an untouched device answers"
+        )
+    }
+
+    /// It used to return a category it had not stored anywhere.
+    @Test func aCategoryAddedWithNoListsIsKept() {
+        let cache = Cache.inMemory()
+        let before = cache.allTags().count
+
+        let made = cache.addTag(named: "Bakery", emoji: "🥐")
+
+        #expect(cache.allTags().count == before + 1)
+        #expect(cache.allTags().contains { $0.id == made.id && $0.name == "Bakery" })
+    }
+
+    @Test func aCategoryRenamedWithNoListsIsKept() {
+        let cache = Cache.inMemory()
+        let first = cache.allTags()[0]
+
+        cache.rename(tag: first.id, to: "Cheese counter", emoji: "🧀")
+
+        #expect(cache.allTags().first { $0.id == first.id }?.name == "Cheese counter")
+    }
+
+    @Test func aCategoryDeletedWithNoListsStaysDeleted() {
+        let cache = Cache.inMemory()
+        let first = cache.allTags()[0]
+
+        cache.removeTag(first.id)
+
+        #expect(!cache.allTags().contains { $0.id == first.id })
+    }
+
+    /// A list's own order still wins once there is one: the vocabulary is global, the
+    /// order is per list, and the two share a table.
+    @Test func aListsOwnOrderIsWhatIsRead() {
+        let cache = Cache.inMemory()
+        let list = list()
+        cache.remember(lists: [list])
+        cache.remember(
+            tags: [
+                Tag(id: 90, name: "Last", emoji: nil, sortOrder: 0),
+                Tag(id: 91, name: "First", emoji: nil, sortOrder: 1),
+            ],
+            on: list
+        )
+
+        #expect(cache.allTags().map(\.name) == ["Last", "First"])
+    }
 }

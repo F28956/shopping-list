@@ -585,12 +585,37 @@ final class Cache: @unchecked Sendable {
     /// cached per list, because the *order* is per list and the two share a table.
     /// So "what aisles are there" is the union, and this reads it off whichever list
     /// has one.
+    ///
+    /// **With no lists there is still a vocabulary.** This used to iterate `lists()`
+    /// and stop, so a device that had not made a list yet answered "there are no
+    /// categories" — and the settings screen for managing them opened empty on a fresh
+    /// install, which is exactly when somebody would go and look. The twenty-one names
+    /// are not a property of having a list; they are what the app ships with. So the
+    /// rows filed under no list are read next, and the bundled set after that.
     func allTags() -> [Tag] {
         for list in lists() {
             let found = tags(on: list)
             if !found.isEmpty { return found }
         }
-        return []
+
+        let unfiled = reference(kind: Kind.tag, listID: Kind.global).enumerated().map { at, row in
+            Tag(id: row.id, name: row.name, emoji: row.emoji, sortOrder: Int64(at))
+        }
+        return unfiled.isEmpty ? Reference.tags : unfiled
+    }
+
+    /// Where the vocabulary lives when there is no list to hang it on.
+    ///
+    /// Every one of the three functions below wrote to `lists()` and nothing else, so
+    /// on a device with no lists adding a category returned one that was never stored,
+    /// and renaming or deleting did nothing at all. They write here as well, which is
+    /// the same row set `allTags` falls back to.
+    private func rememberGlobally(tags: [Tag]) {
+        replaceReference(
+            kind: Kind.tag,
+            listID: Kind.global,
+            rows: tags.map { (id: $0.id, name: $0.name, emoji: $0.emoji, bare: false) }
+        )
     }
 
     /// Renames an aisle, or changes its glyph, everywhere.
@@ -602,11 +627,18 @@ final class Cache: @unchecked Sendable {
     /// Each list keeps its own order: this replaces rows in place rather than
     /// rewriting the sequence.
     func rename(tag id: Int64, to name: String, emoji: String?) {
-        for list in lists() {
-            let updated = tags(on: list).map { tag in
+        func renamed(_ tags: [Tag]) -> [Tag] {
+            tags.map { tag in
                 tag.id == id ? Tag(id: id, name: name, emoji: emoji, sortOrder: tag.sortOrder) : tag
             }
-            remember(tags: updated, on: list)
+        }
+
+        // The list-less set first, so a device with no lists is not a device where
+        // renaming a category silently does nothing.
+        rememberGlobally(tags: renamed(allTags()))
+
+        for list in lists() {
+            remember(tags: renamed(tags(on: list)), on: list)
         }
     }
 
@@ -627,6 +659,14 @@ final class Cache: @unchecked Sendable {
             )
             remember(tags: existing + [made], on: list)
         }
+
+        // And to the set that belongs to no list, so it survives on a device that has
+        // not made one yet -- where this used to return a category it had not stored.
+        let vocabulary = allTags()
+        rememberGlobally(
+            tags: vocabulary + [Tag(id: id, name: name, emoji: emoji, sortOrder: Int64(vocabulary.count))]
+        )
+
         return Tag(id: id, name: name, emoji: emoji, sortOrder: 0)
     }
 
@@ -636,6 +676,8 @@ final class Cache: @unchecked Sendable {
     /// exists is filed nowhere the screen can show, and would sort as though it were
     /// still first. The server cascades exactly this on its side.
     func removeTag(_ id: Int64) {
+        rememberGlobally(tags: allTags().filter { $0.id != id })
+
         for list in lists() {
             remember(tags: tags(on: list).filter { $0.id != id }, on: list)
 
