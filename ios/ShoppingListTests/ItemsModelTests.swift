@@ -177,4 +177,53 @@ struct ItemsModelTests {
             "the bundled units arrived without knowing which stand alone"
         )
     }
+
+    /// The one that was reported: `dairy` removed in Settings, still on the rows of a
+    /// list that was already open.
+    ///
+    /// Nothing was stale in the database. The screen held a copy taken when it loaded,
+    /// the four functions that change a category never said they had changed anything,
+    /// and the one thing listening re-read the items and not the categories. Three
+    /// independent ways to be wrong about the same fact.
+    @Test("a category removed anywhere leaves the rows of an open list")
+    func removingACategoryReachesAnOpenList() async {
+        let cache = Cache.inMemory()
+        let (model, _, list) = model(cache)
+        cache.remember(
+            tags: [
+                Tag(id: 900, name: "produce", emoji: "🥬", sortOrder: 0),
+                Tag(id: 901, name: "dairy", emoji: "🧀", sortOrder: 1),
+            ],
+            on: list
+        )
+        model.reloadFromCache()
+        #expect(model.tags.map(\.name).contains("dairy"), "the screen never had it to lose")
+
+        // What the Categories screen does, and nothing more. No reload is asked for
+        // here: the point is that the model hears about it by itself.
+        cache.removeTag(901)
+        await Task.yield()
+
+        #expect(
+            !model.tags.map(\.name).contains("dairy"),
+            "a category removed in Settings is still on an open list"
+        )
+    }
+
+    /// Same shape, for a rename: the row should say what the database says.
+    @Test("a category renamed anywhere reaches an open list")
+    func renamingACategoryReachesAnOpenList() async {
+        let cache = Cache.inMemory()
+        let (model, _, list) = model(cache)
+        cache.remember(
+            tags: [Tag(id: 900, name: "dairy", emoji: "🧀", sortOrder: 0)],
+            on: list
+        )
+        model.reloadFromCache()
+
+        cache.rename(tag: 900, to: "cheese counter", emoji: "🧀")
+        await Task.yield()
+
+        #expect(model.tags.first { $0.id == 900 }?.name == "cheese counter")
+    }
 }

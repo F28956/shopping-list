@@ -48,6 +48,14 @@ struct TagsView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("tag.\(tag.name)")
+                        // Removing, for anywhere a swipe is not a gesture. `onDelete`
+                        // below is a swipe and nothing else, so on a Mac there was no
+                        // way to remove a category at all.
+                        .contextMenu {
+                            Button("Remove \(tag.name)", role: .destructive) {
+                                deleting = tag
+                            }
+                        }
                     }
                     .onDelete { offsets in
                         deleting = offsets.first.map { tags[$0] }
@@ -70,16 +78,15 @@ struct TagsView: View {
             }
             .navigationTitle("Categories")
             .compactTitle()
-            .toolbar {
-                // Adding on the left and finishing on the right, as Settings >
-                // Passwords does — see `ServerPeopleView`, which is the same shape.
-                ToolbarItem(placement: .sheetLeading) {
-                    Button("New category", systemImage: "plus") { adding = true }
-                        .accessibilityIdentifier("tag.new")
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
+            // Adding on the left and finishing on the right, as Settings > Passwords
+            // does — and along the bottom on a Mac, where a sheet's toolbar is not
+            // drawn at all. See `sheetActions`.
+            .sheetActions {
+                Button("New category", systemImage: "plus") { adding = true }
+                    .accessibilityIdentifier("tag.new")
+            } finishing: {
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
             }
             .task { load() }
             .sheet(item: $editing) { tag in
@@ -195,19 +202,18 @@ private struct TagEditor: View {
             }
             .navigationTitle(tag == nil ? "New category" : "Category")
             .compactTitle()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+            .sheetActions {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            } confirming: {
+                Button("Save") {
+                    let chosen = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let glyph = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+                    dismiss()
+                    Task { await save(chosen, glyph.isEmpty ? nil : glyph) }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        let chosen = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let glyph = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
-                        dismiss()
-                        Task { await save(chosen, glyph.isEmpty ? nil : glyph) }
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .onAppear {
                 name = tag?.name ?? ""

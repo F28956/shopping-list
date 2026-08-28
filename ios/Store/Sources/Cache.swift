@@ -471,8 +471,6 @@ final class Cache: @unchecked Sendable {
     }
 
     func remember(lists: [List]) {
-        defer { announce() }
-
         // One transaction, because delete-then-insert has a moment where the cache
         // says there are no lists, and a read landing in that moment is the very bug
         // this table exists to prevent.
@@ -585,8 +583,6 @@ final class Cache: @unchecked Sendable {
     }
 
     func remember(items: [Item], on list: List) {
-        defer { announce() }
-
         write { db in
             try db.execute(sql: "DELETE FROM items WHERE list_id = ?", arguments: [list.id])
             for (at, item) in items.enumerated() {
@@ -883,9 +879,22 @@ final class Cache: @unchecked Sendable {
         return (try? queue.read(work)) ?? []
     }
 
+    /// Every write, and every write says so.
+    ///
+    /// The announcement used to be a `defer` at the top of the two functions somebody
+    /// remembered to put it in. Four others had none -- renaming, adding and removing a
+    /// category, and taking a list's categories from the server -- so removing `dairy`
+    /// in Settings left it on screen in every list that was already open. Nothing was
+    /// stale in the database; the screens were simply never told.
+    ///
+    /// That is not a bug to fix four times. A cache whose readers are told about some
+    /// writes is worse than one that is never told, because it looks like it works. So
+    /// the announcement lives at the single point every write goes through, and a
+    /// seventh writer added tomorrow inherits it instead of having to know.
     private func write(_ work: @escaping (Database) throws -> Void) {
         guard let queue else { return }
         try? queue.write(work)
+        announce()
     }
 
     /// Says the cache changed, because it is a database and nothing observes a

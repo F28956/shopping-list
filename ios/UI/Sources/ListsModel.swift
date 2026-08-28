@@ -64,9 +64,41 @@ final class ListsModel {
     /// Guards against a drain and a reload calling each other round in a circle.
     private var draining = false
 
+    /// See ``ItemsModel/watching``: the model notices the cache moved, so that every
+    /// screen built on it does, on both platforms.
+    /// `nonisolated(unsafe)` because `deinit` is not on the main actor and this has to
+    /// be read there to unsubscribe. Safe by construction: it is written once, in
+    /// `init`, and read once, in `deinit` -- there is no moment when two things could
+    /// touch it.
+    nonisolated(unsafe) private var watching: (any NSObjectProtocol)?
+
     init(api: API, cache: Cache = .shared) {
         self.api = api
         self.cache = cache
+
+        watching = NotificationCenter.default.addObserver(
+            forName: .cacheChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadFromCache() }
+        }
+    }
+
+    deinit {
+        if let watching { NotificationCenter.default.removeObserver(watching) }
+    }
+
+    /// Re-reads the lists, because the cache says they changed.
+    ///
+    /// Unguarded by `fresh`, unlike `showWhatWeHave`: this is not a stale read racing a
+    /// fresh one, it is the database saying it has moved since the last answer -- so it
+    /// is the newer of the two by definition.
+    func reloadFromCache() {
+        let remembered = cache.lists()
+        guard !remembered.isEmpty || lists.isEmpty else { return }
+        lists = remembered
+        waiting = cache.outbox.waiting
     }
 
     // MARK: - Reading

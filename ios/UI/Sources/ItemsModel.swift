@@ -87,10 +87,35 @@ final class ItemsModel {
         var id: Int64 { item.id }
     }
 
+    /// The subscription that keeps this screen level with the database.
+    ///
+    /// Here rather than in the views, and that is the point. It was one `.onReceive` in
+    /// `ItemsView` and nowhere else, so the Mac's copy of this screen never heard about
+    /// a change at all and the phone's heard only about items. A model that owns state
+    /// read out of the cache should be the thing that notices the cache moved -- then
+    /// every screen built on it inherits that, including ones written later.
+    /// `nonisolated(unsafe)` because `deinit` is not on the main actor and this has to
+    /// be read there to unsubscribe. Safe by construction: it is written once, in
+    /// `init`, and read once, in `deinit` -- there is no moment when two things could
+    /// touch it.
+    nonisolated(unsafe) private var watching: (any NSObjectProtocol)?
+
     init(list: List, api: API, cache: Cache = .shared) {
         self.list = list
         self.api = api
         self.cache = cache
+
+        watching = NotificationCenter.default.addObserver(
+            forName: .cacheChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadFromCache() }
+        }
+    }
+
+    deinit {
+        if let watching { NotificationCenter.default.removeObserver(watching) }
     }
 
     /// The rows to show, in the order the shop is walked.
@@ -140,10 +165,28 @@ final class ItemsModel {
     /// Safe against the writes this screen makes itself: re-reading is idempotent and
     /// does not write back, so `show` → cache → here → `items` settles in one pass with
     /// nothing to announce.
+    /// Re-reads everything this screen holds, because the cache says it changed.
+    ///
+    /// **Everything**, not just the items. This read the items and nothing else, so a
+    /// category renamed or removed in Settings stayed on the rows of every list that
+    /// was already open -- the database was right and the screen was months behind it,
+    /// for as long as somebody left the list up.
+    ///
+    /// The rule is that what is on screen is a function of what is in the database. Any
+    /// state here that is not re-read on this path is state that can drift, so this
+    /// list should gain a line whenever the model gains a stored property.
     func reloadFromCache() {
         let remembered = cache.items(on: list)
-        guard !remembered.isEmpty || items.isEmpty else { return }
-        items = remembered
+        if !remembered.isEmpty || items.isEmpty {
+            items = remembered
+        }
+
+        let known = cache.units()
+        if !known.isEmpty { units = known }
+
+        let filed = cache.tags(on: list)
+        if !filed.isEmpty { tags = filed }
+
         refreshUnsent()
     }
 

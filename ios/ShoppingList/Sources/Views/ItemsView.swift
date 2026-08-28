@@ -82,9 +82,6 @@ struct ItemsView: View {
         .onChange(of: model.line) { _, typed in
             model.suggest(typed)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .cacheChanged)) { _ in
-            model.reloadFromCache()
-        }
         .navigationTitle(list.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

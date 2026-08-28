@@ -39,6 +39,66 @@ extension View {
         #endif
     }
 
+    /// The two buttons a sheet is driven by: one that adds, one that finishes.
+    ///
+    /// On iOS they go in the navigation bar, adding on the left and finishing on the
+    /// right, as Settings > Passwords does. **On macOS a `.toolbar` inside a
+    /// `NavigationStack` inside a sheet renders nothing at all** -- which is how the
+    /// Categories sheet shipped on the Mac with no way to add a category and no way to
+    /// close it except by guessing that Return would. So there they become a button row
+    /// along the bottom, which is where a Mac sheet puts them anyway.
+    ///
+    /// One definition rather than a `#if` in each screen, for the reason the rest of
+    /// this file exists: a screen shared between the two should differ in one place.
+    func sheetActions<Adding: View, Finishing: View>(
+        @ViewBuilder adding: () -> Adding,
+        @ViewBuilder finishing: () -> Finishing
+    ) -> some View {
+        #if os(macOS)
+            return VStack(spacing: 0) {
+                self
+                Divider()
+                HStack {
+                    adding()
+                    Spacer()
+                    finishing()
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+            }
+        #else
+            return toolbar {
+                ToolbarItem(placement: .topBarLeading) { adding() }
+                ToolbarItem(placement: .confirmationAction) { finishing() }
+            }
+        #endif
+    }
+
+    /// The same, for a sheet that is cancelled rather than added to.
+    func sheetActions<Cancelling: View, Confirming: View>(
+        cancelling: () -> Cancelling,
+        confirming: () -> Confirming
+    ) -> some View {
+        #if os(macOS)
+            return VStack(spacing: 0) {
+                self
+                Divider()
+                HStack {
+                    Spacer()
+                    cancelling()
+                    confirming()
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+            }
+        #else
+            return toolbar {
+                ToolbarItem(placement: .cancellationAction) { cancelling() }
+                ToolbarItem(placement: .confirmationAction) { confirming() }
+            }
+        #endif
+    }
+
     /// A field that expects an email address: the right keyboard, and no capital
     /// letter forced onto the front of it.
     ///

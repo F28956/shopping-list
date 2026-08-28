@@ -32,18 +32,17 @@ struct ServerPeopleView: View {
             }
             .navigationTitle("Who may sign in")
             .compactTitle()
-            .toolbar {
-                // Adding on the left, finishing on the right -- the shape Settings >
-                // Passwords uses, and the one a modal list with an add action wants.
-                // These were the other way round, which put `Done` in the slot that
-                // means cancel.
-                ToolbarItem(placement: .sheetLeading) {
-                    Button("Admit", systemImage: "plus") { admitting = true }
-                        .accessibilityIdentifier("admit")
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
+            // Adding on the left, finishing on the right -- the shape Settings >
+            // Passwords uses, and the one a modal list with an add action wants. These
+            // were the other way round once, which put `Done` in the slot that means
+            // cancel. On a Mac they are a row along the bottom, because a sheet's
+            // toolbar is not drawn there at all -- see `sheetActions`.
+            .sheetActions {
+                Button("Admit", systemImage: "plus") { admitting = true }
+                    .accessibilityIdentifier("admit")
+            } finishing: {
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
             }
             .task { await load() }
             .sheet(isPresented: $admitting) {
@@ -93,6 +92,11 @@ struct ServerPeopleView: View {
                         Button("Withdraw", role: .destructive) { withdrawing = row }
                     }
                     .contextMenu {
+                        // Also here, and not only behind the swipe above: a swipe is an
+                        // iOS gesture, so on a Mac this was the one screen where
+                        // somebody could be admitted and never withdrawn.
+                        Button("Withdraw", role: .destructive) { withdrawing = row }
+                        Divider()
                         // Only somebody who has been here can be made an owner: there
                         // is no person yet to make one of, and the server says so.
                         if row.isInUse {
@@ -186,19 +190,18 @@ private struct AdmitSheet: View {
             }
             .navigationTitle("Admit somebody")
             .compactTitle()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+            .sheetActions {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            } confirming: {
+                Button("Admit") {
+                    let address = email.trimmingCharacters(in: .whitespaces)
+                    let label = note.trimmingCharacters(in: .whitespaces)
+                    dismiss()
+                    Task { await admit(address, label.isEmpty ? nil : label) }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Admit") {
-                        let address = email.trimmingCharacters(in: .whitespaces)
-                        let label = note.trimmingCharacters(in: .whitespaces)
-                        dismiss()
-                        Task { await admit(address, label.isEmpty ? nil : label) }
-                    }
-                    .disabled(email.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(email.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .sheetSize()
