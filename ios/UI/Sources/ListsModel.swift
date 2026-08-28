@@ -26,7 +26,15 @@ import Observation
 @Observable
 final class ListsModel {
 
-    private let api: API
+    /// Shopping, plus the one question about the account: whether this person
+    /// administers the server, which decides whether a screen exists. `Accounts` is
+    /// separate from ``Backend`` because a device with no server has no answer to it --
+    /// see the note there.
+    /// `Destination` as well, because this screen is where the queue is emptied --
+    /// see `sendQueued`. It is a separate protocol from ``Backend`` deliberately: the
+    /// queue's other conformer is the watch's link to its phone, which is not a server
+    /// and does not pretend to be one.
+    private let api: any Backend & Accounts & Destination
     private let cache: Cache
 
     /// Says this person is no longer signed in, and why if there is a reason.
@@ -70,7 +78,7 @@ final class ListsModel {
     /// it. Safe by construction: written once in `init`, read once in `deinit`.
     nonisolated(unsafe) private var watching: Task<Void, Never>?
 
-    init(api: API, cache: Cache = .shared) {
+    init(api: any Backend & Accounts & Destination, cache: Cache = .shared) {
         self.api = api
         self.cache = cache
 

@@ -22,7 +22,11 @@ import Observation
 final class ItemsModel {
     let list: List
 
-    private let api: API
+    /// Narrowed to what this screen actually asks for: shopping, and the queue it
+    /// empties. No accounts and no sharing -- that is the point of the split, see
+    /// ``Backend``. A device with no server can answer every one of these, which is
+    /// what makes a local conformer possible later.
+    private let api: any Backend & Destination
     private let cache: Cache
 
     /// Says this person is no longer signed in, and why if there is a reason.
@@ -107,7 +111,7 @@ final class ItemsModel {
     /// this. Safe by construction: written once in `init`, read once in `deinit`.
     nonisolated(unsafe) private var watching: Task<Void, Never>?
 
-    init(list: List, api: API, cache: Cache = .shared) {
+    init(list: List, api: any Backend & Destination, cache: Cache = .shared) {
         self.list = list
         self.api = api
         self.cache = cache
