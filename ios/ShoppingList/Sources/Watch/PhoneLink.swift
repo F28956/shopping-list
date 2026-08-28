@@ -228,7 +228,13 @@ final class PhoneLink: NSObject, WCSessionDelegate {
         }
 
         Task { @MainActor in
-            let outcomes = await WatchTicks.replay(request.operations)
+            guard let backend = await PhoneLink.shared.backend?() else {
+                // Nothing to apply them to yet. Refusing nothing and answering nothing
+                // leaves them queued on the watch, which is where they should stay.
+                replyHandler([:])
+                return
+            }
+            let outcomes = await WatchTicks.replay(request.operations, through: backend)
             replyHandler(WatchLink.encode(WatchLink.SyncReply(outcomes: outcomes)))
             // The watch's picture is now out of date by exactly the changes it just
             // sent. It has already drawn them, so this is not what makes it look

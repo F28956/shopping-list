@@ -18,15 +18,29 @@ import Foundation
 @MainActor
 enum WatchTicks {
 
-    static func replay(_ operations: [SyncOperation]) async -> [WatchLink.Outcome] {
+    /// Applies what the watch sent, through the phone's own backend.
+    ///
+    /// **Through the backend, not through `Cache.shared`.** This read and wrote the old
+    /// cache, which stopped being the phone's memory the day the device's own server
+    /// took over. On a migrated phone a tick from the wrist was looked up in a store the
+    /// phone no longer reads, applied there, and answered `applied` -- so the watch
+    /// forgot it, believing it had landed, and it never appeared on the phone. A change
+    /// that is acknowledged and then lost is worse than one that fails.
+    static func replay(
+        _ operations: [SyncOperation],
+        through backend: any Backend
+    ) async -> [WatchLink.Outcome] {
         var outcomes: [WatchLink.Outcome] = []
         for operation in operations {
-            outcomes.append(apply(operation))
+            outcomes.append(await apply(operation, through: backend))
         }
         return outcomes
     }
 
-    private static func apply(_ operation: SyncOperation) -> WatchLink.Outcome {
+    private static func apply(
+        _ operation: SyncOperation,
+        through backend: any Backend
+    ) async -> WatchLink.Outcome {
         // Crossing off is the only thing a watch can do, so it is the only thing this
         // accepts. Anything else is refused as invalid rather than kept: a watch that
         // somehow queued it is a watch running a build this one does not understand,
@@ -38,16 +52,18 @@ enum WatchTicks {
             return WatchLink.Outcome(id: operation.id, outcome: "refused", why: "invalid")
         }
 
-        let cache = Cache.shared
-
         // By uuid, because that is the only name the watch has. A list the phone no
         // longer holds is a tick with nowhere to go: `list_gone`, which the drain
-        // forgets rather than retries — the list was deleted while the watch was away,
+        // forgets rather than retries -- the list was deleted while the watch was away,
         // which is an ordinary thing to have happened.
-        guard let list = cache.lists().first(where: { $0.uuid == operation.list }) else {
+        guard let lists = try? await backend.lists().items,
+              let list = lists.first(where: { $0.uuid == operation.list })
+        else {
             return WatchLink.Outcome(id: operation.id, outcome: "refused", why: "list_gone")
         }
-        guard let item = cache.items(on: list).first(where: { $0.uuid == itemUUID }) else {
+        guard let rows = try? await backend.items(on: list).items,
+              let item = rows.first(where: { $0.uuid == itemUUID })
+        else {
             return WatchLink.Outcome(id: operation.id, outcome: "refused", why: "gone")
         }
         guard list.mayEdit else {
@@ -63,19 +79,21 @@ enum WatchTicks {
             return WatchLink.Outcome(id: operation.id, outcome: "already_applied", why: nil)
         }
 
-        // Queued here as well as applied, because this phone may itself have a server
-        // one day: a tick that arrived from the wrist is this household's change and
-        // has to reach anywhere the phone's own ticks reach.
+        // One call, and the backend decides what that means: the device's own server
+        // applies it, a `CachingBackend` writes it down and queues it for the server
+        // this phone talks to. Either way a tick that arrived from the wrist is this
+        // household's change and reaches wherever the phone's own ticks reach.
         //
-        // The watch's clock, not this one. The tick may have been made in a shop an
-        // hour before the two came back into range, and it is the moment somebody
-        // decided that the ordering rules run on — docs/offline.md.
-        cache.outbox.setDone(item, on: list, done: done, at: operation.at)
-
-        let updated = cache.items(on: list).map {
-            $0.uuid == itemUUID ? $0.withDone(done) : $0
+        // What is lost by going through the backend is the watch's own clock: the tick
+        // may have been made in a shop an hour before the two came back into range, and
+        // that is the moment the ordering rules should run on -- docs/offline.md. The
+        // protocol has no `at`, so this records it as now. It is a smaller wrong than
+        // the change vanishing, and it is the reason `setDone` should grow one.
+        do {
+            try await backend.setDone(item, on: list, done: done)
+        } catch {
+            return WatchLink.Outcome(id: operation.id, outcome: "refused", why: "not_allowed")
         }
-        cache.remember(items: updated, on: list)
 
         return WatchLink.Outcome(id: operation.id, outcome: "applied", why: nil)
     }
