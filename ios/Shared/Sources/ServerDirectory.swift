@@ -78,6 +78,7 @@ enum ServerDirectory {
     /// are the same state, and the app already knew how to be in one of them.
     static func onlyThisDevice() {
         UserDefaults.standard.set(onDeviceOnly, forKey: key)
+        Log.info(.app, "this device is on its own now")
         announce()
     }
 
@@ -114,6 +115,10 @@ enum ServerDirectory {
     static func remember(_ address: ServerAddress) -> Bool {
         let changed = current != address
         UserDefaults.standard.set(address.origin, forKey: key)
+        // The address is somebody's hostname, so it is not written down here. Whether it
+        // is a *different* one is the fact that matters, because it is what tells the
+        // caller to throw everything local away.
+        Log.info(.app, "a server was chosen", Detail("different", .flag(changed)))
         announce()
         return changed
     }
@@ -128,6 +133,7 @@ enum ServerDirectory {
         // Emptied rather than removed: removing it would let a build compiled with an
         // address answer with that one — see `choice`.
         UserDefaults.standard.set("", forKey: key)
+        Log.info(.app, "the server was given up")
         announce()
     }
 

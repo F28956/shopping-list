@@ -90,6 +90,17 @@ final class WatchStore: NSObject, WCSessionDelegate {
         }
         let drained = await cache.outbox.drain(through: destination)
         refreshWaiting()
+        Log.info(
+            .queue, "the wrist emptied what it could",
+            Detail("sent", .count(drained.sent)),
+            Detail("waiting", .count(drained.waiting)),
+            Detail("lost", .count(drained.lost.count)),
+            Detail("refused", .flag(drained.refused))
+        )
+        // On the back of a drain rather than on a timer of its own: the watch has just
+        // been in touch with the phone, which is the moment the link is up and the
+        // moment there is something new in the log worth sending.
+        WatchDiagnostics.offer()
         return drained
     }
 
@@ -109,10 +120,24 @@ final class WatchStore: NSObject, WCSessionDelegate {
     // MARK: - What the phone says
 
     private func adopt(_ context: [String: Any]) {
+        // Before the snapshot, and outside the guard below: the two payloads travel in
+        // the same context under different keys and on different versions, so a
+        // snapshot this build cannot read must not also cost the level. See
+        // `WatchLink.diagnostics`.
+        WatchDiagnostics.adopt(context)
+
         guard let snapshot = WatchLink.decode(context, as: WatchLink.Snapshot.self) else {
+            Log.warn(.watch, "the phone sent a snapshot this build cannot read")
             return
         }
         heard = true
+        Log.info(
+            .watch, "adopted the phone's picture",
+            Detail("lists", .count(snapshot.lists.count)),
+            Detail("items", .count(snapshot.lists.reduce(0) { $0 + $1.items.count })),
+            Detail("standalone", .flag(snapshot.onDeviceOnly))
+        )
+        Log.trace(.watch, "the picture is \(snapshot)")
 
         if snapshot.onDeviceOnly {
             mode = .onDevice

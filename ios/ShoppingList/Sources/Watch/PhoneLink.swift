@@ -65,6 +65,16 @@ final class PhoneLink: NSObject, WCSessionDelegate {
             MainActor.assumeIsolated { self?.pushSoon() }
         }
 
+        // How much the watch should write down is decided here, so a change to it has to
+        // reach the wrist the same way the server address does.
+        NotificationCenter.default.addObserver(
+            forName: .diagnosticsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pushNow() }
+        }
+
         // Going away is the last chance to say anything.
         //
         // Every other push is debounced by 300ms, because loading a list writes the
@@ -261,13 +271,37 @@ final class PhoneLink: NSObject, WCSessionDelegate {
         if found != subscribedTo { follow() }
 
         do {
-            try session.updateApplicationContext(WatchLink.encode(snapshot))
+            // Two payloads under two keys, versioned apart -- see `WatchLink.diagnostics`.
+            // Merged rather than sent as a second update: `updateApplicationContext`
+            // replaces the whole dictionary, so a second call would delete the first
+            // one's key and the watch would lose whichever arrived first.
+            var context = WatchLink.encode(snapshot)
+            context.merge(
+                WatchLink.encode(
+                    WatchLink.Diagnostics(level: LogSettings.level.stored),
+                    under: WatchLink.diagnostics
+                ),
+                uniquingKeysWith: { _, new in new }
+            )
+            try session.updateApplicationContext(context)
             lastSent = snapshot
+            Log.info(
+                .watch, "handed the lists over",
+                Detail("lists", .count(snapshot.lists.count)),
+                Detail("items", .count(snapshot.lists.reduce(0) { $0 + $1.items.count })),
+                Detail("truncated", .flag(snapshot.lists.contains(where: \.truncated)))
+            )
+            Metrics.shared.count(Measured.watchSnapshot, Tagged("outcome", .outcome(.ok)))
         } catch {
             // Nothing to do about it and nobody to tell: the watch keeps the last
             // picture it had, which is the correct behaviour for a failed update.
-            // The next change tries again.
-            print("[watch] could not hand over the lists: \(error)")
+            // The next change tries again. Said out loud all the same -- this was a
+            // `print`, which reaches a console nobody debugging in a shop is attached to.
+            Log.warn(
+                .watch, "could not hand the lists over",
+                Detail("why", .failure(Plain.Failure(error)))
+            )
+            Metrics.shared.count(Measured.watchSnapshot, Tagged("outcome", .outcome(.refused)))
         }
     }
 
@@ -387,6 +421,11 @@ final class PhoneLink: NSObject, WCSessionDelegate {
                 replyHandler([:])
                 return
             }
+            Log.info(
+                .watch, "the wrist sent its queue",
+                Detail("operations", .count(request.operations.count)),
+                Detail("inRange", .flag(true))
+            )
             let outcomes = await WatchTicks.replay(request.operations, through: backend)
             replyHandler(WatchLink.encode(WatchLink.SyncReply(outcomes: outcomes)))
             // The watch's picture is now out of date by exactly the changes it just
@@ -413,9 +452,46 @@ final class PhoneLink: NSObject, WCSessionDelegate {
 
         Task { @MainActor in
             guard let backend = await PhoneLink.shared.backend?() else { return }
+            Log.info(
+                .watch, "the wrist sent its queue",
+                Detail("operations", .count(request.operations.count)),
+                Detail("inRange", .flag(false))
+            )
             _ = await WatchTicks.replay(request.operations, through: backend)
             // The watch's picture is now out of date by exactly what it just sent.
             PhoneLink.shared.push()
+        }
+    }
+
+    /// The watch's log, arriving whenever the system got round to it.
+    ///
+    /// Filed straight into this device's log folder under the name it was sent with, so
+    /// `LogArchive` picks it up without knowing the watch exists. Overwritten rather than
+    /// appended: what arrives is the tail of the watch's whole log, so the newer file is
+    /// a superset of the older one except for what has rolled off either end, and
+    /// appending would leave the same lines in twice.
+    nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
+        let manager = FileManager.default
+        let folder = LogFile.shared.folder
+        let name = file.fileURL.lastPathComponent
+        // Only a log, and only a bare name. `didReceive` is the delegate for every file
+        // the watch might ever send, and a destination built from a name that arrived
+        // over the link is a path that must not be able to point at the cache.
+        guard name.hasSuffix(".log"), !name.contains("/") else { return }
+
+        do {
+            try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+            let destination = folder.appendingPathComponent(name)
+            try? manager.removeItem(at: destination)
+            // Moved out of the inbox, which the system empties when this returns.
+            try manager.moveItem(at: file.fileURL, to: destination)
+            let size = (try? manager.attributesOfItem(atPath: destination.path)[.size]) as? Int
+            Log.info(.watch, "took the wrist's log", Detail("bytes", .count(size ?? 0)))
+        } catch {
+            Log.warn(
+                .watch, "could not keep the wrist's log",
+                Detail("why", .failure(Plain.Failure(error)))
+            )
         }
     }
 

@@ -5,6 +5,11 @@ struct ShoppingListApp: App {
     @State private var identity = Identity()
 
     init() {
+        // Before anything else this app does, so that whatever goes wrong at startup has
+        // somewhere to be written down. Nothing below `warn` is written until somebody
+        // turns logging on in Settings -- see `LogBook.level`.
+        Diagnostics.begin()
+
         let identity = Identity()
         _identity = State(initialValue: identity)
 
@@ -125,6 +130,11 @@ struct RootView: View {
 
         self.api = api
         self.backend = backend
+        Log.info(
+            .app, "opened a backend",
+            Detail("standalone", .flag(ServerDirectory.isOnDeviceOnly)),
+            Detail("ownServer", .flag(backend is LocalBackend))
+        )
 
         // The watch is told what *this* holds, so it has to be told by the same thing
         // this reads. It used to read `Cache.shared` directly, which stopped being the

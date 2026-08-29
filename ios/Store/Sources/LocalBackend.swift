@@ -89,8 +89,28 @@ actor LocalBackend {
             return backend
         }
 
-        guard backend.bringAcross(waiting, from: cache) else { return nil }
+        guard backend.bringAcross(waiting, from: cache) else {
+            Log.error(
+                .handover, "the device could not take its cache over",
+                Detail("lists", .count(waiting.count))
+            )
+            Metrics.shared.count(
+                Measured.handover,
+                Tagged("direction", .word("toDevice")),
+                Tagged("outcome", .outcome(.refused))
+            )
+            return nil
+        }
         hasTakenOver = true
+        Log.info(
+            .handover, "the device took its cache over",
+            Detail("lists", .count(waiting.count))
+        )
+        Metrics.shared.count(
+            Measured.handover,
+            Tagged("direction", .word("toDevice")),
+            Tagged("outcome", .outcome(.ok))
+        )
         return backend
     }
 
@@ -129,8 +149,24 @@ actor LocalBackend {
             return true
         }
 
-        guard let backend = LocalBackend() else { return false }
-        guard let taken = backend.everythingHere() else { return false }
+        guard let backend = LocalBackend() else {
+            Log.error(.handover, "the device's database would not open, so nothing was handed to the server")
+            Metrics.shared.count(
+                Measured.handover,
+                Tagged("direction", .word("toServer")),
+                Tagged("outcome", .outcome(.refused))
+            )
+            return false
+        }
+        guard let taken = backend.everythingHere() else {
+            Log.error(.handover, "the device's database would not be read, so nothing was handed to the server")
+            Metrics.shared.count(
+                Measured.handover,
+                Tagged("direction", .word("toServer")),
+                Tagged("outcome", .outcome(.refused))
+            )
+            return false
+        }
 
         // The copy left behind by the takeover goes first. It is the same shopping
         // under different uuids, and queueing both would tell the server about it
@@ -138,6 +174,16 @@ actor LocalBackend {
         cache.forgetLocalLists()
         cache.takeIn(taken)
         hasHandedOver = true
+        Log.info(
+            .handover, "the device handed itself to a server",
+            Detail("lists", .count(taken.count)),
+            Detail("items", .count(taken.reduce(0) { $0 + $1.items.count }))
+        )
+        Metrics.shared.count(
+            Measured.handover,
+            Tagged("direction", .word("toServer")),
+            Tagged("outcome", .outcome(.ok))
+        )
         return true
     }
 

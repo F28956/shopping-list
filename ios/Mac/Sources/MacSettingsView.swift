@@ -125,6 +125,11 @@ struct MacSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            // Last, and below the server: the section somebody opens once, when
+            // something has gone wrong and they have been asked for a log.
+            DiagnosticsSettings()
+                .environment(\.capabilities, current == nil ? .onItsOwn : .withAServer)
         }
         .formStyle(.grouped)
         .frame(width: 460)
