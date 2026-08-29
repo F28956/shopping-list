@@ -17,7 +17,6 @@ use sqlx::{
 use tower::layer::util::Stack;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::{catch_panic::CatchPanicLayer, trace::TraceLayer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use api::jwks::Jwks;
 use api::state::{AppState as ApiState, AuthMode, Provider};
@@ -25,27 +24,20 @@ use domain::service::Ctx;
 use domain::service::admission::Admission;
 use web::sessions::SqliteSessions;
 
+mod logging;
+mod metrics;
 mod tls;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                // `domain` is here because the interesting lines are: sign-in
-                // refused, the server has been claimed, a shared list changed hands,
-                // account closed. Without it a self-hoster reading the log to find out
-                // why somebody cannot get in sees every request and no answer.
-                //
-                // At `info`, not `debug`, because the service layer is on the hot path
-                // and its debug is per-query noise.
-                "server=debug,api=debug,web=debug,domain=info,tower_http=debug,sqlx=warn".into()
-            }),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-
+    // Before the subscriber, because the subscriber is configured from the
+    // environment and `.env` is part of it. This used to run after, which meant
+    // `LOG_LEVEL` in a `.env` file was read too late to have any effect.
     dotenvy::dotenv().ok();
+
+    let logging = logging::Settings::from_env()?;
+    logging.install()?;
+    logging.announce();
 
     let db = open_database().await?;
     domain::MIGRATOR.run(&db).await?;
@@ -81,6 +73,17 @@ async fn main() -> anyhow::Result<()> {
 
     let tls = tls::Settings::from_env()?;
     tls.announce();
+
+    // Read and refused before anything binds, so a metrics port that collides with the
+    // application's is a message about the two ports rather than "address already in
+    // use" from whichever listener lost the race.
+    //
+    // The provider is held until the process ends: dropping an `SdkMeterProvider`
+    // shuts its readers down, so binding this to `_` would produce a server that
+    // exports nothing and says nothing about why.
+    let metrics = metrics::Settings::from_env()?;
+    metrics.announce();
+    let _meters = metrics.install(&db)?;
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", tls.port)).await?;
     let scheme = if tls.mode.serves_tls() { "https" } else { "http" };
@@ -176,6 +179,11 @@ fn housekeeping(ctx: Ctx) {
 /// * `CatchPanicLayer` wraps both, so a panic in one transport is a 500 on the
 ///   request that caused it rather than an outage for the others. That is why
 ///   `panic = "abort"` is deliberately absent from the release profile.
+/// * The metrics middleware sits *inside* `CatchPanicLayer` — applied first, so it is
+///   wrapped by it — because it must see the matched route pattern, and routing has
+///   only happened by the time a `Router::layer` runs. Outside the router it would see
+///   the raw path, and a raw path is the one thing that must never become a label:
+///   `/api/lists/4108/items` would be one time series per list.
 fn app(
     api_state: ApiState,
     web_state: web::AppState,
@@ -189,6 +197,7 @@ fn app(
         .route("/healthz", get(move || async move { format!("ok\ntls: {}\n", tls.line()) }))
         .nest("/api", api::router().with_state(api_state))
         .merge(web::router(web_state, sessions))
+        .layer(axum::middleware::from_fn(observability::record_requests))
         .layer(CatchPanicLayer::new())
         .layer(TraceLayer::new_for_http())
         .layer(security_headers(hsts))

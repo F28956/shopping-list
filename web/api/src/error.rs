@@ -51,7 +51,20 @@ impl IntoResponse for AppError {
             AppError::Http(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         if status == StatusCode::INTERNAL_SERVER_ERROR {
+            // `?self` and not the caller's input. Every variant here is either a unit
+            // or a wrapped library error, and none of them carries a name, an address
+            // or a token -- which is what keeps this line, at `error`, free of
+            // contents. Adding a variant that holds one would break that, so a variant
+            // that needs to carry something a person typed should carry it as an id.
             tracing::error!(error = ?self, "request failed");
+        }
+
+        // Counted here rather than at each door, because there is one place a refusal
+        // becomes a response and several places it can be decided. `bearer`, because
+        // this router authenticates from `Authorization` and nothing else; the web
+        // transport counts its own under `session`.
+        if matches!(&self, AppError::Service(ServiceError::NotAdmitted)) {
+            observability::instruments::admission_refused("bearer");
         }
 
         // A stable slug for the cases where the status alone is ambiguous. Two

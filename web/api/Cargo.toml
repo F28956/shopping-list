@@ -24,6 +24,7 @@ tokio-stream = { version = "0.1.17", features = ["sync"] }
 tower-http = { version = "0.7.0", features = ["trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+observability = { version = "0.1.0", path = "../observability" }
 
 # No [profile.*] here. Cargo only honours profiles at the workspace root, so these
 # were being silently ignored — and printing a warning on every cargo invocation to

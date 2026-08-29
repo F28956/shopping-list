@@ -11,7 +11,8 @@ use axum::{
     routing::{get, post},
 };
 use domain::models::user;
-use domain::service::Ctx;
+use domain::service::{Ctx, ServiceError};
+use observability::instruments::{SignIn, sign_in};
 use openidconnect::{
     AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
     PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
@@ -112,8 +113,18 @@ async fn callback(
             .map(user::Name),
         claims.email().map(|e| user::Email(e.to_string())),
     )
-    .await?;
+    .await
+    .inspect_err(|e| {
+        // Counted where the answer is known. A browser refused here and a phone
+        // refused in `api::routes::sessions` are the same event to whoever runs the
+        // server, so they land on the same counter under the same provider.
+        sign_in("google", match e {
+            ServiceError::NotAdmitted => SignIn::NotAdmitted,
+            _ => SignIn::Rejected,
+        })
+    })?;
     let user = actor.person()?.clone();
+    sign_in("google", SignIn::Issued);
 
     // 6. New session id, then store who they are
     session.cycle_id().await?;

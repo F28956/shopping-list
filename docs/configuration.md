@@ -314,3 +314,157 @@ failure modes, and the address list is the thing that has to exist either way.
 **Whether the address belongs in the same settings screen as the account.** Changing
 the server signs you out; changing the account does not. Putting them together makes
 the destructive one look routine.
+
+---
+
+# Part three · What the server says about itself
+
+**Built.** `LOG_LEVEL`, `LOG_FORMAT` and the `METRICS_*` variables below, in
+`server/src/logging.rs` and `server/src/metrics.rs`.
+
+A self-hosted server has one operator and no on-call rota. What they need is not a
+dashboard: it is an answer to "why is my phone not syncing", available at two in the
+morning, without a second daemon. That is one log they can turn up and one set of
+numbers they can point something at — and both are places this application's data can
+leak, so both are shaped by that first.
+
+## O1 · The level is configurable, and turning it up is a disclosure
+
+`LOG_LEVEL` takes `error`, `warn`, `info`, `debug` or `trace`, or a list of directives
+(`api=debug,domain=info`) for somebody who wants one crate louder than the rest.
+Unset, the server logs exactly what it always did. `RUST_LOG` still works and still
+means what it means; where both are set `LOG_LEVEL` wins, and the server says so at
+startup rather than leaving a stale shell variable to quietly beat the one somebody
+just typed.
+
+`debug` and `trace` may log anything, contents included, and the server says so
+loudly every time it starts under either:
+
+```
+  This log will contain the contents of people's lists.
+  At debug and trace nothing is held back: item names, list names,
+  addresses and invite codes are all written out.
+  Do not ship it anywhere, and delete it when you are done.
+```
+
+## O2 · `info` and above never carry contents, and that is structural
+
+Not a convention anybody has to remember. Contents go through
+`observability::contents!`, which writes the level itself and can only emit on the
+`contents` target; that target has its own layer in the subscriber, switched by one
+boolean — **the same boolean that decides whether the warning above is printed**. So
+there is no configuration in which a log holds somebody's shopping and the process did
+not say at startup that it would, and there is no spelling of `contents!` that emits at
+`info`.
+
+The rest is checked rather than trusted: `server/tests/log_sites.rs` reads every
+`info!`, `warn!` and `error!` in the workspace and fails the build if one carries a
+field or an inline capture that names an item, a list, an address, a token or an invite
+code. Counts, shapes, ids, durations, status codes and outcomes are all fine, and are
+what those lines are for.
+
+There is exactly one exception, and it is written into the test with its reasoning: the
+claim code in `main.rs`. A2 chose a code printed to the log over an environment
+variable precisely because the self-hoster is looking at the log when they need it, and
+putting it behind `LOG_LEVEL=debug` would reintroduce the configuration step that
+choice exists to avoid.
+
+`docs/self-hosting.md` S8 is why any of this matters. The person with root is the user,
+so this is not about protecting people from an operator — it is about the copy of the
+log, which is the copy that gets pasted into an issue, shipped to a hosted log service,
+or left on a disk that gets sold.
+
+## O3 · Structured output, because the log may not stay here
+
+`LOG_FORMAT=json` writes one object per line, flattened, so a self-hoster shipping
+logs to something that parses them does not have to. `text` stays the default: the
+first reader of this log is the person who just started the process, and JSON is worse
+for them.
+
+## O4 · Both kinds of metrics, and the scrape endpoint is not public
+
+`METRICS_MODE` is `off` (default), `pull`, `push` or `both`. Off opens no port and
+exports nothing, because a shopping list for one household does not need to be
+monitored and a default that opened a port would be a default nobody asked for.
+
+**Push** is OTLP over HTTP to a collector, with whatever headers that collector wants
+for authentication — the answer where the server is behind a NAT and nothing can reach
+it. **Pull** is a Prometheus-format endpoint, for the network that already has a
+Prometheus on it. `both` is what somebody has while they are moving from one to the
+other.
+
+The pull endpoint is the part that needed a decision. It says how many lists exist, how
+many people signed in, when the household shops and when it stops — exactly the
+metadata S10 spends its effort not leaking. Three answers were possible:
+
+1. **A route on the application, behind the API's bearer auth.** Refused: that token
+   identifies a *person*, so a monitoring system would hold read access to everybody's
+   lists in exchange for a counter.
+2. **A separate port.** Better — it can be firewalled, and it shares no session layer,
+   no state and no code path with the application.
+3. **A separate bind address.** Better again, because the default can be one nothing on
+   the network can reach.
+
+**Take all of (2) and (3), and add a token for the case they do not cover.** The
+endpoint is its own listener on its own port, bound to `127.0.0.1` unless told
+otherwise, and moving that bind to a real interface is **refused at startup unless
+`METRICS_TOKEN` is set**. So the accident — turning metrics on and forgetting about
+them — is not reachable from the Wi-Fi at all; a scraper on the same host or in a
+sidecar needs no secret; and exposing it deliberately costs one variable. A token
+shorter than sixteen characters is refused too: on an exposed port that is worse than
+none, because it looks like protection on the day somebody decides whether to firewall
+the port.
+
+Everything that cannot work is refused at startup, exactly as `TLS_MODE` is — a
+collector endpoint that is not a URL, a scrape port that collides with the application
+or the redirect listener, a header list that is not `name=value`. A server that comes
+up looking healthy and is silently not exporting, or silently exporting to the whole
+house, is the failure worth spending a startup error on.
+
+## O5 · What is measured, and what must never be a label
+
+HTTP requests by route pattern, method and status, with latency histograms; `/api/sync`
+batch sizes and per-operation outcomes (applied, already applied, refused and why);
+event-stream subscribers currently connected and how long streams last; database
+statement timings by verb and connection-pool health; sign-ins by provider and outcome;
+admissions refused, at the bearer door and the session door; invite redemptions.
+
+Cardinality is the thing to get wrong here, and the mistake is always the same one:
+labelling by what you were looking at. **A label is never a row.** Not a list id, not
+an item uuid, not an address, not a token. Route labels are the *pattern* —
+`/api/lists/{list_id}/items` — because the raw path would be one time series per list,
+and a scrape of it would enumerate every list on the server. A request that matched no
+route is labelled `unmatched` for the same reason: its path is the one an outsider
+chooses.
+
+The mechanism, rather than the rule: every instrument in `observability` is private and
+every caller goes through a function whose signature will not take a row. Database
+timings come from a tracing layer that reads sqlx's own query events, so nothing in
+`domain` had to change — which matters, because `domain` is compiled into phones and
+`observability` must never reach one. `observability/tests/not_on_the_phone.rs` fails
+the build if it does.
+
+## The variables
+
+| Variable | Meaning |
+|---|---|
+| `LOG_LEVEL` | `error`, `warn`, `info`, `debug`, `trace`, or directives such as `api=debug,domain=info`. Unset keeps today's filter. Beats `RUST_LOG` |
+| `LOG_FORMAT` | `text` (default) or `json` |
+| `METRICS_MODE` | `off` (default), `pull`, `push` or `both` |
+| `METRICS_BIND` | scrape listener address. Default `127.0.0.1`; anything else requires `METRICS_TOKEN` |
+| `METRICS_PORT` | scrape listener port. Default `9100`; refused if it collides with `PORT` or `HTTP_REDIRECT_PORT` |
+| `METRICS_TOKEN` | bearer a scraper must present. Optional on loopback, required off it, minimum sixteen characters |
+| `METRICS_OTLP_ENDPOINT` | collector URL, e.g. `https://collector.example.com:4318/v1/metrics`. Required by `push` and `both` |
+| `METRICS_OTLP_HEADERS` | `name=value,name=value` for the collector's authentication. Split on the first `=`, so a base64 token ending in `=` survives |
+| `METRICS_OTLP_INTERVAL_SECONDS` | how often to export. Default `60` |
+
+## Open
+
+**Traces.** The OTLP dependency is already here and spans would fall out of it nearly
+for free. Deliberately not done yet: a span carries its fields into the collector, and
+the contents rule that O2 makes structural for the log has no equivalent there. It
+wants the same treatment before it is switched on, not afterwards.
+
+**Per-list metrics, ever.** No. It is written here so the question has an answer the
+next time somebody wants to know which list is busiest: that is a query for the
+database, not a label on a counter that leaves the machine.

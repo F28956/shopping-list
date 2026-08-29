@@ -192,8 +192,22 @@ async fn sync(
     user: CurrentUser,
     Json(batch): Json<Batch>,
 ) -> Result<Json<Replayed>, AppError> {
-    let operations = batch.operations.into_iter().map(Operation::from).collect();
+    let operations: Vec<Operation> = batch.operations.into_iter().map(Operation::from).collect();
+
+    // Kept because `replay` consumes the batch and the answers do not carry the kind.
+    // The kind is also the only part of an operation safe to put in a metric label:
+    // everything else in one is somebody's shopping.
+    let kinds: Vec<&'static str> = operations.iter().map(|op| op.what.kind()).collect();
+
+    // A queue that will not drain is the hardest thing to diagnose from the outside,
+    // and the counters say only how many were refused and why -- not which row. At
+    // `debug` or `trace`, where the operator has already been told the log will hold
+    // the contents of people's lists, the batch itself is here to be read.
+    observability::contents!(operations = ?operations, "replaying a batch");
+
     let applied = sync::replay(&state.ctx, &user.actor(), operations).await?;
+    observability::instruments::sync_replayed(&kinds, &applied);
+
     Ok(Json(Replayed {
         operations: applied,
     }))

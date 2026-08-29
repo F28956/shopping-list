@@ -60,9 +60,20 @@ impl IntoResponse for AppError {
         };
 
         if status.is_server_error() {
+            // Safe at `error` only because no variant here carries anything a person
+            // typed: `Oidc` holds the provider's own message, `Session` holds the
+            // store's. A variant that held a name or an address would put it in a log
+            // that gets shipped elsewhere -- see `observability`'s module header.
             tracing::error!(error = ?self, "web request failed");
         } else {
             tracing::debug!(error = ?self, "web request rejected");
+        }
+
+        // The other door. `identity::from_session` re-checks admission on every
+        // request, so a withdrawal shows up here on the very next page load -- which
+        // is the property A4 exists for, and this is what makes it visible.
+        if matches!(&self, AppError::Service(ServiceError::NotAdmitted)) {
+            observability::instruments::admission_refused("session");
         }
 
         // Said plainly, because this one is not a fault and asking again will not
