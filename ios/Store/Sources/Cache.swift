@@ -369,7 +369,15 @@ final class Cache: @unchecked Sendable {
             try db.execute(sql: "DELETE FROM reference WHERE kind = 'tag'")
         }
 
-        try? migrator.migrate(queue)
+        // A migration that fails leaves the app running on whatever schema it had:
+        // reads answer `[]`, writes roll back, and the queue in this same file exists
+        // nowhere else -- a device that acknowledges every change on screen and stores
+        // none of them. Loud here for that reason.
+        do {
+            try migrator.migrate(queue)
+        } catch {
+            noted(error, "migrate")
+        }
     }
 
     // MARK: - What this person buys
@@ -1022,12 +1030,25 @@ final class Cache: @unchecked Sendable {
     /// answer, and `nil` where the database could not be reached at all.
     private func readOne<T>(_ work: (Database) throws -> T?) -> T? {
         guard let queue else { return nil }
-        return (try? queue.read(work)) ?? nil
+        do {
+            return try queue.read(work)
+        } catch {
+            noted(error, "read")
+            return nil
+        }
     }
 
     private func read<T>(_ work: (Database) throws -> [T]) -> [T] {
         guard let queue else { return [] }
-        return (try? queue.read(work)) ?? []
+        do {
+            return try queue.read(work)
+        } catch {
+            // The empty answer this returns is the one the whole cache exists to avoid
+            // -- "you have no lists" where the truth is "I could not find out". Worth
+            // hearing about rather than rendering.
+            noted(error, "read")
+            return []
+        }
     }
 
     /// Every write, and every write says so.
@@ -1047,12 +1068,11 @@ final class Cache: @unchecked Sendable {
         do {
             try queue.write(work)
         } catch {
-            // Not fatal -- a cache is a copy, and losing a write to it costs a re-read
-            // rather than somebody's shopping. But `try?` said nothing at all, and a
-            // constraint failure that rolls back a whole snapshot then looks exactly
-            // like a snapshot that had nothing in it. The watch spent days showing an
-            // empty list for that reason, with no error anywhere to find.
-            print("[cache] write failed: \(error)")
+            // A constraint failure rolls back the whole transaction, and the result
+            // then looks exactly like a write that had nothing to do. The watch spent
+            // days showing an empty list for that reason, and `adopt(_: as:)` shipped
+            // never having worked at all.
+            noted(error, "write")
         }
         announce()
     }

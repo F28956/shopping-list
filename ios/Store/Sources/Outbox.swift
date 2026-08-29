@@ -393,27 +393,42 @@ final class Outbox: @unchecked Sendable {
 
     private func rows(sql: String, arguments: StatementArguments) -> [QueuedOperation] {
         guard let queue else { return [] }
-        let found = try? queue.read { db in
-            try Row.fetchAll(db, sql: sql, arguments: arguments).map { row in
-                QueuedOperation(
-                    sequence: row["sequence"],
-                    id: row["id"],
-                    kind: row["kind"],
-                    listID: row["list_id"],
-                    listUUID: row["list_uuid"],
-                    itemID: row["item_id"],
-                    itemUUID: row["item_uuid"],
-                    payload: row["payload"],
-                    at: row["at"]
-                )
+        do {
+            return try queue.read { db in
+                try Row.fetchAll(db, sql: sql, arguments: arguments).map { row in
+                    QueuedOperation(
+                        sequence: row["sequence"],
+                        id: row["id"],
+                        kind: row["kind"],
+                        listID: row["list_id"],
+                        listUUID: row["list_uuid"],
+                        itemID: row["item_id"],
+                        itemUUID: row["item_uuid"],
+                        payload: row["payload"],
+                        at: row["at"]
+                    )
+                }
             }
+        } catch {
+            // An empty queue and an unreadable one are the same answer to every caller
+            // -- the dot goes green, the unsent marks come off, and the drain finds
+            // nothing to send.
+            noted(error, "queue read")
+            return []
         }
-        return found ?? []
     }
 
     private func write(_ work: @escaping (Database) throws -> Void) {
         guard let queue else { return }
-        try? queue.write(work)
+        do {
+            try queue.write(work)
+        } catch {
+            // Louder in intent than the cache's, even though it shares the mechanism:
+            // what is lost here is not a copy of anything. An operation that fails to
+            // queue is a change somebody made that will never reach the server, and
+            // the screen has already drawn it as done.
+            noted(error, "queue write")
+        }
     }
 }
 
