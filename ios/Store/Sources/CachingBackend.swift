@@ -446,7 +446,22 @@ actor CachingBackend {
             }
             let fromHere = Task {
                 guard let stream = cache.observeLists() else { return }
-                for try await _ in stream { continuation.yield() }
+                // **The first value is not a change.** A `ValueObservation` hands over
+                // the current state the moment anybody subscribes, which is what makes
+                // it useful to a screen -- and is a lie to anything waiting to be told
+                // that something moved.
+                //
+                // `PhoneLink.follow` believed it: it rebuilt every subscription on a
+                // change to the set of lists, subscribed again, was told again, and
+                // rebuilt again. Two hundred and ten connections a minute to a single
+                // list's event stream, for as long as the app was open -- and a change
+                // made elsewhere reached the screen only when a reconnect happened to
+                // catch it, which is what "there is a lag" was.
+                var opened = false
+                for try await _ in stream {
+                    defer { opened = true }
+                    if opened { continuation.yield() }
+                }
             }
 
             continuation.onTermination = { _ in

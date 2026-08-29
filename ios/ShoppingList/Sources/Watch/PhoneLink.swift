@@ -140,36 +140,53 @@ final class PhoneLink: NSObject, WCSessionDelegate {
             while !Task.isCancelled {
                 guard let self, let backend = await self.backend?() else { return }
                 let lists = (try? await backend.lists().items) ?? []
+                let watching = Set(lists.map(\.uuid))
 
-                await withTaskGroup(of: Void.self) { group in
-                    for list in lists {
-                        group.addTask { @MainActor in
-                            guard let rows = try? await backend.changes(on: list) else { return }
-                            do {
-                                for try await _ in rows { self.pushSoon() }
-                            } catch {}
-                        }
-                    }
-                    group.addTask { @MainActor in
-                        guard let set = try? await backend.listChanges() else { return }
+                // One task per list plus one for the set, and the *only* thing that ends
+                // the round is the set of lists actually being different. A row moving
+                // pushes and carries on; a stream that fails leaves its own task and
+                // takes nothing else with it.
+                //
+                // This used to end the round whenever any of them returned, and rebuild
+                // everything after a 250ms floor. The set-of-lists stream answers the
+                // instant it is subscribed to -- a `ValueObservation` hands over the
+                // current state, which is not a change -- so it returned immediately,
+                // every time, for ever: two hundred and ten connections a minute to a
+                // single list's event stream, and news from another device arriving only
+                // when a reconnect happened to catch it.
+                let rows = lists.map { list in
+                    Task { @MainActor in
+                        guard let stream = try? await backend.changes(on: list) else { return }
                         do {
-                            for try await _ in set {
-                                self.pushSoon()
-                                // The set moved, so the row subscriptions above are the
-                                // wrong set. Leaving ends the round and rebuilds them.
-                                return
-                            }
+                            for try await _ in stream { self.pushSoon() }
                         } catch {}
                     }
-
-                    // The first child to return ends the round: either the set of lists
-                    // moved, or a stream failed. Either way the subscriptions are stale.
-                    await group.next()
-                    group.cancelAll()
                 }
 
-                // A floor, so a backend whose streams fail immediately cannot spin.
-                try? await Task.sleep(for: .milliseconds(250))
+                let set = Task { @MainActor () -> Bool in
+                    guard let stream = try? await backend.listChanges() else { return false }
+                    do {
+                        for try await _ in stream {
+                            self.pushSoon()
+                            // Only a different *set* needs new subscriptions. A list
+                            // renamed, or one of its rows moving, is news to send and
+                            // nothing to rebuild.
+                            let now = Set(((try? await backend.lists().items) ?? []).map(\.uuid))
+                            if now != watching { return true }
+                        }
+                    } catch {}
+                    return false
+                }
+
+                let changed = await set.value
+                rows.forEach { $0.cancel() }
+                guard changed else {
+                    // The stream ended rather than saying anything. Wait before trying
+                    // again: whatever is wrong is not fixed by asking immediately, and a
+                    // tight loop here is what the last version turned into.
+                    try? await Task.sleep(for: .seconds(10))
+                    continue
+                }
             }
         }
     }

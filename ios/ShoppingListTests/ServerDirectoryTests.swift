@@ -7,6 +7,24 @@ import Testing
 ///
 /// The point of C2 is that the three ways this fails are fixed three different ways, so
 /// the tests are mostly about telling them apart rather than about the happy path.
+/// Serialised, because every one of these reads and writes the same global.
+///
+/// `ServerDirectory` is `UserDefaults`, and swift-testing runs a suite in parallel by
+/// default — so one test setting an address while another asserts there is none is a
+/// race the arrangement invites. This removes that hazard.
+///
+/// **It does not make the suite independent of the machine**, and two of these are
+/// still not: `sayingNothingMeansThisDeviceOnly` and `aBuildSettingIsNotAServerSomebody`
+/// `Chose` remove the key and then assert there is no server, and on a simulator that
+/// has one configured they fail — `removeObject` does not win against the value the
+/// host app's own preferences hold. They pass on a clean device and fail on a used one,
+/// which is not a property a test should have.
+///
+/// The fix is the one `Cache` already had for the same complaint: take the answer as an
+/// argument instead of reading a global. `Cache.inMemory(sending:)` makes a test say
+/// which mode it means; `ServerDirectory` has had no such treatment, and until it does
+/// this comment is the honest description rather than a fix.
+@Suite(.serialized)
 struct ServerDirectoryTests {
     /// Answers with whatever the test set, so the real `URLSession` path runs and only
     /// the wire underneath is replaced.
