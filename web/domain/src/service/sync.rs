@@ -525,7 +525,7 @@ async fn remembered(ctx: &Ctx, operation: &Operation, who: &user::User) -> Resul
         let list = list::List::get(&ctx.db, list::Lookup::Uuid(operation.list.clone()))
             .await
             .ok();
-        return Ok(Seen::Before(Remembered { item: None, list }));
+        return Ok(Seen::Before(Box::new(Remembered { item: None, list })));
     }
 
     let named = match &operation.what {
@@ -538,8 +538,11 @@ async fn remembered(ctx: &Ctx, operation: &Operation, who: &user::User) -> Resul
     };
 
     match named {
-        Some(uuid) => Ok(Seen::Before(Remembered { item: find(ctx, &uuid).await?, list: None })),
-        None => Ok(Seen::Before(Remembered { item: None, list: None })),
+        Some(uuid) => Ok(Seen::Before(Box::new(Remembered {
+            item: find(ctx, &uuid).await?,
+            list: None,
+        }))),
+        None => Ok(Seen::Before(Box::new(Remembered { item: None, list: None }))),
     }
 }
 
@@ -547,8 +550,9 @@ async fn remembered(ctx: &Ctx, operation: &Operation, who: &user::User) -> Resul
 enum Seen {
     /// Never. Carry on and apply it.
     Never,
-    /// By this person, and here is what it produced.
-    Before(Remembered),
+    /// By this person, and here is what it produced. Boxed: a `Remembered` carries
+    /// a whole item and a whole list, and the other two variants carry nothing.
+    Before(Box<Remembered>),
     /// By somebody else. Two people cannot mint the same UUID; one that has been
     /// minted twice is refused rather than applied -- see the table's own comment.
     MintedByAnother,

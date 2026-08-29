@@ -16,6 +16,7 @@
 //! both sides have to agree on for ever.
 
 use std::ffi::{CStr, CString, c_char};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Reads `line` against the unit names in `units_json`, and answers with JSON:
 ///
@@ -44,17 +45,28 @@ pub unsafe extern "C" fn quickadd_parse(
         .and_then(|raw| serde_json::from_str(raw).ok())
         .unwrap_or_default();
 
-    let parsed = parsing::quick_add::parse(line.unwrap_or(""), &units);
+    let line = line.unwrap_or("");
 
-    let answer = serde_json::json!({
-        "name": parsed.name,
-        "amount": parsed.amount,
-        "unit": parsed.unit,
-    });
-
-    // `unwrap` on the CString: the only way it fails is an interior nul, and this
-    // string was just built by a JSON serialiser that escapes them.
-    CString::new(answer.to_string()).unwrap().into_raw()
+    // The documented promise two paragraphs up is that this never returns null and that
+    // input it cannot read comes back as a name with an amount of one. A panic is input
+    // it cannot read: `\u{212A} KELVIN SIGN` where somebody meant a `K` used to slice a
+    // unit through the middle of a character, and an unwind across `extern "C"` is
+    // undefined behaviour rather than a crash somebody could report. That particular
+    // bug is fixed; the guarantee should not depend on my having found all of them.
+    guarded(
+        &serde_json::json!({ "name": line, "amount": 1.0, "unit": serde_json::Value::Null }),
+        || {
+            let parsed = parsing::quick_add::parse(line, &units);
+            let answer = serde_json::json!({
+                "name": parsed.name,
+                "amount": parsed.amount,
+                "unit": parsed.unit,
+            });
+            // `unwrap` on the CString: the only way it fails is an interior nul, and
+            // this string was just built by a JSON serialiser that escapes them.
+            CString::new(answer.to_string()).unwrap().into_raw()
+        },
+    )
 }
 
 /// Hands back what [`quickadd_parse`] returned.
@@ -214,33 +226,48 @@ pub mod android {
 /// pretending the history is empty in some more interesting way.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn quickadd_suggest(input: *const c_char) -> *mut c_char {
-    let parsed: Option<Query> = unsafe { borrow(input) }.and_then(|raw| serde_json::from_str(raw).ok());
+    let parsed: Option<Query> =
+        unsafe { borrow(input) }.and_then(|raw| serde_json::from_str(raw).ok());
 
-    let names = match parsed {
-        None => Vec::new(),
-        // The whole policy is `parsing::suggest` -- which names are candidates, and in
-        // what order. It used to be half here: this filtered by fuzzy score and then
-        // ordered by how often a thing is bought, while the server ordered by how well
-        // it matched and broke ties on use. `mil` offered `milk` on one and `milk
-        // chocolate` on the other.
-        Some(query) => parsing::suggest::offer(
-            &query.query,
-            query
-                .candidates
-                .into_iter()
-                .map(|c| parsing::suggest::Remembered {
-                    name: c.name,
-                    uses: c.uses,
-                    last_used_at: c.last_used_at,
-                })
-                .collect(),
-            query.now,
-        ),
-    };
+    guarded(&serde_json::json!({ "names": [] }), move || {
+        let names = match parsed {
+            None => Vec::new(),
+            // The whole policy is `parsing::suggest` -- which names are candidates, and in
+            // what order. It used to be half here: this filtered by fuzzy score and then
+            // ordered by how often a thing is bought, while the server ordered by how well
+            // it matched and broke ties on use. `mil` offered `milk` on one and `milk
+            // chocolate` on the other.
+            Some(query) => parsing::suggest::offer(
+                &query.query,
+                query
+                    .candidates
+                    .into_iter()
+                    .map(|c| parsing::suggest::Remembered {
+                        name: c.name,
+                        uses: c.uses,
+                        last_used_at: c.last_used_at,
+                    })
+                    .collect(),
+                query.now,
+            ),
+        };
 
-    CString::new(serde_json::json!({ "names": names }).to_string())
-        .unwrap()
-        .into_raw()
+        CString::new(serde_json::json!({ "names": names }).to_string())
+            .unwrap()
+            .into_raw()
+    })
+}
+
+/// Runs `work`, answering with `fallback` if it panics.
+///
+/// Each of these entry points documents that it never returns null and that input it
+/// cannot read gets a harmless answer rather than a special case. A panic is the same
+/// situation arrived at by a different road -- and unlike the server, which has axum's
+/// catch-panic layer in front of it, there is nothing between this and somebody's app.
+/// An unwind across `extern "C"` is undefined behaviour.
+fn guarded(fallback: &serde_json::Value, work: impl FnOnce() -> *mut c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(work))
+        .unwrap_or_else(|_| CString::new(fallback.to_string()).unwrap().into_raw())
 }
 
 #[derive(serde::Deserialize)]
@@ -293,59 +320,77 @@ pub unsafe extern "C" fn quickadd_resolve(input: *const c_char) -> *mut c_char {
     let raw = unsafe { borrow(input) }.unwrap_or("");
     let asked: Option<Asked> = serde_json::from_str(raw).ok();
 
-    let answer = match asked {
-        None => serde_json::json!({
+    // The same fallback the unreadable-input branch below uses, so a panic and a line
+    // this cannot make sense of are one answer rather than two.
+    guarded(
+        &serde_json::json!({
             "new": { "name": "", "amount": 1.0, "unit_id": null, "tag_ids": [] }
         }),
-        Some(asked) => {
-            let units: Vec<parsing::add::Unit> = asked
-                .units
-                .into_iter()
-                .map(|u| parsing::add::Unit { id: u.id, name: u.name, bare: u.bare })
-                .collect();
-            let rows: Vec<parsing::add::Row> = asked
-                .rows
-                .into_iter()
-                .map(|r| parsing::add::Row {
-                    uuid: r.uuid,
-                    name: r.name,
-                    unit_id: r.unit_id,
-                    done: r.done,
-                })
-                .collect();
-            // The whole memory, not one entry. Which entry applies depends on what
-            // the line turns out to name, so the caller cannot know it in advance --
-            // see `parsing::add::recall`.
-            let history: Vec<parsing::add::Remembered> = asked
-                .history
-                .into_iter()
-                .map(|r| parsing::add::Remembered {
-                    name: r.name,
-                    unit_id: r.unit_id,
-                    amount: r.amount,
-                    tag_ids: r.tag_ids,
-                })
-                .collect();
+        move || {
+            let answer = match asked {
+                None => serde_json::json!({
+                    "new": { "name": "", "amount": 1.0, "unit_id": null, "tag_ids": [] }
+                }),
+                Some(asked) => {
+                    let units: Vec<parsing::add::Unit> = asked
+                        .units
+                        .into_iter()
+                        .map(|u| parsing::add::Unit {
+                            id: u.id,
+                            name: u.name,
+                            bare: u.bare,
+                        })
+                        .collect();
+                    let rows: Vec<parsing::add::Row> = asked
+                        .rows
+                        .into_iter()
+                        .map(|r| parsing::add::Row {
+                            uuid: r.uuid,
+                            name: r.name,
+                            unit_id: r.unit_id,
+                            done: r.done,
+                        })
+                        .collect();
+                    // The whole memory, not one entry. Which entry applies depends on what
+                    // the line turns out to name, so the caller cannot know it in advance --
+                    // see `parsing::add::recall`.
+                    let history: Vec<parsing::add::Remembered> = asked
+                        .history
+                        .into_iter()
+                        .map(|r| parsing::add::Remembered {
+                            name: r.name,
+                            unit_id: r.unit_id,
+                            amount: r.amount,
+                            tag_ids: r.tag_ids,
+                        })
+                        .collect();
 
-            match parsing::add::resolve(&asked.line, &units, &rows, &history) {
-                parsing::add::Decision::Existing { uuid, put_back } => {
-                    serde_json::json!({ "existing": { "uuid": uuid, "put_back": put_back } })
-                }
-                parsing::add::Decision::New { name, amount, unit_id, tag_ids } => {
-                    serde_json::json!({
-                        "new": {
-                            "name": name,
-                            "amount": amount,
-                            "unit_id": unit_id,
-                            "tag_ids": tag_ids,
+                    match parsing::add::resolve(&asked.line, &units, &rows, &history) {
+                        parsing::add::Decision::Existing { uuid, put_back } => {
+                            serde_json::json!({ "existing": { "uuid": uuid, "put_back": put_back } })
                         }
-                    })
+                        parsing::add::Decision::New {
+                            name,
+                            amount,
+                            unit_id,
+                            tag_ids,
+                        } => {
+                            serde_json::json!({
+                                "new": {
+                                    "name": name,
+                                    "amount": amount,
+                                    "unit_id": unit_id,
+                                    "tag_ids": tag_ids,
+                                }
+                            })
+                        }
+                    }
                 }
-            }
-        }
-    };
+            };
 
-    CString::new(answer.to_string()).unwrap().into_raw()
+            CString::new(answer.to_string()).unwrap().into_raw()
+        },
+    )
 }
 
 #[derive(serde::Deserialize)]
@@ -391,4 +436,63 @@ struct AskedRemembered {
     amount: Option<f64>,
     #[serde(default)]
     tag_ids: Vec<i64>,
+}
+
+#[cfg(test)]
+mod a_panic_never_crosses_the_boundary {
+    use super::*;
+
+    /// Proof that the net is real, rather than that it compiles.
+    ///
+    /// `guarded` is what every entry point returns through, so panicking inside it is
+    /// the same situation as panicking inside the parser -- without needing a parser
+    /// bug on hand to demonstrate it, which would only work until the bug was fixed.
+    #[test]
+    fn a_panic_becomes_the_documented_fallback() {
+        let fallback = serde_json::json!({ "name": "2 kg apples", "amount": 1.0 });
+        let answer = guarded(&fallback, || panic!("something went wrong deep inside"));
+
+        assert!(!answer.is_null(), "the promise is that this is never null");
+        let read = unsafe { CStr::from_ptr(answer) }.to_str().unwrap().to_string();
+        unsafe { quickadd_free(answer) };
+
+        let parsed: serde_json::Value = serde_json::from_str(&read).unwrap();
+        assert_eq!(parsed["name"], "2 kg apples", "the line was not handed back");
+        assert_eq!(parsed["amount"], 1.0);
+    }
+
+    /// And the ordinary path is untouched: the guard returns what the work returned,
+    /// not a copy of it, so nothing is leaked or double-freed.
+    #[test]
+    fn work_that_does_not_panic_answers_for_itself() {
+        let line = std::ffi::CString::new("2 kg apples").unwrap();
+        let units = std::ffi::CString::new(r#"["kg"]"#).unwrap();
+
+        let answer = unsafe { quickadd_parse(line.as_ptr(), units.as_ptr()) };
+        let read = unsafe { CStr::from_ptr(answer) }.to_str().unwrap().to_string();
+        unsafe { quickadd_free(answer) };
+
+        let parsed: serde_json::Value = serde_json::from_str(&read).unwrap();
+        assert_eq!(parsed["name"], "apples");
+        assert_eq!(parsed["unit"], "kg");
+        assert_eq!(parsed["amount"], 2.0);
+    }
+
+    /// The line that used to abort the host app, through the real entry point.
+    #[test]
+    fn a_kelvin_sign_answers_rather_than_aborting() {
+        let line = std::ffi::CString::new("2 \u{212A}g milk").unwrap();
+        let units = std::ffi::CString::new(r#"["g","kg"]"#).unwrap();
+
+        let answer = unsafe { quickadd_parse(line.as_ptr(), units.as_ptr()) };
+        assert!(!answer.is_null());
+        let read = unsafe { CStr::from_ptr(answer) }.to_str().unwrap().to_string();
+        unsafe { quickadd_free(answer) };
+
+        let parsed: serde_json::Value = serde_json::from_str(&read).unwrap();
+        assert!(
+            parsed["name"].as_str().unwrap().contains("milk"),
+            "the line was lost: {read}"
+        );
+    }
 }

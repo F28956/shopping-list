@@ -253,7 +253,10 @@ fn longest_unit(text: &str, known: &[String]) -> Option<(String, String)> {
         })
     })?;
 
-    Some((unit.clone(), text[unit.len()..].to_string()))
+    // `unit.len()` is a length in the *lowered* string, and lowering is not
+    // length-preserving -- see `lowered_prefix_end`.
+    let end = lowered_prefix_end(text, unit)?;
+    Some((unit.clone(), text[end..].to_string()))
 }
 
 /// The longest known unit that `text` ends with, and what comes before it.
@@ -273,7 +276,56 @@ fn trailing_unit(text: &str, known: &[String]) -> Option<(String, String)> {
         })
     })?;
 
-    Some((unit.clone(), text[..text.len() - unit.len()].to_string()))
+    let start = lowered_suffix_start(text, unit)?;
+    Some((unit.clone(), text[..start].to_string()))
+}
+
+/// Where a prefix that lower-cases to `lowered` ends in the original `text`.
+///
+/// `str::to_lowercase` is not length-preserving: `\u{212A}` KELVIN SIGN is three bytes
+/// and lowers to a one-byte `k`, and `\u{130}` grows instead of shrinking. So a match
+/// found in the lowered string says nothing about where to cut the original -- and both
+/// of these cut the original using the lowered string's byte count. `2 \u{212A}g milk`,
+/// which is what an ordinary "2 Kg milk" becomes after a paste from the wrong place,
+/// sliced through the middle of a character and panicked. The mirror below could
+/// underflow `usize` and ask for a byte index near `2^64` instead.
+///
+/// A panic here is not a crash report on a server -- `catch_unwind` was added to the
+/// FFI boundaries at the same time as this, and before that an unwind across
+/// `extern "C"` was undefined behaviour in every app that links the parser.
+///
+/// So: walk the original, lowering as we go, and report a boundary that actually exists
+/// in it. `None` where the prefix ends inside a character that lowered to several --
+/// there is no such boundary, and refusing to split is the honest answer.
+fn lowered_prefix_end(text: &str, lowered: &str) -> Option<usize> {
+    let mut far = String::with_capacity(lowered.len());
+    for (at, c) in text.char_indices() {
+        far.extend(c.to_lowercase());
+        if far.len() > lowered.len() {
+            return None;
+        }
+        if far == lowered {
+            return Some(at + c.len_utf8());
+        }
+    }
+    None
+}
+
+/// Where a suffix that lower-cases to `lowered` begins in the original `text`.
+///
+/// The mirror of [`lowered_prefix_end`], and the same reasoning.
+fn lowered_suffix_start(text: &str, lowered: &str) -> Option<usize> {
+    let mut far = String::with_capacity(lowered.len());
+    for (at, c) in text.char_indices().rev() {
+        far.insert_str(0, &c.to_lowercase().collect::<String>());
+        if far.len() > lowered.len() {
+            return None;
+        }
+        if far == lowered {
+            return Some(at);
+        }
+    }
+    None
 }
 
 /// The longest unit matching `matches`, compared in lower case.
@@ -485,5 +537,75 @@ mod tests {
         let got = parse_with(input, &all, &bare);
         assert_eq!(got.name, input, "{input:?} was read as a quantity");
         assert_eq!(got.unit, None, "{input:?} was read as a quantity");
+    }
+}
+
+#[cfg(test)]
+mod lowering_is_not_length_preserving {
+    use super::*;
+
+    fn seeded() -> Vec<String> {
+        ["g", "kg", "ml", "litre", "pack", "box", "tin", "m", "cm"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    /// The one that reaches an ordinary person: `\u{212A}` KELVIN SIGN looks exactly
+    /// like a capital K and arrives from a paste. Three bytes in, one byte lowered, so
+    /// the old code cut `2 \u{212A}g milk` through the middle of a character.
+    ///
+    /// It need not parse as a quantity -- what it must not do is panic, and what it
+    /// must not do is lose the line.
+    #[test]
+    fn a_kelvin_sign_where_a_k_was_meant_does_not_panic() {
+        let parsed = parse("2 \u{212A}g milk", &seeded());
+        assert!(
+            parsed.name.contains("milk"),
+            "the line was lost: {:?}",
+            parsed.name
+        );
+    }
+
+    /// The mirror, which could underflow `usize` and ask for a byte index near 2^64.
+    #[test]
+    fn a_trailing_one_does_not_underflow() {
+        let _ = parse("milk 2 \u{212A}g", &seeded());
+        let _ = parse("\u{00DF}", &["\u{1E9E}".to_string()]);
+        let _ = parse("\u{212A}", &["k".to_string()]);
+    }
+
+    /// A character that lower-cases to *more* than itself, which is the other
+    /// direction: `\u{130}` is two bytes and lowers to three.
+    #[test]
+    fn a_character_that_grows_when_lowered_does_not_panic() {
+        let _ = parse("2 \u{130}g milk", &seeded());
+        let _ = parse("\u{130}", &["i".to_string(), "i\u{307}".to_string()]);
+    }
+
+    /// And the boundary is the one in the *original* text, not a byte count taken from
+    /// the lowered copy. `\u{212A}g` is four bytes; `kg` is two.
+    #[test]
+    fn the_boundary_comes_from_the_original() {
+        assert_eq!(lowered_prefix_end("\u{212A}g milk", "kg"), Some(4));
+        assert_eq!(lowered_suffix_start("milk \u{212A}g", "kg"), Some(5));
+        // No boundary exists where one character lowered to several.
+        assert_eq!(lowered_prefix_end("\u{130}x", "i"), None);
+    }
+
+    /// The ordinary case is untouched.
+    #[test]
+    fn plain_ascii_still_splits_where_it_always_did() {
+        let parsed = parse("2 kg apples", &seeded());
+        assert_eq!(parsed.name, "apples");
+        assert_eq!(parsed.unit.as_deref(), Some("kg"));
+
+        let trailing = parse("apples 2 kg", &seeded());
+        assert_eq!(trailing.name, "apples");
+        assert_eq!(trailing.unit.as_deref(), Some("kg"));
+
+        // And capitals, which is the path that lowering exists for.
+        let shouted = parse("2 KG apples", &seeded());
+        assert_eq!(shouted.unit.as_deref(), Some("kg"), "an uppercase unit stopped matching");
     }
 }

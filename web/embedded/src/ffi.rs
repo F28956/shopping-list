@@ -28,6 +28,7 @@
 //! separate `Stopper` that any thread may hold.
 
 use std::ffi::{CStr, CString, c_char};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 
 use crate::{Change, Local, Stopper, Watcher};
@@ -47,10 +48,15 @@ pub unsafe extern "C" fn embedded_open(path: *const c_char) -> *mut Local {
         return std::ptr::null_mut();
     };
 
-    match Local::open(&PathBuf::from(path)) {
-        Ok(local) => Box::into_raw(Box::new(local)),
-        Err(_) => std::ptr::null_mut(),
-    }
+    // Opening runs the migrations, which is the most eventful thing this library does
+    // and the likeliest place to trip an assertion in `domain`. Null is the answer the
+    // caller already handles for a database that will not open.
+    guarded(std::ptr::null_mut(), || {
+        match Local::open(&PathBuf::from(path)) {
+            Ok(local) => Box::into_raw(Box::new(local)),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// Closes a database opened by [`embedded_open`].
@@ -75,10 +81,10 @@ pub unsafe extern "C" fn embedded_close(handle: *mut Local) {
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_me(handle: *const Local) -> i64 {
-    match unsafe { handle.as_ref() } {
-        Some(local) => local.me(),
-        None => 0,
-    }
+    let Some(local) = (unsafe { handle.as_ref() }) else {
+        return 0;
+    };
+    guarded(0, || local.me())
 }
 
 // ------------------------------------------------------------------ lists
@@ -90,7 +96,7 @@ pub unsafe extern "C" fn embedded_me(handle: *const Local) -> i64 {
 /// `handle` must be live. The answer must be given back to [`embedded_free`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_lists(handle: *const Local) -> *mut c_char {
-    answering(handle, |local| local.lists())
+    unsafe { answering(handle, |local| local.lists()) }
 }
 
 /// # Safety
@@ -102,7 +108,7 @@ pub unsafe extern "C" fn embedded_make_list(
     name: *const c_char,
 ) -> *mut c_char {
     let name = unsafe { borrow(name) }.unwrap_or_default().to_string();
-    answering(handle, move |local| local.make_list(&name))
+    unsafe { answering(handle, move |local| local.make_list(&name)) }
 }
 
 /// # Safety
@@ -115,7 +121,7 @@ pub unsafe extern "C" fn embedded_rename_list(
     name: *const c_char,
 ) -> *mut c_char {
     let name = unsafe { borrow(name) }.unwrap_or_default().to_string();
-    answering(handle, move |local| local.rename_list(id, &name))
+    unsafe { answering(handle, move |local| local.rename_list(id, &name)) }
 }
 
 /// # Safety
@@ -123,7 +129,7 @@ pub unsafe extern "C" fn embedded_rename_list(
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_delete_list(handle: *const Local, id: i64) -> *mut c_char {
-    answering(handle, |local| local.delete_list(id))
+    unsafe { answering(handle, |local| local.delete_list(id)) }
 }
 
 // ------------------------------------------------------------------ what is on one
@@ -133,7 +139,7 @@ pub unsafe extern "C" fn embedded_delete_list(handle: *const Local, id: i64) -> 
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_items(handle: *const Local, list_id: i64) -> *mut c_char {
-    answering(handle, |local| local.items(list_id))
+    unsafe { answering(handle, |local| local.items(list_id)) }
 }
 
 /// Adds what somebody typed, read the way the server reads it.
@@ -152,18 +158,19 @@ pub unsafe extern "C" fn embedded_add(
 ) -> *mut c_char {
     let line = unsafe { borrow(line) }.unwrap_or_default().to_string();
     let uuid = unsafe { borrow(uuid) }.map(str::to_string);
-    answering(handle, move |local| local.add(list_id, &line, uuid))
+    unsafe { answering(handle, move |local| local.add(list_id, &line, uuid)) }
 }
 
 /// # Safety
-///
-/// `handle` must be live.
-#[unsafe(no_mangle)]
 /// Crosses something off, or puts it back.
 ///
 /// `at_seconds` is when the tick happened, or zero for now -- a watch's tick may be an
 /// hour old by the time the two devices are in range, and the ordering rules run on when
 /// somebody decided rather than when the news arrived.
+///
+/// # Safety
+///
+/// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_set_done(
     handle: *const Local,
@@ -176,7 +183,7 @@ pub unsafe extern "C" fn embedded_set_done(
     } else {
         Some(at_seconds)
     };
-    answering(handle, move |local| local.set_done(item_id, done, at))
+    unsafe { answering(handle, move |local| local.set_done(item_id, done, at)) }
 }
 
 /// `unit_id` of zero means none, because C has no optional and the units are counted
@@ -195,9 +202,11 @@ pub unsafe extern "C" fn embedded_update_item(
 ) -> *mut c_char {
     let name = unsafe { borrow(name) }.unwrap_or_default().to_string();
     let unit = if unit_id == 0 { None } else { Some(unit_id) };
-    answering(handle, move |local| {
-        local.update(item_id, &name, amount, unit)
-    })
+    unsafe {
+        answering(handle, move |local| {
+            local.update(item_id, &name, amount, unit)
+        })
+    }
 }
 
 /// # Safety
@@ -205,7 +214,7 @@ pub unsafe extern "C" fn embedded_update_item(
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_delete_item(handle: *const Local, item_id: i64) -> *mut c_char {
-    answering(handle, |local| local.delete_item(item_id))
+    unsafe { answering(handle, |local| local.delete_item(item_id)) }
 }
 
 /// # Safety
@@ -213,7 +222,7 @@ pub unsafe extern "C" fn embedded_delete_item(handle: *const Local, item_id: i64
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_clear_done(handle: *const Local, list_id: i64) -> *mut c_char {
-    answering(handle, |local| local.clear_done(list_id))
+    unsafe { answering(handle, |local| local.clear_done(list_id)) }
 }
 
 // ------------------------------------------------------------------ taking over
@@ -238,7 +247,7 @@ pub unsafe extern "C" fn embedded_import(
         Err(why) => return owned(&serde_json::json!({ "error": why.to_string() })),
     };
 
-    answering(handle, move |local| local.import(&everything))
+    unsafe { answering(handle, move |local| local.import(&everything)) }
 }
 
 // --------------------------------------------- what things are called and grouped
@@ -248,7 +257,7 @@ pub unsafe extern "C" fn embedded_import(
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_units(handle: *const Local) -> *mut c_char {
-    answering(handle, |local| local.units())
+    unsafe { answering(handle, |local| local.units()) }
 }
 
 /// The categories in this list's order.
@@ -258,7 +267,7 @@ pub unsafe extern "C" fn embedded_units(handle: *const Local) -> *mut c_char {
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_tags(handle: *const Local, list_id: i64) -> *mut c_char {
-    answering(handle, |local| local.tags(list_id))
+    unsafe { answering(handle, |local| local.tags(list_id)) }
 }
 
 /// # Safety
@@ -266,7 +275,7 @@ pub unsafe extern "C" fn embedded_tags(handle: *const Local, list_id: i64) -> *m
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_tags_on(handle: *const Local, item_id: i64) -> *mut c_char {
-    answering(handle, |local| local.tags_on(item_id))
+    unsafe { answering(handle, |local| local.tags_on(item_id)) }
 }
 
 /// The order, as a JSON array of tag ids: `[5, 3, 9]`.
@@ -286,7 +295,7 @@ pub unsafe extern "C" fn embedded_set_tag_order(
     let ids: Vec<i64> = unsafe { borrow(tag_ids_json) }
         .and_then(|raw| serde_json::from_str(raw).ok())
         .unwrap_or_default();
-    answering(handle, move |local| local.set_tag_order(list_id, &ids))
+    unsafe { answering(handle, move |local| local.set_tag_order(list_id, &ids)) }
 }
 
 /// `emoji` may be null.
@@ -302,7 +311,7 @@ pub unsafe extern "C" fn embedded_create_tag(
 ) -> *mut c_char {
     let name = unsafe { borrow(name) }.unwrap_or_default().to_string();
     let emoji = unsafe { borrow(emoji) }.map(str::to_string);
-    answering(handle, move |local| local.create_tag(&name, emoji))
+    unsafe { answering(handle, move |local| local.create_tag(&name, emoji)) }
 }
 
 /// # Safety
@@ -317,7 +326,7 @@ pub unsafe extern "C" fn embedded_update_tag(
 ) -> *mut c_char {
     let name = unsafe { borrow(name) }.unwrap_or_default().to_string();
     let emoji = unsafe { borrow(emoji) }.map(str::to_string);
-    answering(handle, move |local| local.update_tag(id, &name, emoji))
+    unsafe { answering(handle, move |local| local.update_tag(id, &name, emoji)) }
 }
 
 /// # Safety
@@ -325,7 +334,7 @@ pub unsafe extern "C" fn embedded_update_tag(
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_delete_tag(handle: *const Local, id: i64) -> *mut c_char {
-    answering(handle, |local| local.delete_tag(id))
+    unsafe { answering(handle, |local| local.delete_tag(id)) }
 }
 
 /// # Safety
@@ -337,7 +346,7 @@ pub unsafe extern "C" fn embedded_attach_tag(
     item_id: i64,
     tag_id: i64,
 ) -> *mut c_char {
-    answering(handle, |local| local.attach_tag(item_id, tag_id))
+    unsafe { answering(handle, |local| local.attach_tag(item_id, tag_id)) }
 }
 
 /// # Safety
@@ -349,7 +358,7 @@ pub unsafe extern "C" fn embedded_detach_tag(
     item_id: i64,
     tag_id: i64,
 ) -> *mut c_char {
-    answering(handle, |local| local.detach_tag(item_id, tag_id))
+    unsafe { answering(handle, |local| local.detach_tag(item_id, tag_id)) }
 }
 
 // ------------------------------------------------------------------ what is bought
@@ -359,7 +368,7 @@ pub unsafe extern "C" fn embedded_detach_tag(
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_history(handle: *const Local, list_id: i64) -> *mut c_char {
-    answering(handle, |local| local.history(list_id))
+    unsafe { answering(handle, |local| local.history(list_id)) }
 }
 
 /// `query` may be null or empty, which asks for the most recent rather than a match.
@@ -374,7 +383,7 @@ pub unsafe extern "C" fn embedded_suggestions(
     query: *const c_char,
 ) -> *mut c_char {
     let query = unsafe { borrow(query) }.unwrap_or_default().to_string();
-    answering(handle, move |local| local.suggestions(list_id, &query))
+    unsafe { answering(handle, move |local| local.suggestions(list_id, &query)) }
 }
 
 // ------------------------------------------------------------------ being told
@@ -386,10 +395,14 @@ pub unsafe extern "C" fn embedded_suggestions(
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_watch_list(handle: *const Local, list_id: i64) -> *mut Watcher {
-    match unsafe { handle.as_ref() } {
-        Some(local) => Box::into_raw(Box::new(local.watch_list(list_id))),
-        None => std::ptr::null_mut(),
-    }
+    let Some(local) = (unsafe { handle.as_ref() }) else {
+        return std::ptr::null_mut();
+    };
+    // `watching_runtime` builds a runtime with `expect`, so this one can genuinely
+    // panic rather than only theoretically.
+    guarded(std::ptr::null_mut(), || {
+        Box::into_raw(Box::new(local.watch_list(list_id)))
+    })
 }
 
 /// Starts watching which lists this person can see.
@@ -399,10 +412,12 @@ pub unsafe extern "C" fn embedded_watch_list(handle: *const Local, list_id: i64)
 /// `handle` must be live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn embedded_watch_lists(handle: *const Local) -> *mut Watcher {
-    match unsafe { handle.as_ref() } {
-        Some(local) => Box::into_raw(Box::new(local.watch_lists())),
-        None => std::ptr::null_mut(),
-    }
+    let Some(local) = (unsafe { handle.as_ref() }) else {
+        return std::ptr::null_mut();
+    };
+    guarded(std::ptr::null_mut(), || {
+        Box::into_raw(Box::new(local.watch_lists()))
+    })
 }
 
 /// **Blocks** until there is something to re-read, and answers with what:
@@ -429,11 +444,13 @@ pub unsafe extern "C" fn embedded_next_change(watcher: *mut Watcher) -> *mut c_c
         return std::ptr::null_mut();
     };
 
-    match watcher.wait() {
+    // Null is "the watch has ended", which is what a caller does with a watcher that
+    // has died anyway.
+    guarded(std::ptr::null_mut(), || match watcher.wait() {
         Some(Change::List(id)) => owned(&serde_json::json!({ "list": id })),
         Some(Change::Lists) => owned(&serde_json::json!({ "lists": true })),
         None => std::ptr::null_mut(),
-    }
+    })
 }
 
 /// A handle that ends this watch, usable from any thread. Give it back to
@@ -508,7 +525,11 @@ pub unsafe extern "C" fn embedded_free(answer: *mut c_char) {
 /// Runs something against the database and wraps the outcome in the envelope.
 ///
 /// One place, so every call answers in the same shape and a caller writes one decoder.
-fn answering<T: serde::Serialize>(
+///
+/// # Safety
+///
+/// `handle` must be null or a live `Local` from [`embedded_open`].
+unsafe fn answering<T: serde::Serialize>(
     handle: *const Local,
     work: impl FnOnce(&Local) -> Result<T, crate::Error>,
 ) -> *mut c_char {
@@ -516,10 +537,41 @@ fn answering<T: serde::Serialize>(
         return owned(&serde_json::json!({ "error": "no database" }));
     };
 
-    match work(local) {
-        Ok(answer) => owned(&serde_json::json!({ "ok": answer })),
-        Err(refusal) => owned(&serde_json::json!({ "error": refusal.to_string() })),
+    // The envelope this module promises includes the case nobody plans for. A panic
+    // crossing `extern "C"` is undefined behaviour, not a tidy crash, and every one of
+    // these calls happens inside somebody's shopping list app rather than behind an
+    // HTTP handler with a catch-panic layer in front of it. Unwinding is kept on for
+    // exactly this reason -- see the workspace `[profile.release]`.
+    //
+    // `AssertUnwindSafe` because the answer is an error and the handle is not used
+    // again on this path: nothing observes a half-updated value. The database is
+    // sqlx's to keep consistent, and it does that with transactions rather than with
+    // Rust's unwind safety.
+    match catch_unwind(AssertUnwindSafe(|| work(local))) {
+        Ok(Ok(answer)) => owned(&serde_json::json!({ "ok": answer })),
+        Ok(Err(refusal)) => owned(&serde_json::json!({ "error": refusal.to_string() })),
+        Err(panic) => owned(&serde_json::json!({ "error": describe(&panic) })),
     }
+}
+
+/// Whatever a panic was carrying, as something a person could be shown.
+fn describe(panic: &Box<dyn std::any::Any + Send>) -> String {
+    let said = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("something went wrong inside the database");
+    format!("internal error: {said}")
+}
+
+/// Runs `work`, answering with `fallback` if it panics.
+///
+/// For the handful of entry points that do not go through [`answering`] because they
+/// return a handle or a number rather than an envelope. There is nowhere to put a
+/// message in those, so the fallback is the same "it did not work" the caller already
+/// has to handle -- a null handle, or a zero.
+fn guarded<T>(fallback: T, work: impl FnOnce() -> T) -> T {
+    catch_unwind(AssertUnwindSafe(work)).unwrap_or(fallback)
 }
 
 /// A borrowed `&str` from C, or `None` for null and for bytes that are not UTF-8.
@@ -539,6 +591,59 @@ fn owned(value: &serde_json::Value) -> *mut c_char {
     // `unwrap` on the CString: it fails only on an interior nul, and a JSON serialiser
     // escapes those.
     CString::new(value.to_string()).unwrap().into_raw()
+}
+
+#[cfg(test)]
+mod a_panic_never_crosses_the_boundary {
+    use super::*;
+
+    /// Proof that the net is real rather than that it compiles.
+    ///
+    /// `answering` is what every database call returns through, so a panic inside the
+    /// work is the same situation as a panic inside `domain` -- without needing a bug
+    /// in `domain` on hand to demonstrate it.
+    ///
+    /// The envelope is the point. This module's contract is that every answer is
+    /// `{"ok": …}` or `{"error": …}`, and until now a panic was neither: it unwound
+    /// across `extern "C"`, which is undefined behaviour, in an app with no
+    /// catch-panic layer anywhere near it.
+    #[test]
+    fn a_panic_inside_the_work_becomes_an_error_envelope() {
+        let dir = std::env::temp_dir().join(format!("panic-probe-{}.sqlite", std::process::id()));
+        let local = Local::open(&dir).expect("a fresh database");
+        let handle = Box::into_raw(Box::new(local));
+
+        let answer = unsafe {
+            answering(handle, |_| -> Result<(), crate::Error> {
+                panic!("something went wrong deep inside")
+            })
+        };
+
+        assert!(!answer.is_null());
+        let read = unsafe { CStr::from_ptr(answer) }.to_str().unwrap().to_string();
+        unsafe { embedded_free(answer) };
+        unsafe { embedded_close(handle) };
+        let _ = std::fs::remove_file(&dir);
+
+        let parsed: serde_json::Value = serde_json::from_str(&read).unwrap();
+        assert!(parsed.get("ok").is_none(), "a panic was reported as success");
+        let said = parsed["error"].as_str().expect("no error in the envelope");
+        assert!(
+            said.contains("something went wrong deep inside"),
+            "what went wrong was not carried out: {said}"
+        );
+    }
+
+    /// And `guarded`, which the entry points that return a handle rather than an
+    /// envelope go through -- there is nowhere to put a message in a pointer.
+    #[test]
+    fn a_panic_where_there_is_no_envelope_answers_with_the_fallback() {
+        let answer: *mut c_char = guarded(std::ptr::null_mut(), || panic!("no runtime"));
+        assert!(answer.is_null(), "a panic produced a pointer to something");
+
+        let fine: i64 = guarded(0, || 7);
+        assert_eq!(fine, 7, "the ordinary path stopped answering for itself");
+    }
 }
 
 #[cfg(test)]
