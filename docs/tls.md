@@ -302,6 +302,55 @@ Install one explicitly in `main`, before anything else —
 `rustls::crypto::aws_lc_rs::default_provider().install_default()` — and pin `reqwest`
 to the same backend. It is one line, and finding it the other way costs an afternoon.
 
+## Running it locally, with certificates the apps will trust
+
+Mode `acme` cannot help here: it needs an inbound packet on 443 or 80 for a name that
+resolves, and it refuses an IP address outright. So a development machine uses mode
+`files`, and the only real work is making the clients trust what it serves.
+
+```bash
+mkcert -install                      # once: puts the CA in the System keychain
+mkdir -p ~/.config/shopping-list/tls && cd ~/.config/shopping-list/tls
+mkcert -cert-file cert.pem -key-file key.pem localhost 127.0.0.1 ::1
+chmod 600 key.pem
+```
+
+Simulators have their own trust store and do not inherit the Mac's:
+
+```bash
+xcrun simctl keychain <device-udid> add-root-cert "$(mkcert -CAROOT)/rootCA.pem"
+```
+
+Then:
+
+```bash
+TLS_MODE=files \
+  TLS_CERT="$HOME/.config/shopping-list/tls/cert.pem" \
+  TLS_KEY="$HOME/.config/shopping-list/tls/key.pem" \
+  PORT=8443 HTTP_REDIRECT_PORT=8080 \
+  ./target/debug/server
+```
+
+`PORT` stays 8080 by default even under TLS, and `HTTP_REDIRECT_PORT` defaults to 80 —
+which a process cannot bind without help, so both are set here. The key lives outside
+the repository on purpose: a private key inside a working tree is one `git add -A` away
+from being permanent.
+
+Two things that are only obvious once it is running:
+
+**The redirect does not carry a client through.** `http://…/` answers 308 to the
+`https://` origin, and `URLSession` drops the `Authorization` header across a change of
+scheme — so an app still pointed at the old `http://` address does not fail loudly, it
+gets a 401 on every request and reports itself as signed out. Point the clients at the
+`https://` origin rather than relying on the redirect; the redirect is for browsers and
+for people typing the address.
+
+**Changing the origin signs every device out**, by design. A token is stored beside the
+server it was issued for, and `https://host:8443` is not `http://host:8080` — see
+`WatchIdentity.cachedServer` for the rule and why it is worth the nuisance. Expect to
+sign in again on each device after turning TLS on, and expect the watch to ask its
+phone for a new credential.
+
 ## Open
 
 **DNS-01, and the server nobody can reach.** The mode above needs an inbound packet on
