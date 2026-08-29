@@ -740,3 +740,135 @@ async fn a_walking_order_naming_nothing_is_invalid(#[future(awt)] pool: SqlitePo
 
     assert_eq!(answers[0].outcome, Outcome::Refused { why: Refusal::Invalid });
 }
+
+// MARK: - What the two `sync` authorization fixes mean for a shared list
+//
+// Both fixes turn on identity -- a resend belongs to its sender, a `MakeList` belongs
+// to the list's owner -- and a shared list is where "belongs to" stops being obvious.
+// A rule that reads correctly for one person and quietly refuses an editor is a worse
+// bug than the one it replaced, so these say what happens.
+
+/// An editor is not the owner, so a `MakeList` naming a list they were *invited* to is
+/// refused — and that is right, because their device never made it and would never
+/// queue this. What matters is that refusing it does not take the rest of the batch
+/// down with it.
+///
+/// `replay` is in order and never skips, and every other operation names its list by
+/// uuid and is checked on its own. So Ben's real work lands whether or not the
+/// redundant `MakeList` in front of it does.
+#[rstest]
+#[tokio::test]
+async fn a_refused_make_list_does_not_block_the_batch_behind_it(
+    #[future(awt)] pool: SqlitePool,
+) {
+    let t = two(pool).await;
+
+    let answers = sync::replay(
+        &t.ctx,
+        &t.ben,
+        vec![
+            t.op("make", What::MakeList { name: list::Name("Home".into()) }),
+            t.op(
+                "add",
+                What::Add {
+                    item: item::Uuid::mint(),
+                    line: None,
+                    name: Some(Name("Bread".into())),
+                    amount: Amount(1.0),
+                    unit: None,
+                },
+            ),
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        answers[0].outcome,
+        Outcome::Refused { why: Refusal::ListGone },
+        "an editor was handed the owner's list back"
+    );
+    assert!(
+        matches!(answers[1].outcome, Outcome::Applied { .. }),
+        "a refused MakeList took the editor's real work with it: {:?}",
+        answers[1].outcome
+    );
+    assert!(
+        t.rows().await.iter().any(|row| row.name == Name("Bread".into())),
+        "the row never reached the list"
+    );
+}
+
+/// The owner's own resend still finds the list, on a list that happens to be shared.
+///
+/// Sharing must not change what idempotency means for the person who made it.
+#[rstest]
+#[tokio::test]
+async fn the_owner_can_still_remake_a_list_they_have_shared(#[future(awt)] pool: SqlitePool) {
+    let t = two(pool).await;
+
+    let answers = sync::replay(
+        &t.ctx,
+        &t.anna,
+        vec![t.op("remake", What::MakeList { name: list::Name("Home".into()) })],
+    )
+    .await
+    .unwrap();
+
+    let Outcome::Applied { list: Some(found), .. } = &answers[0].outcome else {
+        panic!("the owner could not remake her own shared list: {:?}", answers[0].outcome);
+    };
+    assert_eq!(found.id, t.list.id, "a second list was made beside the shared one");
+}
+
+/// A resend belongs to whoever sent it, and on a shared list both people are sending.
+///
+/// Ben's own operation, resent by Ben, is still the no-op it was before the scoping --
+/// the fix must not have made "somebody else's id" out of "the other person on my
+/// list".
+#[rstest]
+#[tokio::test]
+async fn an_editors_own_resend_is_still_a_no_op(#[future(awt)] pool: SqlitePool) {
+    let t = two(pool).await;
+    let bread = t.add("Bread").await;
+
+    let tick = t.op("bens-tick", What::SetDone { item: bread.uuid.clone(), done: true });
+
+    let first = sync::replay(&t.ctx, &t.ben, vec![tick.clone()]).await.unwrap();
+    assert!(
+        matches!(first[0].outcome, Outcome::Applied { .. }),
+        "an editor could not cross something off: {:?}",
+        first[0].outcome
+    );
+
+    let again = sync::replay(&t.ctx, &t.ben, vec![tick]).await.unwrap();
+    let Outcome::AlreadyApplied { item: Some(row), .. } = &again[0].outcome else {
+        panic!("an editor's resend stopped being a resend: {:?}", again[0].outcome);
+    };
+    assert_eq!(row.uuid, bread.uuid, "the wrong row came back");
+    assert!(row.done_at.is_some(), "it came back as though the tick had not happened");
+}
+
+/// And the two people on one list do not share a memory of what has been applied.
+///
+/// Anna resending *Ben's* id is not Anna resending anything; it is an id that is
+/// already spoken for. Refused rather than answered, so it can never become a way to
+/// read a row through somebody else's operation.
+#[rstest]
+#[tokio::test]
+async fn one_persons_resend_is_not_the_others(#[future(awt)] pool: SqlitePool) {
+    let t = two(pool).await;
+    let bread = t.add("Bread").await;
+
+    let bens = t.op("shared-id", What::SetDone { item: bread.uuid.clone(), done: true });
+    sync::replay(&t.ctx, &t.ben, vec![bens]).await.unwrap();
+
+    let annas = t.op("shared-id", What::SetDone { item: bread.uuid.clone(), done: false });
+    let answers = sync::replay(&t.ctx, &t.anna, vec![annas]).await.unwrap();
+
+    assert_eq!(
+        answers[0].outcome,
+        Outcome::Refused { why: Refusal::Invalid },
+        "one person's applied-operation id was read as the other's resend"
+    );
+}
