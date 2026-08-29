@@ -234,8 +234,15 @@ async fn one(
     // Before anything else, and before any access check: a resend is a no-op even for
     // somebody who has since been removed from the list. They are not writing again --
     // the write already happened, while they still could.
-    if let Some(before) = remembered(ctx, &operation).await? {
-        return Ok(Outcome::AlreadyApplied { item: before.item, list: before.list });
+    match remembered(ctx, &operation, who).await? {
+        Seen::Before(before) => {
+            return Ok(Outcome::AlreadyApplied { item: before.item, list: before.list })
+        }
+        // Not `NotAllowed`, which would invite a retry once somebody fixed a role: an
+        // id that is already spoken for can never become this device's, so the drain
+        // should forget it rather than carry it for ever.
+        Seen::MintedByAnother => return Ok(Outcome::Refused { why: Refusal::Invalid }),
+        Seen::Never => {}
     }
 
     // Making the list is answered before the list is looked up, because it is the one
@@ -243,7 +250,14 @@ async fn one(
     // role against either: making one is something any signed-in person may do,
     // exactly as `POST /api/lists` is.
     if let What::MakeList { name } = &operation.what {
-        let made = make_list(ctx, who, &operation.list, name.clone()).await?;
+        let Some(made) = make_list(ctx, who, &operation.list, name.clone()).await? else {
+            // Somebody else's uuid. `ListGone` rather than `NotAllowed`, and the
+            // difference matters: `NotAllowed` would confirm the list exists, which is
+            // the one fact a guessed uuid is fishing for. Gone is also what the device
+            // would be told if the uuid named nothing at all, so the two are the same
+            // answer -- which is the point.
+            return Ok(Outcome::Refused { why: Refusal::ListGone });
+        };
         remember(ctx, &operation, who).await?;
         return Ok(Outcome::Applied { item: None, list: Some(made) });
     }
@@ -441,14 +455,25 @@ async fn find(ctx: &Ctx, uuid: &item::Uuid) -> Result<Option<Item>> {
 /// A uuid that belongs to somebody else's list is refused by not being theirs — the
 /// lookup finds it, the ownership check does not match, and the device is told the
 /// list is gone. Guessing a uuid is not a way into anybody's shopping.
+///
+/// That is what this comment said while there was no ownership check at all: the
+/// lookup found the list and returned it, whoever it belonged to, so a guessed uuid
+/// handed back its name, its id, its owner and its dates. The write that followed was
+/// refused by `lists::editable`, so nothing could be changed -- but the answer had
+/// already been given, and the paragraph above described a guarantee nobody had
+/// written. `None` here is the refusal it always claimed to be.
 async fn make_list(
     ctx: &Ctx,
     who: &user::User,
     uuid: &list::Uuid,
     name: list::Name,
-) -> Result<List> {
+) -> Result<Option<List>> {
     if let Ok(existing) = list::List::get(&ctx.db, list::Lookup::Uuid(uuid.clone())).await {
-        return Ok(existing);
+        // Theirs, which is the only way this is the idempotent resend it exists for:
+        // a device only ever re-creates a list its own person made, and it is the
+        // owner of one it made. Anything else is a uuid that is not this person's to
+        // claim.
+        return Ok((existing.owner_id == who.id).then_some(existing));
     }
 
     let made = List::create(&ctx.db, uuid.clone(), who.id, name).await?;
@@ -456,20 +481,40 @@ async fn make_list(
     // Told to the person rather than to the list, for the reason `lists::create`
     // gives: a list that has just been made has no watchers.
     ctx.changes.announce_lists_of(who.id);
-    Ok(made)
+    Ok(Some(made))
 }
 
-async fn remembered(ctx: &Ctx, operation: &Operation) -> Result<Option<Remembered>> {
-    let seen: Option<i64> = sqlx::query_scalar!(
-        r#"SELECT 1 as "seen: i64" FROM applied_operations WHERE id = ?1"#,
+async fn remembered(ctx: &Ctx, operation: &Operation, who: &user::User) -> Result<Seen> {
+    // **Whose** resend, not merely whether the id has been seen.
+    //
+    // This asked only `WHERE id = ?1`, and then answered with a row named by the
+    // *incoming* payload rather than by what was applied. So a person could send one
+    // legitimate operation, resend its id carrying somebody else's item uuid, and read
+    // that item back out of the `already_applied` reply -- for as long as they liked,
+    // and in particular after being removed from the list, since this deliberately
+    // runs before the access check. The uuids they need are the ones their last read
+    // already gave them.
+    //
+    // The row has carried `user_id` since it was created. It just was not asked about.
+    let sender: Option<i64> = sqlx::query_scalar!(
+        r#"SELECT user_id as "user_id: i64" FROM applied_operations WHERE id = ?1"#,
         operation.id
     )
     .fetch_optional(&ctx.db)
     .await
     .map_err(crate::models::Error::from)?;
 
-    if seen.is_none() {
-        return Ok(None);
+    let Some(sender) = sender else {
+        return Ok(Seen::Never);
+    };
+
+    // The collision the schema chose to allow and to refuse: the table is keyed by the
+    // operation alone, because two people cannot mint the same UUID, "and if they
+    // somehow did, the second one is a collision we would rather refuse than apply".
+    // Refusing it is what that costs, and it belongs here rather than in a silent
+    // `INSERT OR IGNORE` that would let the write happen and then not record it.
+    if sender != who.id.0 {
+        return Ok(Seen::MintedByAnother);
     }
 
     // Looked up rather than stored: what the device wants back is the row as it stands,
@@ -480,7 +525,7 @@ async fn remembered(ctx: &Ctx, operation: &Operation) -> Result<Option<Remembere
         let list = list::List::get(&ctx.db, list::Lookup::Uuid(operation.list.clone()))
             .await
             .ok();
-        return Ok(Some(Remembered { item: None, list }));
+        return Ok(Seen::Before(Remembered { item: None, list }));
     }
 
     let named = match &operation.what {
@@ -493,9 +538,20 @@ async fn remembered(ctx: &Ctx, operation: &Operation) -> Result<Option<Remembere
     };
 
     match named {
-        Some(uuid) => Ok(Some(Remembered { item: find(ctx, &uuid).await?, list: None })),
-        None => Ok(Some(Remembered { item: None, list: None })),
+        Some(uuid) => Ok(Seen::Before(Remembered { item: find(ctx, &uuid).await?, list: None })),
+        None => Ok(Seen::Before(Remembered { item: None, list: None })),
     }
+}
+
+/// Whether this operation has been applied before, and by whom.
+enum Seen {
+    /// Never. Carry on and apply it.
+    Never,
+    /// By this person, and here is what it produced.
+    Before(Remembered),
+    /// By somebody else. Two people cannot mint the same UUID; one that has been
+    /// minted twice is refused rather than applied -- see the table's own comment.
+    MintedByAnother,
 }
 
 /// What a resend is answered with: whichever of the two the operation produced.

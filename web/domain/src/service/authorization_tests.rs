@@ -2818,3 +2818,138 @@ async fn a_stated_amount_beats_the_remembered_one(
 
     assert_eq!(again.amount, item::Amount(1.0));
 }
+
+// MARK: - `POST /api/sync`, which was in none of the above
+//
+// `sync::replay` was absent from this file entirely, and the two rules it breaks
+// deliberately -- a resend is answered before the access check, and making a list has
+// no list to check a role against -- are exactly the two places a stranger got in. The
+// file's promise is that missing coverage is countable; this is the count.
+
+/// A resend is a no-op for the person who sent it. For anybody else it is a guess.
+///
+/// `remembered` matched on the operation id alone and then answered with a row named
+/// by the *incoming* payload, so a stranger could take an id they had used once, resend
+/// it carrying somebody else's item uuid, and read that item back out of the reply --
+/// before the access check, which is the one part of this route that is meant to run
+/// early. Removed collaborators keep every uuid their last read gave them.
+#[rstest]
+#[tokio::test]
+async fn a_resend_never_reads_a_row_for_somebody_else(
+    #[future(awt)] pool: SqlitePool,
+) {
+    use crate::service::sync::{self, Operation, Outcome, Refusal, What};
+    use time::OffsetDateTime;
+
+    let s = scene(pool).await;
+    let stranger_list = lists::create(&s.ctx, &s.theirs, list::Name("Theirs".into()))
+        .await
+        .unwrap();
+
+    let id = format!("{:->36}", "shared-id");
+    let op = |uuid: list::Uuid, what| Operation {
+        id: id.clone(),
+        at: OffsetDateTime::now_utc(),
+        list: uuid,
+        what,
+    };
+
+    // The stranger spends the id legitimately, on their own list.
+    let first = sync::replay(
+        &s.ctx,
+        &s.theirs,
+        vec![op(stranger_list.uuid.clone(), What::ClearDone { items: vec![] })],
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(first[0].outcome, Outcome::Applied { .. }),
+        "the stranger could not use their own list"
+    );
+
+    // Now the owner resends *that* id. Whatever happens, it must not be answered from
+    // a memory that belongs to somebody else.
+    let second = sync::replay(
+        &s.ctx,
+        &s.mine,
+        vec![op(
+            s.list.uuid.clone(),
+            What::SetDone { item: s.item.uuid.clone(), done: true },
+        )],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        second[0].outcome,
+        Outcome::Refused { why: Refusal::Invalid },
+        "an id already minted by somebody else was treated as this person's own resend"
+    );
+}
+
+/// Guessing a uuid is not a way into anybody's shopping — which is what `make_list`
+/// said while returning the list to whoever asked.
+///
+/// The write that followed was refused, so nothing could be changed; the name, id,
+/// owner and dates had already gone back in the reply. `ListGone` and not `NotAllowed`,
+/// because `NotAllowed` confirms the list exists, which is the one fact a guess wants.
+#[rstest]
+#[tokio::test]
+async fn making_a_list_that_is_already_somebody_elses_says_gone(
+    #[future(awt)] pool: SqlitePool,
+) {
+    use crate::service::sync::{self, Operation, Outcome, Refusal, What};
+    use time::OffsetDateTime;
+
+    let s = scene(pool).await;
+
+    let answers = sync::replay(
+        &s.ctx,
+        &s.theirs,
+        vec![Operation {
+            id: format!("{:->36}", "guess"),
+            at: OffsetDateTime::now_utc(),
+            list: s.list.uuid.clone(),
+            what: What::MakeList { name: list::Name("Anything".into()) },
+        }],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        answers[0].outcome,
+        Outcome::Refused { why: Refusal::ListGone },
+        "a guessed uuid was answered with somebody else's list"
+    );
+}
+
+/// The half that must keep working: a device re-creating a list it made itself.
+///
+/// This is what `make_list` is idempotent *for*, and a fix that broke it would turn
+/// every lost reply into a duplicate list.
+#[rstest]
+#[tokio::test]
+async fn remaking_your_own_list_still_finds_it(#[future(awt)] pool: SqlitePool) {
+    use crate::service::sync::{self, Operation, Outcome, What};
+    use time::OffsetDateTime;
+
+    let s = scene(pool).await;
+
+    let answers = sync::replay(
+        &s.ctx,
+        &s.mine,
+        vec![Operation {
+            id: format!("{:->36}", "resend"),
+            at: OffsetDateTime::now_utc(),
+            list: s.list.uuid.clone(),
+            what: What::MakeList { name: list::Name("Fruit & veg".into()) },
+        }],
+    )
+    .await
+    .unwrap();
+
+    let Outcome::Applied { list: Some(found), .. } = &answers[0].outcome else {
+        panic!("a device re-creating its own list was refused: {:?}", answers[0].outcome);
+    };
+    assert_eq!(found.id, s.list.id, "it made a second list instead of finding the first");
+}
