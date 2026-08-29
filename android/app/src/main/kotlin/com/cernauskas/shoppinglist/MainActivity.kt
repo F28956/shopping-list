@@ -378,6 +378,20 @@ private fun Shopping(
     val nav = rememberNavController()
     var open by remember { mutableStateOf<ShoppingList?>(null) }
 
+    // Which mode these were built for.
+    //
+    // A view model outlives a recomposition -- that is what it is for -- and it is
+    // scoped to the navigation entry, which survives the whole session. So one built
+    // while this device was on its own kept the backend and the `Sharing` it was handed
+    // then, for ever: after choosing a server, the lists screen went on reading the
+    // device's own database, and `join` was a silent no-op against a null `Sharing`.
+    // Somebody pasted a code and nothing happened, with nothing to see anywhere.
+    //
+    // Keyed, so choosing a server builds new ones. Rebuilding is the correct answer and
+    // not a workaround: a different mode is a different backend, and everything read
+    // through the old one is about to be wrong.
+    val mode = if (ServerDirectory.isOnDeviceOnly) "device" else "server"
+
     // Provided once, here, because every screen below asks the same three questions and
     // none of them should be reading `ServerDirectory` to answer them -- see
     // `Capabilities`.
@@ -385,6 +399,7 @@ private fun Shopping(
     NavHost(navController = nav, startDestination = "lists") {
         composable("lists") {
             val model: ListsViewModel = viewModel(
+                key = "lists-$mode",
                 factory = factory {
                     // `Sharing` and `Accounts` only where there is a server. Null is not
                     // a degraded mode: it is the absence the screens already hide.
@@ -413,7 +428,7 @@ private fun Shopping(
             }
 
             val model: ItemsViewModel = viewModel(
-                key = "items-${list.id}",
+                key = "items-$mode-${list.id}",
                 factory = factory { ItemsViewModel(backend, list, onSignedOut) },
             )
             ItemsScreen(model = model, onBack = { nav.popBackStack() })

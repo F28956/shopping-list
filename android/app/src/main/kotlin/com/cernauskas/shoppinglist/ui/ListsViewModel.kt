@@ -157,15 +157,22 @@ class ListsViewModel(
 
     fun delete(list: ShoppingList) = act { backend.delete(list) }
 
-    // Sharing, and only where there is somebody to share with. `?: return` rather than a
-    // stub answer: a screen that can reach these is a screen [Capabilities] has already
-    // decided to show, so arriving here without a server is a bug worth being loud about
-    // rather than an empty list worth pretending about.
-    fun join(token: String) = act { sharing?.join(token) }
+    // Sharing, and only where there is somebody to share with.
+    //
+    // Reaching any of these without a server is a bug rather than a state: the controls
+    // are hidden by `Capabilities`, so getting here means something is out of step. It
+    // used to be `sharing?.join(token)` -- a silent no-op, which is exactly how it
+    // presented when a view model built in standalone outlived the choice of a server.
+    // Somebody pasted a code and nothing happened at all.
+    fun join(token: String) = act {
+        val sharing = sharing ?: return@act say("This device is not using a server.")
+        sharing.join(token)
+    }
 
     suspend fun people(list: ShoppingList): List<Person> = sharing?.people(list) ?: emptyList()
 
-    suspend fun invite(list: ShoppingList): String = sharing?.invite(list) ?: ""
+    suspend fun invite(list: ShoppingList): String =
+        sharing?.invite(list) ?: throw ApiError.BadInput("This device is not using a server.")
 
     suspend fun revokeInvites(list: ShoppingList) { sharing?.revokeInvites(list) }
 
