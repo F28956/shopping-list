@@ -51,6 +51,29 @@ struct MacRootView: View {
     /// reads `ServerDirectory`.
     @State private var capabilities = Capabilities.current
 
+    /// Opened once and kept, rather than opened again every time this body runs.
+    ///
+    /// `shopping` is a computed property, so `LocalBackend.readyForUse()` ran on every
+    /// re-render: a fresh SQLite connection and a fresh set of watcher threads each
+    /// time, none of them closed. The phone had the same fault and the same fix.
+    @State private var api: API?
+    @State private var standalone: LocalBackend?
+
+    private func open() {
+        let api = API(
+            // With no server this is a placeholder that refuses every connection,
+            // which is the point: the failure is a transport failure, and the app
+            // already knows how to queue through one of those.
+            baseURL: Config.apiBaseURL,
+            token: { await identity.token() },
+            remembered: { identity.isRemembered }
+        )
+        self.api = api
+        // As on the phone: the Mac answers for itself when nobody has chosen a
+        // server, and falls back to the old path if the database will not open.
+        self.standalone = ServerDirectory.isOnDeviceOnly ? LocalBackend.readyForUse() : nil
+    }
+
     var body: some View {
         Group {
             if hasServer {
@@ -65,9 +88,13 @@ struct MacRootView: View {
             }
         }
         .environment(\.capabilities, capabilities)
+        .task { open() }
         .onReceive(NotificationCenter.default.publisher(for: .serverChanged)) { _ in
             hasServer = !ServerDirectory.isOnDeviceOnly
             capabilities = .current
+            // A different mode is a different backend -- this Mac's own server, or a
+            // cache in front of somebody else's.
+            open()
         }
     }
 
@@ -89,20 +116,13 @@ struct MacRootView: View {
     /// everything queues, which is exactly what it already does with no signal --
     /// "no server" and "no connection" are the same state, and the app only ever knew
     /// how to be in one of them.
+    @ViewBuilder
     private var shopping: some View {
-        MacShoppingView(
-            api: API(
-                // With no server this is a placeholder that refuses every connection,
-                // which is the point: the failure is a transport failure, and the app
-                // already knows how to queue through one of those.
-                baseURL: Config.apiBaseURL,
-                token: { await identity.token() },
-                remembered: { identity.isRemembered }
-            ),
-            // As on the phone: the Mac answers for itself when nobody has chosen a
-            // server, and falls back to the old path if the database will not open.
-            standalone: ServerDirectory.isOnDeviceOnly ? LocalBackend.readyForUse() : nil
-        )
+        if let api {
+            MacShoppingView(api: api, standalone: standalone)
+        } else {
+            ProgressView()
+        }
     }
 }
 
