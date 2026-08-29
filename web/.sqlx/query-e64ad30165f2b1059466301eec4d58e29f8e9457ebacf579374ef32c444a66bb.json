@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT user_id as \"user_id: i64\" FROM applied_operations WHERE id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "user_id: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "applied_operations",
+            "name": "user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e64ad30165f2b1059466301eec4d58e29f8e9457ebacf579374ef32c444a66bb"
+}
