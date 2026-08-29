@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Cleartext, for development only.
+  Cleartext and a development certificate authority, for development only.
 
   This file replaces the one in `main` for debug builds. It permits plain HTTP to
   anything, which is what a server on the same desk needs: `10.0.2.2` for the emulator,
@@ -9,7 +9,30 @@
   It cannot reach a release build — a different source set is a different resource — and
   `ServerAddress.allowsCleartext()` is keyed on `BuildConfig.DEBUG` for the same reason.
   Both halves have to agree, and both are compiled out of a shipped app.
+
+  ## Why the trust anchors are here
+
+  A development server with TLS is served a certificate from a local authority — mkcert,
+  or whatever the person running it uses. **Android does not trust user-installed
+  authorities for app traffic**, and has not since Android 7: a CA added through Settings
+  is trusted by the browser and by nothing else. So `https://10.0.2.2:8443` fails to
+  verify even after the certificate is installed, which reads as "the certificate is
+  wrong" when what is wrong is that nobody asked the app to trust it.
+
+  Naming `user` here is what asks. `system` stays listed because leaving it out would
+  mean a debug build could not reach a real server with a real certificate — which is
+  the configuration most worth testing before shipping.
+
+  This is the whole reason `debug-overrides` exists, and why it is refused in a release
+  build: the platform will not let this ship even by accident.
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true" />
+
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
 </network-security-config>
