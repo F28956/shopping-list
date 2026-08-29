@@ -38,8 +38,19 @@ val buildParser by tasks.registering(Exec::class) {
     outputs.dir("${projectDir}/src/main/jniLibs")
 }
 
+// The device's own server. Its own task rather than a line in `buildParser`, because
+// the two are rebuilt for different reasons: the parser moves when a unit or a phrase
+// does, and this moves whenever `domain` does -- which is most of the time.
+val buildEmbedded by tasks.registering(Exec::class) {
+    description = "Compiles web/embedded into app/src/main/jniLibs."
+    commandLine("${projectDir}/../scripts/build-embedded.sh")
+    inputs.dir("${projectDir}/../../web/embedded")
+    inputs.dir("${projectDir}/../../web/domain")
+    outputs.dir("${projectDir}/src/main/jniLibs")
+}
+
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }
-    .configureEach { dependsOn(buildParser) }
+    .configureEach { dependsOn(buildParser, buildEmbedded) }
 
 android {
     testOptions {
@@ -56,6 +67,7 @@ android {
         // client is registered against it and the signing certificate's SHA-1.
         applicationId = "com.cernauskas.shoppinglist"
         minSdk = 26
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         targetSdk = 36
         versionCode = 1
         versionName = "0.1"
@@ -97,6 +109,9 @@ android {
     }
 
     sourceSets["main"].java.srcDirs("src/main/kotlin")
+    // Instrumented tests, which the device's own server needs: `libembedded.so` is
+    // compiled for an Android ABI, so a test on the build machine cannot load it.
+    sourceSets["androidTest"].java.srcDirs("src/androidTest/kotlin")
 }
 
 // The schema Room generated, committed rather than regenerated. A migration is written
@@ -145,5 +160,8 @@ dependencies {
 
     debugImplementation(libs.androidx.ui.tooling)
     testImplementation(libs.junit)
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.runner)
     testImplementation(libs.robolectric)
 }

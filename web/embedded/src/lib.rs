@@ -47,6 +47,11 @@ use std::sync::Arc;
 
 pub mod ffi;
 
+// The same server, reached from the JVM. Android only, because JNI's symbols name a
+// Java class and there is no class to name anywhere else.
+#[cfg(target_os = "android")]
+pub mod jni;
+
 use domain::models::item::{self, Item};
 use domain::models::list::{self, List, Name};
 use domain::models::user;

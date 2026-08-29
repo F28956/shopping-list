@@ -533,8 +533,21 @@ unsafe fn answering<T: serde::Serialize>(
     handle: *const Local,
     work: impl FnOnce(&Local) -> Result<T, crate::Error>,
 ) -> *mut c_char {
-    let Some(local) = (unsafe { handle.as_ref() }) else {
-        return owned(&serde_json::json!({ "error": "no database" }));
+    owned(&enveloped(unsafe { handle.as_ref() }, work))
+}
+
+/// The envelope itself, before it is turned into whatever the caller's language wants.
+///
+/// Split out from [`answering`] so that JNI can share it. Android does not get a
+/// `char *` -- every string it sees is a `jstring` minted from the JVM -- but it must
+/// get the *same* envelope, or the two platforms would be reading two different
+/// protocols against one database.
+pub(crate) fn enveloped<T: serde::Serialize>(
+    local: Option<&Local>,
+    work: impl FnOnce(&Local) -> Result<T, crate::Error>,
+) -> serde_json::Value {
+    let Some(local) = local else {
+        return serde_json::json!({ "error": "no database" });
     };
 
     // The envelope this module promises includes the case nobody plans for. A panic
@@ -548,14 +561,14 @@ unsafe fn answering<T: serde::Serialize>(
     // sqlx's to keep consistent, and it does that with transactions rather than with
     // Rust's unwind safety.
     match catch_unwind(AssertUnwindSafe(|| work(local))) {
-        Ok(Ok(answer)) => owned(&serde_json::json!({ "ok": answer })),
-        Ok(Err(refusal)) => owned(&serde_json::json!({ "error": refusal.to_string() })),
-        Err(panic) => owned(&serde_json::json!({ "error": describe(&panic) })),
+        Ok(Ok(answer)) => serde_json::json!({ "ok": answer }),
+        Ok(Err(refusal)) => serde_json::json!({ "error": refusal.to_string() }),
+        Err(panic) => serde_json::json!({ "error": describe(&panic) }),
     }
 }
 
 /// Whatever a panic was carrying, as something a person could be shown.
-fn describe(panic: &Box<dyn std::any::Any + Send>) -> String {
+pub(crate) fn describe(panic: &Box<dyn std::any::Any + Send>) -> String {
     let said = panic
         .downcast_ref::<&str>()
         .copied()
@@ -570,7 +583,7 @@ fn describe(panic: &Box<dyn std::any::Any + Send>) -> String {
 /// return a handle or a number rather than an envelope. There is nowhere to put a
 /// message in those, so the fallback is the same "it did not work" the caller already
 /// has to handle -- a null handle, or a zero.
-fn guarded<T>(fallback: T, work: impl FnOnce() -> T) -> T {
+pub(crate) fn guarded<T>(fallback: T, work: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(work)).unwrap_or(fallback)
 }
 

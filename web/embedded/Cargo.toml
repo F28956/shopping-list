@@ -26,3 +26,9 @@ sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite", "migrate"] }
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["full"] }
+
+# Android only. JNI is not a C ABI: the symbol is mangled from the class it belongs to
+# and every string is a `jstring`, so the Apple entry points cannot be reused as they
+# are -- see src/jni.rs. Everything underneath them is shared.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
