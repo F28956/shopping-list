@@ -26,15 +26,7 @@ struct DiagnosticsSettings: View {
     @State private var endpoint = MetricsSettings.endpoint?.absoluteString ?? ""
     @State private var headers = MetricsSettings.rawHeaders
 
-    @State private var exported: Exported?
     @State private var problem: String?
-
-    /// The archive, on its way to a share sheet. `Identifiable` because that is what
-    /// `sheet(item:)` wants, and a bare `URL` is not.
-    private struct Exported: Identifiable {
-        let id = UUID()
-        let url: URL
-    }
 
     /// What the picker offers, which is not every level.
     ///
@@ -83,6 +75,26 @@ struct DiagnosticsSettings: View {
                     """
                 )
             }
+            // On the section rather than on the `Group` around it: a modifier on a
+            // `Group` is applied to each of its children, so up here it was two alerts
+            // over one piece of state.
+            .alert("Record the contents of your lists?", isPresented: warning) {
+                Button("Cancel", role: .cancel) { confirming = nil }
+                Button("Turn on") {
+                    if let confirming { apply(confirming) }
+                    confirming = nil
+                }
+            } message: {
+                Text(
+                    """
+                    At this setting the log contains the names of your lists and \
+                    everything on them, including anything you would not want read out. \
+                    It is kept on this device until you delete it — but if you send it \
+                    to somebody, you are sending them your shopping. Turn it back off \
+                    when you are done.
+                    """
+                )
+            }
 
             // Only where there is a far end. A device answering for itself has nothing
             // to measure and nobody to tell, and offering the field would be offering to
@@ -126,29 +138,6 @@ struct DiagnosticsSettings: View {
                     )
                 }
             }
-        }
-        .alert("Record the contents of your lists?", isPresented: warning) {
-            Button("Cancel", role: .cancel) { confirming = nil }
-            Button("Turn on") {
-                if let confirming { apply(confirming) }
-                confirming = nil
-            }
-        } message: {
-            Text(
-                """
-                At this setting the log contains the names of your lists and everything \
-                on them, including anything you would not want read out. It is kept on \
-                this device until you delete it — but if you send it to somebody, you \
-                are sending them your shopping. Turn it back off when you are done.
-                """
-            )
-        }
-        .sheet(item: $exported) { archive in
-            #if os(iOS)
-                ExportSheet(url: archive.url)
-            #else
-                EmptyView()
-            #endif
         }
     }
 
@@ -212,7 +201,7 @@ struct DiagnosticsSettings: View {
             #if os(macOS)
                 save(archive)
             #else
-                exported = Exported(url: archive)
+                share(archive)
             #endif
         } catch {
             problem = "The log could not be packed up."
@@ -245,18 +234,54 @@ struct DiagnosticsSettings: View {
 }
 
 #if os(iOS)
-    /// The system share sheet, holding one file.
+    /// Hands one file to the system share sheet.
     ///
-    /// `UIActivityViewController` rather than `ShareLink`, because the archive does not
-    /// exist until the button is pressed: a `ShareLink` wants its item up front, which
-    /// would mean packing the log every time this screen is drawn.
-    struct ExportSheet: UIViewControllerRepresentable {
-        let url: URL
-
-        func makeUIViewController(context: Context) -> UIActivityViewController {
-            UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    /// Through UIKit and not through `.sheet`, which is not a style choice. Settings is
+    /// itself presented as a sheet, and asking SwiftUI to present a second one from a row
+    /// inside it *replaces* the first: the visible effect was that Export closed Settings
+    /// and offered nothing. The archive was built correctly every time -- 3.7kB of zip,
+    /// with the log and an `about.txt` inside it -- and then had nowhere to go.
+    ///
+    /// `UIActivityViewController` rather than `ShareLink` for the original reason: the
+    /// archive does not exist until the button is pressed, and a `ShareLink` wants its
+    /// item up front, which would mean packing the log every time this screen is drawn.
+    ///
+    /// - Note: The popover anchor is for iPad, where a share sheet without one is a
+    ///   crash rather than a misplacement.
+    @MainActor
+    private func share(_ archive: URL) {
+        guard let presenter = topmostViewController() else {
+            Log.warn(.app, "the archive was built with nowhere to present it")
+            return
         }
+        let sheet = UIActivityViewController(activityItems: [archive], applicationActivities: nil)
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = presenter.view
+            popover.sourceRect = CGRect(
+                x: presenter.view.bounds.midX,
+                y: presenter.view.bounds.midY,
+                width: 0,
+                height: 0
+            )
+            popover.permittedArrowDirections = []
+        }
+        presenter.present(sheet, animated: true)
+    }
 
-        func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+    /// The view controller nothing is on top of, which is the one that can present.
+    ///
+    /// Settings is a sheet on top of the list screen, so the window's root is the wrong
+    /// answer -- presenting on it while it already has something presented does nothing
+    /// at all, silently.
+    @MainActor
+    private func topmostViewController() -> UIViewController? {
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+        guard var top = windows.first(where: \.isKeyWindow)?.rootViewController else {
+            return nil
+        }
+        while let presented = top.presentedViewController { top = presented }
+        return top
     }
 #endif
