@@ -598,6 +598,31 @@ final class Cache: @unchecked Sendable {
         return list
     }
 
+    /// Drops the lists this device kept from before its own server took over.
+    ///
+    /// `LocalBackend.readyForUse` copies the cache into `device.sqlite` and leaves the
+    /// cache exactly as it was, deliberately, so the move stays reversible. Once that
+    /// has happened those rows are a photograph of a moment: every edit since went to
+    /// `device.sqlite`, and the two copies do not even share uuids, because the
+    /// migration mints new ones for the lists.
+    ///
+    /// So handing the device to a server without dropping them first would queue both
+    /// copies, and the server would be told about the same shopping twice under two
+    /// different names -- which is what a real Mac was one relaunch away from doing.
+    ///
+    /// Only the local ones. A list with a server's id is that server's, and this is
+    /// called at the moment one is adopted.
+    func forgetLocalLists() {
+        write { db in
+            for table in ["items", "history", "list_tag_order"] {
+                try db.execute(
+                    sql: "DELETE FROM \(table) WHERE list_id IN (SELECT id FROM lists WHERE id < 0)"
+                )
+            }
+            try db.execute(sql: "DELETE FROM lists WHERE id < 0")
+        }
+    }
+
     /// Takes lists and their rows in as this device's own, keeping the names a server
     /// will be told.
     ///

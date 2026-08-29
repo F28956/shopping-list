@@ -119,9 +119,23 @@ actor LocalBackend {
     ///   means naming tags on the wire rather than numbering them.
     static func handOverToAServer(cache: Cache = .shared) -> Bool {
         guard !hasHandedOver else { return true }
-        guard let backend = LocalBackend() else { return false }
 
+        // Nothing of this device's own to hand over. A device that never took its cache
+        // over is a device where the cache *is* the store, and `handOverIfNeeded`
+        // already walks it -- reading `device.sqlite` here would find an empty database
+        // and taking it in would be a no-op with a flag set for no reason.
+        guard hasTakenOver else {
+            hasHandedOver = true
+            return true
+        }
+
+        guard let backend = LocalBackend() else { return false }
         guard let taken = backend.everythingHere() else { return false }
+
+        // The copy left behind by the takeover goes first. It is the same shopping
+        // under different uuids, and queueing both would tell the server about it
+        // twice -- see `Cache.forgetLocalLists`.
+        cache.forgetLocalLists()
         cache.takeIn(taken)
         hasHandedOver = true
         return true

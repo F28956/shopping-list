@@ -547,3 +547,64 @@ struct HandingOverToAServerTests {
         )
     }
 }
+
+// MARK: - The copy the takeover left behind
+
+/// A device that has been through *both* journeys — cache into `device.sqlite`, and
+/// then `device.sqlite` out to a server.
+///
+/// Found on a real Mac before it could happen: its cache still held the pre-migration
+/// `Home` with three items, `device.sqlite` held the migrated `Home` with the same
+/// three, and the two had different uuids because the migration mints new ones. One
+/// relaunch in server mode would have queued both.
+struct BothJourneysTests {
+
+    @Test("the copy left behind by the takeover is not queued as a second list")
+    func theStaleCopyIsDropped() throws {
+        let cache = Cache.inMemory(sending: { true })
+
+        // What a takeover leaves: the old cache, untouched, under its old uuid.
+        let before = List(id: -1, uuid: "before-the-move", name: "Home", ownerID: 0, role: .owner)
+        cache.remember(lists: [before])
+        cache.takeIn([(
+            list: before,
+            items: [Item(id: 1, uuid: "apples", name: "Apples", amount: 1,
+                         unitID: nil, doneAt: nil, tagIDs: [])]
+        )])
+
+        // And what the device now holds, under the uuid the migration minted.
+        let now = List(id: 1, uuid: "after-the-move", name: "Home", ownerID: 0, role: .owner)
+
+        cache.forgetLocalLists()
+        cache.takeIn([(
+            list: now,
+            items: [Item(id: 1, uuid: "apples", name: "Apples", amount: 1,
+                         unitID: nil, doneAt: nil, tagIDs: [])]
+        )])
+        cache.handOverIfNeeded()
+
+        #expect(cache.lists().map(\.uuid) == ["after-the-move"], "the stale copy survived")
+        let made = cache.outbox.all().filter { $0.kind == QueuedOperation.Kind.makeList }
+        #expect(made.count == 1, "the server would have been told about \(made.count) lists")
+        #expect(made.first?.listUUID == "after-the-move")
+    }
+
+    /// And it must not fire on a device that never took its cache over, where the cache
+    /// is the only store there is.
+    @Test("a device that never took over keeps its cache")
+    func theOldPathIsLeftAlone() throws {
+        let cache = Cache.inMemory(sending: { true })
+        let made = cache.makeListHere(named: "Household", ownedBy: 0)
+        #expect(cache.lists().count == 1)
+
+        // `handOverToAServer` returns early for this device rather than reaching for
+        // `device.sqlite`; what it must never do is call `forgetLocalLists` first.
+        cache.handOverIfNeeded()
+
+        #expect(cache.lists().map(\.uuid) == [made.uuid], "the only store was emptied")
+        #expect(
+            cache.outbox.all().contains { $0.kind == QueuedOperation.Kind.makeList },
+            "the list was not queued"
+        )
+    }
+}
