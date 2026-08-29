@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Where the exported log may be read from, and nowhere else.
+
+  A FileProvider grants another app a temporary read of one file, which is what a share
+  sheet needs and what a file:// URI has not been allowed to do since Android 7. The
+  scope is one directory under the cache: the log itself lives in filesDir and is never
+  exposed, so the only thing another app can ever be handed is an archive somebody
+  deliberately asked for.
+-->
+<paths>
+    <cache-path name="diagnostics" path="diagnostics/" />
+</paths>

@@ -1,6 +1,12 @@
 package com.cernauskas.shoppinglist.data
 
 import android.content.Context
+import com.cernauskas.shoppinglist.diagnostics.Diagnostics
+import com.cernauskas.shoppinglist.diagnostics.Event
+import com.cernauskas.shoppinglist.diagnostics.Fact
+import com.cernauskas.shoppinglist.diagnostics.Field
+import com.cernauskas.shoppinglist.diagnostics.Mode
+import com.cernauskas.shoppinglist.diagnostics.Outcome
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -59,7 +65,22 @@ class LocalBackend private constructor(private val handle: Long) : Backend, Auto
         fun openAt(database: java.io.File): LocalBackend? {
             if (!Embedded.loaded) return null
             val handle = Embedded.open(database.path)
-            return if (handle == 0L) null else LocalBackend(handle)
+            if (handle == 0L) {
+                // The one failure here that a person can see the effect of and never
+                // the cause: the app silently falls back to the cached path, which
+                // works, so nothing looks wrong until somebody with no server wonders
+                // why their lists are not saving. The path is not written down --
+                // it is a file name, but it is under a directory named after the
+                // package and there is nothing to learn from it that the event does
+                // not already say.
+                Diagnostics.error(
+                    Event.NATIVE_FAILED,
+                    Fact.of(Field.MODE, Mode.DEVICE),
+                    Fact.of(Field.OUTCOME, Outcome.REFUSED_HERE),
+                )
+                return null
+            }
+            return LocalBackend(handle)
         }
 
         private val json = Json { ignoreUnknownKeys = true }
@@ -116,10 +137,24 @@ class LocalBackend private constructor(private val handle: Long) : Backend, Auto
             }
 
             if (!backend.takeIn(everything)) {
+                // The migration refused, so the caller stays on what worked yesterday --
+                // and this is the only record that it ever tried. Without it the
+                // symptom is an app that looks exactly as it did before, for a reason
+                // nothing anywhere says.
+                Diagnostics.error(
+                    Event.HANDOVER_TO_DEVICE,
+                    Fact.of(Field.OUTCOME, Outcome.REFUSED_HERE),
+                    Fact.of(Field.COUNT, waiting.size),
+                )
                 backend.close()
                 return null
             }
             markTookOver(context, true)
+            Diagnostics.info(
+                Event.HANDOVER_TO_DEVICE,
+                Fact.of(Field.OUTCOME, Outcome.OK),
+                Fact.of(Field.COUNT, waiting.size),
+            )
             return backend
         }
 
@@ -179,17 +214,75 @@ class LocalBackend private constructor(private val handle: Long) : Backend, Auto
 
     /** The `ok` payload, or an exception carrying what the server said. */
     private fun unwrap(answer: String?): JsonElement {
-        val raw = answer ?: throw ApiError.Transport(NoLocalServer())
+        val raw = answer ?: throw nativeFailure(Outcome.REFUSED_HERE)
         val envelope = json.parseToJsonElement(raw).jsonObject
-        envelope["error"]?.jsonPrimitive?.content?.let { throw ApiError.BadInput(it) }
-        return envelope["ok"] ?: throw ApiError.Transport(NoLocalServer())
+        envelope["error"]?.jsonPrimitive?.content?.let {
+            // The envelope's message is `domain`'s own sentence, and `domain` says
+            // things like which row would not update. So the outcome is recorded and
+            // the words are not -- the same rule the wire's errors get in `Api`.
+            Diagnostics.warn(
+                Event.NATIVE_FAILED,
+                Fact.of(Field.MODE, Mode.DEVICE),
+                Fact.of(Field.OUTCOME, Outcome.BAD_INPUT),
+                Fact.length(Field.LENGTH, it),
+            )
+            Diagnostics.debug(Event.NATIVE_FAILED) { it }
+            throw ApiError.BadInput(it)
+        }
+        return envelope["ok"] ?: throw nativeFailure(Outcome.SERVER_FAULT)
+    }
+
+    /**
+     * A call across JNI that answered with nothing, or with an envelope that had neither
+     * half in it.
+     *
+     * Worth its own line at warn: the far end here is a library in this APK, so a null
+     * is not a phone in a tunnel — it is a panic caught on the Rust side, a handle that
+     * was closed underneath a caller, or an ABI that is not in this build. All three are
+     * faults to fix, and none of them raises anything a person will ever report.
+     */
+    private fun nativeFailure(outcome: Outcome): ApiError {
+        Diagnostics.warn(
+            Event.NATIVE_FAILED,
+            Fact.of(Field.MODE, Mode.DEVICE),
+            Fact.of(Field.OUTCOME, outcome),
+        )
+        return ApiError.Transport(NoLocalServer())
     }
 
     private suspend inline fun <reified T> answering(crossinline call: () -> String?): T =
-        withContext(Dispatchers.IO) { json.decodeFromJsonElement<T>(unwrap(call())) }
+        withContext(Dispatchers.IO) {
+            timedAcross(Event.BACKEND_READ) { json.decodeFromJsonElement<T>(unwrap(call())) }
+        }
 
     /** For a call whose answer is only whether it worked. */
-    private suspend fun nothing(call: () -> String?) = withContext(Dispatchers.IO) { unwrap(call()) }
+    private suspend fun nothing(call: () -> String?) = withContext(Dispatchers.IO) {
+        timedAcross(Event.BACKEND_WRITE) { unwrap(call()) }
+    }
+
+    /**
+     * How long a trip across JNI took, whatever became of it.
+     *
+     * Worth recording even though this backend cannot be offline. `domain` runs over
+     * sqlite on the phone's own storage, and the failure it has is not "unreachable" but
+     * "slow" — a list that takes a second to open because a query is walking a table.
+     * There is nothing on the wire to watch, so this is the only place it can be seen.
+     *
+     * The outcome is left to [unwrap], which already says what went wrong and is the one
+     * place that knows.
+     */
+    private inline fun <T> timedAcross(event: Event, work: () -> T): T {
+        val began = System.nanoTime()
+        try {
+            return work()
+        } finally {
+            Diagnostics.info(
+                event,
+                Fact.of(Field.MODE, Mode.DEVICE),
+                Fact.of(Field.MILLIS, (System.nanoTime() - began) / 1_000_000),
+            )
+        }
+    }
 
     // MARK: - Reading
 
@@ -389,11 +482,30 @@ class LocalBackend private constructor(private val handle: Long) : Backend, Auto
      * makes this safe to run before anybody has proved the server works.
      */
     suspend fun handOverToAServer(cache: Cache): Boolean {
-        val taken = everythingHere() ?: return false
+        val taken = everythingHere()
+        if (taken == null) {
+            // One list that would not read, so none of them go. The person sees an
+            // account with nothing in it and a phone with everything on it, which is
+            // the failure this whole journey exists to avoid -- so it is an error
+            // rather than a note.
+            Diagnostics.error(
+                Event.HANDOVER_TO_SERVER,
+                Fact.of(Field.MODE, Mode.DEVICE),
+                Fact.of(Field.OUTCOME, Outcome.REFUSED_HERE),
+            )
+            return false
+        }
         // The copy left behind by the takeover goes first: it is the same shopping under
         // different uuids, and queueing both tells the server about it twice.
         cache.forgetLocalLists()
         cache.takeIn(taken)
+        Diagnostics.info(
+            Event.HANDOVER_TO_SERVER,
+            Fact.of(Field.MODE, Mode.DEVICE),
+            Fact.of(Field.OUTCOME, Outcome.OK),
+            Fact.of(Field.COUNT, taken.size),
+            Fact.of(Field.DEPTH, taken.sumOf { (_, items) -> items.size }),
+        )
         return true
     }
 
@@ -402,7 +514,16 @@ class LocalBackend private constructor(private val handle: Long) : Backend, Auto
         try {
             unwrap(Embedded.importEverything(handle, everythingJson))
             true
-        } catch (_: Exception) {
+        } catch (problem: Exception) {
+            // `unwrap` has already said what the envelope held. This says how much was
+            // in the document that was refused, which is the number that tells a
+            // migration that choked on one row from one that never started.
+            Diagnostics.error(
+                Event.HANDOVER_TO_DEVICE,
+                Fact.of(Field.OUTCOME, Outcome.REFUSED_HERE),
+                Fact.of(Field.BYTES, everythingJson.length),
+                Fact.failure(problem),
+            )
             false
         }
     }
