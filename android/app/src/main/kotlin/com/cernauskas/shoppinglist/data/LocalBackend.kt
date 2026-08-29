@@ -47,14 +47,116 @@ class LocalBackend private constructor(private val handle: Long) : Backend, Auto
          * it: a disk that will not hold a database is not a state this app has a screen
          * for, and the alternative is falling back to the cached path.
          */
-        fun open(context: Context): LocalBackend? {
+        fun open(context: Context): LocalBackend? = openAt(location(context))
+
+        /**
+         * The same, at a path the caller names.
+         *
+         * For tests, which must not open the database belonging to whatever else is on
+         * the device running them -- and which found out the hard way: six lists where
+         * one was expected, because every case had been opening the same real file.
+         */
+        fun openAt(database: java.io.File): LocalBackend? {
             if (!Embedded.loaded) return null
-            val handle = Embedded.open(location(context).path)
+            val handle = Embedded.open(database.path)
             return if (handle == 0L) null else LocalBackend(handle)
         }
 
         private val json = Json { ignoreUnknownKeys = true }
+
+        /**
+         * The device's backend, ready to use, having taken over from the old cache if it
+         * had to.
+         *
+         * The one entry point a composition root should call. Opening is not enough on a
+         * device that has been used: its lists are in the Room cache, this reads
+         * `device.sqlite`, and handing the second to a screen would show an empty app
+         * with somebody's shopping still on disk.
+         *
+         * Nothing is deleted. The old cache is left exactly as it was, which is what
+         * makes this reversible: if the new path turns out to be wrong, the fallback is
+         * still sitting there with everything in it.
+         *
+         * Null means stay on the old path -- the database would not open, or the
+         * migration refused. Both are the same instruction to a caller: use what worked
+         * yesterday.
+         */
+        suspend fun readyForUse(context: Context, cache: Cache): LocalBackend? {
+            val backend = open(context) ?: return null
+            if (tookOver(context)) return backend
+
+            val waiting = cache.lists()
+            if (waiting.isEmpty()) {
+                // Nothing to bring, so nothing to get wrong. Marked all the same, so a
+                // list made here tomorrow is not mistaken for a cache that needs
+                // migrating.
+                markTookOver(context, true)
+                return backend
+            }
+
+            val everything = buildString {
+                append("""{"lists":[""")
+                waiting.forEachIndexed { at, list ->
+                    if (at > 0) append(',')
+                    append(json.encodeToString(Incoming.serializer(), Incoming(
+                        name = list.name,
+                        items = cache.items(list).map { row ->
+                            IncomingItem(
+                                uuid = row.uuid,
+                                name = row.name,
+                                amount = row.amount,
+                                unitId = row.unitId,
+                                doneAt = null,
+                                tagIds = row.tagIds,
+                            )
+                        },
+                    )))
+                }
+                append("]}")
+            }
+
+            if (!backend.takeIn(everything)) {
+                backend.close()
+                return null
+            }
+            markTookOver(context, true)
+            return backend
+        }
+
+        /**
+         * Whether this device has already handed its cache over.
+         *
+         * A flag rather than "is the new database empty", because those differ in the
+         * case that matters: somebody who migrates and then deletes every list would be
+         * migrated again on the next launch, and their deleted lists would come back.
+         */
+        private fun tookOver(context: Context): Boolean =
+            context.getSharedPreferences(FLAGS, Context.MODE_PRIVATE)
+                .getBoolean("device.tookOver", false)
+
+        private fun markTookOver(context: Context, value: Boolean) {
+            context.getSharedPreferences(FLAGS, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("device.tookOver", value)
+                .apply()
+        }
+
+        private const val FLAGS = "device"
     }
+
+    /** One list on its way into this database. Matches `web/embedded`'s `Incoming`. */
+    @kotlinx.serialization.Serializable
+    private data class Incoming(val name: String, val items: List<IncomingItem>)
+
+    @kotlinx.serialization.Serializable
+    private data class IncomingItem(
+        val uuid: String,
+        val name: String,
+        val amount: Double,
+        @kotlinx.serialization.SerialName("unit_id") val unitId: Long?,
+        @kotlinx.serialization.SerialName("done_at") val doneAt: Long?,
+        @kotlinx.serialization.SerialName("tag_ids") val tagIds: List<Long>,
+    )
 
     /**
      * One thread for the blocking watches.
@@ -271,6 +373,28 @@ class LocalBackend private constructor(private val handle: Long) : Backend, Auto
         // One list that will not read is not a reason to hand over the others and
         // quietly lose this one.
         null
+    }
+
+    /**
+     * Puts what this device holds where a server can be told about it.
+     *
+     * The mirror of [readyForUse]. That carries the old cache *into* `device.sqlite`
+     * when somebody stops using a server; this carries it back out when somebody adopts
+     * one. Without it, choosing a server shows an empty account with everything still on
+     * disk -- the queue is built by walking the cache, and on a device that has only
+     * ever answered for itself that cache is empty.
+     *
+     * Nothing is deleted, for the same reason as the other direction: `device.sqlite` is
+     * left exactly as it was, so giving the server up brings it all back. That is what
+     * makes this safe to run before anybody has proved the server works.
+     */
+    suspend fun handOverToAServer(cache: Cache): Boolean {
+        val taken = everythingHere() ?: return false
+        // The copy left behind by the takeover goes first: it is the same shopping under
+        // different uuids, and queueing both tells the server about it twice.
+        cache.forgetLocalLists()
+        cache.takeIn(taken)
+        return true
     }
 
     /** Takes an old cache's contents in, through `domain`'s own services. */

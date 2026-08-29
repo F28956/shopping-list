@@ -90,6 +90,17 @@ interface CacheDao {
     @Query("DELETE FROM lists WHERE id >= 0")
     suspend fun forgetKnownLists()
 
+    /**
+     * The other half: lists this device made and no server has heard of.
+     *
+     * Only ever called at the moment a device hands itself to a server, where these are
+     * the photograph the takeover left behind -- see [Cache.forgetLocalLists]. Anywhere
+     * else this would be deleting somebody's shopping for the crime of having been
+     * written down offline.
+     */
+    @Query("DELETE FROM lists WHERE id < 0")
+    suspend fun forgetLocalLists()
+
     @Query("SELECT min(id) FROM lists")
     suspend fun lowestListId(): Long?
 
@@ -257,16 +268,35 @@ val ADD_THE_OUTBOX = object : Migration(1, 2) {
  * none of them throw: a cache that fails is a cache that is missing, and a screen
  * asking for the last thing it saw has nothing useful to do with an exception.
  */
-class Cache(context: Context) {
+class Cache(
+    context: Context,
+    /**
+     * Whether there is a server to send to. Passed to the [Outbox], which is what
+     * actually decides -- see the guard in `Outbox.queue`.
+     *
+     * Injected so a test can say which it means rather than reaching for storage that
+     * the rest of the suite is also reading. It was global before, and two tests could
+     * not disagree about it.
+     */
+    private val sending: () -> Boolean = { !ServerDirectory.isOnDeviceOnly },
+    /** In memory, for a test that should neither read nor overwrite a real device's. */
+    inMemory: Boolean = false,
+) {
 
     /** Kept for the bundled reference data, which is read out of the assets. */
     private val assets = context.applicationContext
 
-    private val db = Room.databaseBuilder(
-        context.applicationContext,
-        CacheDatabase::class.java,
-        "cache.db",
-    )
+    private val db = (
+        if (inMemory) {
+            Room.inMemoryDatabaseBuilder(context.applicationContext, CacheDatabase::class.java)
+        } else {
+            Room.databaseBuilder(
+                context.applicationContext,
+                CacheDatabase::class.java,
+                "cache.db",
+            )
+        }
+        )
         // Migrated, not thrown away. The cached rows in here could be discarded on a
         // schema change -- they are a copy of what the server holds -- but the outbox
         // beside them holds changes that exist nowhere else, and the two share a file.
@@ -278,7 +308,7 @@ class Cache(context: Context) {
     private val dao = db.dao()
 
     /** The queue that lives in the same file — see [Outbox]. */
-    val outbox = Outbox(db.outbox())
+    val outbox = Outbox(db.outbox(), sending)
 
     /**
      * Writes down the units and aisles a device with no server would otherwise never
@@ -340,6 +370,88 @@ class Cache(context: Context) {
     /** See [CacheDao.lowestItemId]. Zero when nothing has been written down yet. */
     suspend fun lowestItemId(): Long = withContext(Dispatchers.IO) {
         runCatching { dao.lowestItemId() ?: 0L }.getOrDefault(0L)
+    }
+
+    /**
+     * Takes lists and their rows in as this device's own, keeping the names a server
+     * will be told.
+     *
+     * The other end of the handover. `CachingBackend.handOverIfNeeded` walks this cache
+     * for lists no server has heard of and queues them; this is how the lists on a
+     * device that has been answering for *itself* get in here to be walked. Without it,
+     * adopting a server shows an empty account with a year of shopping still on disk:
+     * everything lives in `device.sqlite`, the queue is built from this, and nothing
+     * joins the two.
+     *
+     * The uuids come in rather than being minted, unlike [makeListHere]. They are what
+     * every queued operation names and what the server records, and a new one here would
+     * make the same list twice the first time the device and the server ever met. The
+     * ids are local because that is precisely what "no server has heard of this" is
+     * written as.
+     */
+    suspend fun takeIn(incoming: List<Pair<ShoppingList, List<Item>>>) {
+        if (incoming.isEmpty()) return
+
+        write {
+            var nextList = minOf(dao.lowestListId() ?: 0L, 0L) - 1
+            var nextItem = minOf(dao.lowestItemId() ?: 0L, 0L)
+            var position = dao.listCount()
+
+            for ((list, items) in incoming) {
+                // Already here, so this has run before. Left alone rather than written
+                // twice: the same list under two ids is the same shopping told to the
+                // server twice.
+                if (dao.lists().any { it.uuid == list.uuid }) continue
+
+                dao.putList(
+                    CachedList(
+                        id = nextList,
+                        uuid = list.uuid,
+                        name = list.name,
+                        ownerId = list.ownerId,
+                        role = Role.OWNER.name,
+                        position = position,
+                    )
+                )
+
+                dao.putItems(
+                    items.mapIndexed { at, item ->
+                        nextItem -= 1
+                        CachedItem(
+                            id = nextItem,
+                            uuid = item.uuid,
+                            listId = nextList,
+                            name = item.name,
+                            amount = item.amount,
+                            unitId = item.unitId,
+                            doneAt = item.doneAt,
+                            tagIds = item.tagIds.joinToString(","),
+                            position = at,
+                        )
+                    }
+                )
+
+                nextList -= 1
+                position += 1
+            }
+        }
+    }
+
+    /**
+     * Drops the lists this device kept from before its own server took over.
+     *
+     * `readyForUse` copies the cache into `device.sqlite` and leaves this exactly as it
+     * was, deliberately, so the move stays reversible. Once that has happened these rows
+     * are a photograph of a moment: every edit since went to `device.sqlite`, and the
+     * two copies do not even share uuids because the migration mints new ones for the
+     * lists. Handing the device to a server without dropping them would queue both, and
+     * the server would be told about the same shopping twice under two different names.
+     */
+    suspend fun forgetLocalLists() = write {
+        for (list in dao.lists().filter { it.id < 0 }) {
+            dao.forgetItems(list.id)
+        }
+        dao.forgetLocalLists()
     }
 
     suspend fun makeListHere(name: String, ownedBy: Long): ShoppingList {
@@ -474,6 +586,18 @@ class Cache(context: Context) {
     }
 
     companion object {
+        /**
+         * A cache that neither reads nor overwrites the one on the device running the
+         * tests.
+         *
+         * `sending` says which mode the test means. Naming it at the call site is the
+         * point: "nothing was queued" and "everything was queued" are both correct
+         * answers, and which one a test expects depends on a question it should have to
+         * answer out loud.
+         */
+        fun inMemory(context: Context, sending: () -> Boolean = { true }): Cache =
+            Cache(context, sending, inMemory = true)
+
         /**
          * Whether this list exists only here — see [makeListHere]. Public because the
          * screens ask; the rest of this object is not.

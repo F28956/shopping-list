@@ -51,11 +51,6 @@ class MainActivity : ComponentActivity() {
             renew = { identity.renew() },
         )
         val cache = Cache(this)
-        // The device's own server. Opened once for the life of the activity: it holds a
-        // SQLite connection and the threads its watches park on, and null means it would
-        // not open -- a disk that will not cooperate, which is not a state this app has
-        // a screen for.
-        val local = LocalBackend.open(this)
 
         setContent {
             ShoppingTheme {
@@ -71,23 +66,35 @@ class MainActivity : ComponentActivity() {
                 var correctingServer by remember { mutableStateOf(false) }
 
                 /**
-                 * What this device reads, built once and kept.
+                 * What this device reads, opened once and kept.
                  *
                  * The device answers for itself when nobody has chosen a server, unless
                  * its own database will not open -- which falls back to the cached path,
-                 * exactly as the phones do. Rebuilt only when that answer changes, which
-                 * is when somebody chooses a server or stops using one: opening a
-                 * database on every recomposition is a connection and a set of watcher
-                 * threads per frame.
+                 * exactly as the phones do. Null while it is being opened: it holds a
+                 * SQLite connection and the threads its watches park on, so this happens
+                 * once rather than per recomposition.
                  */
-                fun openBackend(): Backend =
-                    if (ServerDirectory.isOnDeviceOnly) {
-                        local ?: CachingBackend(api, cache)
+                var backend by remember { mutableStateOf<Backend?>(null) }
+
+                LaunchedEffect(hasServer) {
+                    backend = if (ServerDirectory.isOnDeviceOnly) {
+                        // `readyForUse` rather than `open`: a device that has been used
+                        // has its lists in the Room cache, and handing it a database
+                        // that reads `device.sqlite` would show an empty app with
+                        // somebody's shopping still on disk.
+                        LocalBackend.readyForUse(this@MainActivity, cache)
+                            ?: CachingBackend(api, cache)
                     } else {
+                        // A server has been chosen, so what this device already holds
+                        // has to get into the cache before the queue is built from it.
+                        // Everything standalone lives in `device.sqlite`; without this
+                        // adopting a server shows an empty account with a year of
+                        // shopping still on disk. Nothing is deleted, so leaving the
+                        // server brings it back.
+                        LocalBackend.open(this@MainActivity)?.use { it.handOverToAServer(cache) }
                         CachingBackend(api, cache)
                     }
-
-                var backend by remember { mutableStateOf(openBackend()) }
+                }
 
                 // Only when there is somewhere to sign in to. Restoring asks Google,
                 // and Google asks the person -- which is a sign-in sheet in front of
@@ -101,16 +108,21 @@ class MainActivity : ComponentActivity() {
                 // question about hosting -- so there is no first-run screen, nothing
                 // to dismiss, and nothing to sign in to. Somebody who has a server
                 // goes and says so in settings.
+                // Nothing to show until there is somewhere to read from. One frame on a
+                // cold start, and the alternative is a screen built against a backend
+                // that answers nothing and then swapped underneath it.
+                val ready = backend ?: run {
+                    Splash()
+                    return@ShoppingTheme
+                }
+
                 if (!hasServer) {
                     Shopping(
                         api = api,
                         cache = cache,
-                        backend = backend,
+                        backend = ready,
                         onSignedOut = {},
-                        onServerChanged = {
-                            hasServer = ServerDirectory.hasServer
-                            backend = openBackend()
-                        },
+                        onServerChanged = { hasServer = ServerDirectory.hasServer },
                     )
                     return@ShoppingTheme
                 }
@@ -159,11 +171,8 @@ class MainActivity : ComponentActivity() {
                     is Identity.State.SignedIn -> Shopping(
                         api = api,
                         cache = cache,
-                        backend = backend,
-                        onServerChanged = {
-                            hasServer = ServerDirectory.hasServer
-                            backend = openBackend()
-                        },
+                        backend = ready,
+                        onServerChanged = { hasServer = ServerDirectory.hasServer },
                         onSignedOut = { why ->
                             identity.signOut()
                             // Only what was asked for. A session that ended because
@@ -390,7 +399,6 @@ private fun Shopping(
                 isOwner = isOwner,
                 onManageServer = { managingServer = true },
                 onSettings = { settings = true },
-                onDeviceOnly = ServerDirectory.isOnDeviceOnly,
             )
         }
 

@@ -16,6 +16,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import com.cernauskas.shoppinglist.data.LocalCapabilities
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -39,14 +40,13 @@ fun OfflineNote(
      * is worth colouring: the other two heal on their own and this one does not. */
     refused: Boolean = false,
     modifier: Modifier = Modifier,
-    /**
-     * There is no server. Nothing is stale and nothing is waiting for a connection
-     * that is coming, so there is nothing to say — and a line apologising for one
-     * somebody declined is worse than silence.
-     */
-    onDeviceOnly: Boolean = false,
 ) {
-    AnimatedVisibility(visible = !onDeviceOnly && (offline || waiting > 0 || refused)) {
+    // Nothing is stale and nothing is waiting for a connection that is coming, so with
+    // no far end there is nothing to say -- and a line apologising for a connection
+    // somebody declined is worse than silence.
+    val syncing = LocalCapabilities.current.syncing
+
+    AnimatedVisibility(visible = syncing && (offline || waiting > 0 || refused)) {
         Row(
             modifier = modifier
                 .fillMaxWidth()
@@ -102,12 +102,11 @@ fun Unreachable(
     offline: Boolean,
     what: String,
     onRetry: () -> Unit,
-    /**
-     * There is no server to have failed. Nobody has written anything yet, which is not
-     * a failure and must not be reported as one.
-     */
-    onDeviceOnly: Boolean = false,
 ) {
+    // There is no server to have failed. Nobody has written anything yet, which is not
+    // a failure and must not be reported as one.
+    val onDeviceOnly = !LocalCapabilities.current.syncing
+
     Column(
         modifier = modifier.padding(32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),

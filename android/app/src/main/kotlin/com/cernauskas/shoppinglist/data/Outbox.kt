@@ -133,7 +133,17 @@ data class Adopted(
 )
 
 /** The queue, in the app's own vocabulary. */
-class Outbox(private val dao: OutboxDao) {
+class Outbox(
+    private val dao: OutboxDao,
+    /**
+     * Whether there is a server to send to.
+     *
+     * A closure rather than a flag, because the answer changes while the app is running:
+     * somebody adds a server in settings and everything from that moment is owed to it.
+     * Injected so a test can say which it means rather than reaching for storage.
+     */
+    private val sending: () -> Boolean = { !ServerDirectory.isOnDeviceOnly },
+) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -242,6 +252,19 @@ class Outbox(private val dao: OutboxDao) {
         list: ShoppingList,
         payload: JsonObject,
     ) = withContext(Dispatchers.IO) {
+        // **Nothing is queued on a device kept to itself.** Standalone is not server
+        // mode with the server unreachable; it is a device where its own database is
+        // the truth and there is nobody to tell. A queue there is a log of everything
+        // that has ever happened, written for a reader that does not exist -- unbounded,
+        // never drained, and invisible, because the dot and the unsent marks are both
+        // hidden without a server.
+        //
+        // Here rather than at the twenty-odd callers, for the usual reason: a caller
+        // that has to remember is a caller that will not. `CachingBackend` is the only
+        // thing that reaches this, and it is reached in standalone only when the
+        // device's own database would not open.
+        if (!sending()) return@withContext
+
         dao.add(
             QueuedOperation(
                 kind = kind,

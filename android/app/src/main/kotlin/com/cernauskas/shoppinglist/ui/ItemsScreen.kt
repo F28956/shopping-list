@@ -19,6 +19,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.cernauskas.shoppinglist.data.LocalCapabilities
 import com.cernauskas.shoppinglist.data.Item
 import com.cernauskas.shoppinglist.data.ServerDirectory
 import com.cernauskas.shoppinglist.data.Tag
@@ -68,7 +69,6 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
                         StatusDot(
                             waiting = state.waiting,
                             offline = state.offline,
-                            onDeviceOnly = ServerDirectory.isOnDeviceOnly,
                         )
                         Text(model.list.name)
                     }
@@ -132,7 +132,7 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
         // Except on a device kept to itself, where there is no server to have checked
         // with and this device is the only thing that could know.
         if (state.outstanding.isEmpty() && state.done.isEmpty() && !state.fresh &&
-            !ServerDirectory.isOnDeviceOnly
+            LocalCapabilities.current.syncing
         ) {
             Unreachable(
                 modifier = Modifier.fillMaxSize().padding(padding),
@@ -148,7 +148,6 @@ fun ItemsScreen(model: ItemsViewModel, onBack: () -> kotlin.Unit) {
                 state.offline,
                 state.waiting,
                 state.refused,
-                onDeviceOnly = ServerDirectory.isOnDeviceOnly,
             )
 
             LazyColumn(

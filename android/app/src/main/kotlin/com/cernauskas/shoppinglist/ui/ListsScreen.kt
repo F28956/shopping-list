@@ -25,6 +25,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.cernauskas.shoppinglist.data.LocalCapabilities
 import com.cernauskas.shoppinglist.data.ShoppingList
 import com.cernauskas.shoppinglist.data.Role
 import com.cernauskas.shoppinglist.data.tokenIn
@@ -49,7 +50,6 @@ fun ListsScreen(
     onManageServer: () -> Unit,
     onSettings: () -> Unit,
     /** There is no server. The default — see `ServerDirectory`. */
-    onDeviceOnly: Boolean,
 ) {
     val state by model.state.collectAsState()
     val snackbars = remember { SnackbarHostState() }
@@ -57,6 +57,7 @@ fun ListsScreen(
     // shrinking into a small one, and there is no large title here any more.
     val scroll = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
 
+    val capabilities = LocalCapabilities.current
     var naming by remember { mutableStateOf<Naming?>(null) }
     var deleting by remember { mutableStateOf<ShoppingList?>(null) }
     var sharing by remember { mutableStateOf<ShoppingList?>(null) }
@@ -82,7 +83,6 @@ fun ListsScreen(
                         StatusDot(
                             waiting = state.waiting,
                             offline = state.offline,
-                            onDeviceOnly = onDeviceOnly,
                         )
                         Text("Lists")
                     }
@@ -105,7 +105,7 @@ fun ListsScreen(
                         // no server there is nothing to join and no link that could
                         // mean anything, so the option is absent rather than present
                         // and failing. Signing out is the same: nobody is signed in.
-                        if (!onDeviceOnly) {
+                        if (capabilities.sharing) {
                             DropdownMenuItem(
                                 text = { Text("Join a list") },
                                 onClick = { open = false; joining = true },
@@ -162,7 +162,7 @@ fun ListsScreen(
             // Except on a device kept to itself, where there is no server to have
             // checked with and this device is the only thing that could know. There,
             // empty means empty.
-            state.lists.isEmpty() && !state.fresh && !onDeviceOnly -> Unreachable(
+            state.lists.isEmpty() && !state.fresh && capabilities.syncing -> Unreachable(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 offline = state.offline,
                 what = "Your lists",
@@ -171,11 +171,10 @@ fun ListsScreen(
 
             state.lists.isEmpty() -> Empty(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                onDeviceOnly = onDeviceOnly,
             )
 
             else -> Column(Modifier.fillMaxSize().padding(padding)) {
-                OfflineNote(state.offline, onDeviceOnly = onDeviceOnly)
+                OfflineNote(state.offline)
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -186,7 +185,6 @@ fun ListsScreen(
                             list = list,
                             onOpen = { onOpen(list) },
                             onShare = { sharing = list },
-                            onDeviceOnly = onDeviceOnly,
                             onRename = { naming = Naming.Rename(list) },
                             onDelete = { deleting = list },
                         )
@@ -261,11 +259,12 @@ private fun ListRow(
     list: ShoppingList,
     onOpen: () -> Unit,
     onShare: () -> Unit,
-    /** There is no server, so there is nothing to share to. */
-    onDeviceOnly: Boolean,
     onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    // Sharing, and only where there is somebody to share with -- hidden rather than
+    // offered and then refused.
+    val capabilities = LocalCapabilities.current
     var menu by remember { mutableStateOf(false) }
 
     ListItem(
@@ -289,7 +288,7 @@ private fun ListRow(
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     // Sharing is the mirror of joining: a share link names a server,
                     // and with no server there is no link to make.
-                    if (!onDeviceOnly) {
+                    if (capabilities.sharing) {
                         DropdownMenuItem(
                             text = { Text("Share") },
                             onClick = { menu = false; onShare() },
@@ -318,7 +317,6 @@ private fun ListRow(
 private fun Empty(
     modifier: Modifier,
     /** There is no server, so there is nothing to join. */
-    onDeviceOnly: Boolean,
 ) {
     Column(
         modifier = modifier.padding(32.dp),
@@ -336,7 +334,7 @@ private fun Empty(
             // second one here is the same action twice on a screen with nothing else
             // on it. Joining is absent for a different reason -- with no server there
             // is nothing to join and no link that could mean anything.
-            if (onDeviceOnly) {
+            if (!LocalCapabilities.current.sharing) {
                 "Make one with the button below. It stays on this phone."
             } else {
                 "Make one with the button below, or join a list somebody shared with you."
