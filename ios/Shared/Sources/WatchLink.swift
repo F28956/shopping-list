@@ -52,6 +52,29 @@ enum WatchLink {
     /// field is not a fifth place to remember to change.
     static let payload = "payload"
 
+    /// The second key in the same application context, holding ``Diagnostics``.
+    ///
+    /// Its own key rather than a field on ``Snapshot`` so that the two are versioned
+    /// apart. A log level changes on a completely different clock from a list, and
+    /// folding it in would mean bumping the snapshot's version -- which is what makes a
+    /// watch ignore a message outright. Adding a diagnostic setting must not be able to
+    /// blank somebody's lists on their wrist.
+    static let diagnostics = "diagnostics"
+
+    /// How much the watch should write down about itself.
+    ///
+    /// Decided on the phone, like everything else the watch is configured with: there is
+    /// no Settings app on a wrist worth putting a five-way picker in, and the warning
+    /// that has to be shown before `debug` or `trace` is turned on is a paragraph.
+    struct Diagnostics: Codable, Equatable, Versioned {
+        var version = Self.current
+        static let current = 1
+
+        /// A ``LogLevel``'s stored word. A word rather than the raw value for the reason
+        /// `LogLevel.stored` gives.
+        var level: String
+    }
+
     /// What the phone knows, as much of it as is worth sending.
     ///
     /// Names rather than ids wherever the watch would otherwise need a lookup table —
@@ -96,12 +119,14 @@ enum WatchLink {
     /// against the only copy of the lists there is and answers per operation, which is
     /// what lets the watch run the same drain in both modes.
     struct SyncRequest: Codable, Versioned {
-        var version = Snapshot.current
+        var version = Self.current
+        static let current = Snapshot.current
         var operations: [SyncOperation]
     }
 
     struct SyncReply: Codable, Versioned {
-        var version = Snapshot.current
+        var version = Self.current
+        static let current = Snapshot.current
         var outcomes: [Outcome]
     }
 
@@ -160,27 +185,35 @@ enum WatchLink {
     /// long list is shortened" and "the list is gone", and the watch says which it is.
     static let cap = 400
 
-    static func encode<T: Codable & Versioned>(_ value: T) -> [String: Any] {
+    static func encode<T: Codable & Versioned>(_ value: T, under key: String = payload) -> [String: Any] {
         guard let data = try? encoder.encode(value) else { return [:] }
-        return [payload: data]
+        return [key: data]
     }
 
     /// Reads a payload, or nothing.
     ///
     /// A version this build does not know is nothing, deliberately: see
-    /// `Snapshot.version`.
-    static func decode<T: Codable & Versioned>(_ message: [String: Any], as: T.Type) -> T? {
-        guard let data = message[payload] as? Data,
+    /// `Snapshot.version`. Compared against the *type's* own current version rather than
+    /// the snapshot's, which is what lets a second payload travel in the same context on
+    /// its own version -- see `diagnostics`.
+    static func decode<T: Codable & Versioned>(
+        _ message: [String: Any],
+        as: T.Type,
+        under key: String = payload
+    ) -> T? {
+        guard let data = message[key] as? Data,
               let decoded = try? decoder.decode(T.self, from: data),
-              decoded.version == Snapshot.current
+              decoded.version == T.current
         else { return nil }
         return decoded
     }
 
     /// Something that says which shape it is, so an old build can refuse a new message
-    /// rather than decode half of it. Both payloads carry it and both are checked.
+    /// rather than decode half of it. Every payload carries it and every one is checked.
     protocol Versioned {
         var version: Int { get }
+        /// The shape this build writes and is willing to read.
+        static var current: Int { get }
     }
 
     private static let encoder: JSONEncoder = {

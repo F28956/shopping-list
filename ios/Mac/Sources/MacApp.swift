@@ -5,6 +5,14 @@ import SwiftUI
 struct ShoppingListMacApp: App {
     @State private var identity = Identity()
 
+    init() {
+        // Before anything else this app does, so that whatever goes wrong at startup has
+        // somewhere to be written down. Nothing below `warn` is written until somebody
+        // turns logging on in Settings -- see `LogBook.level`.
+        Diagnostics.begin()
+
+    }
+
     var body: some Scene {
         WindowGroup {
             MacRootView()

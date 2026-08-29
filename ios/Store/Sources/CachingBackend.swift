@@ -44,7 +44,22 @@ actor CachingBackend {
     /// Not "is there a network": nothing here asks the system that, because the only
     /// question that matters is whether *this server* answered, and a phone with five
     /// bars and a server that is down is in exactly the state a phone in a basement is.
-    private var reachedIt = true
+    private var reachedIt = true {
+        didSet {
+            guard oldValue != reachedIt else { return }
+            // The one transition worth interrupting a reader of the log for: everything
+            // downstream of it -- the dot, the offline note, the difference between "you
+            // have no lists" and "I could not find out" -- is this boolean.
+            Log.info(
+                .backend, "the far end changed state",
+                Detail("reachable", .flag(reachedIt))
+            )
+            Metrics.shared.count(
+                Measured.reachability,
+                Tagged("to", .outcome(reachedIt ? .ok : .unreachable))
+            )
+        }
+    }
 
     init(remote: any Backend & Destination, cache: Cache = .shared) {
         self.remote = remote

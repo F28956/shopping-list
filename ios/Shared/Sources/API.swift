@@ -520,33 +520,101 @@ actor API {
         guard let token = await token() else { throw noToken() }
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
+        let route = Route(path: path)
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
         do {
             (bytes, response) = try await session.bytes(for: request)
         } catch {
+            // Warn rather than info: a stream that will not open is the difference
+            // between a list that updates itself and one that does not, and it is
+            // invisible on screen -- the app looks exactly right and is simply late for
+            // ever. This is the log line that tells the two apart.
+            Log.warn(
+                .stream, "could not open the change stream",
+                Detail("route", .route(route)),
+                Detail("why", .failure(Plain.Failure(error)))
+            )
+            Metrics.shared.count(
+                Measured.streamState,
+                Tagged("route", .route(route)),
+                Tagged("state", .outcome(.unreachable))
+            )
             throw APIError.transport(error)
         }
 
         guard let http = response as? HTTPURLResponse else { throw APIError.server(0) }
-        switch http.statusCode {
-        case 200..<300: break
-        case 401: throw APIError.unauthorized
-        case 403: throw APIError.forbidden
-        case 404: throw APIError.notFound
-        case let code: throw APIError.server(code)
+        let status = http.statusCode
+        guard (200..<300).contains(status) else {
+            Log.warn(
+                .stream, "the server would not open a change stream",
+                Detail("route", .route(route)),
+                Detail("outcome", .request(RequestOutcome(status: status)))
+            )
+            Metrics.shared.count(
+                Measured.streamState,
+                Tagged("route", .route(route)),
+                Tagged("state", .request(RequestOutcome(status: status)))
+            )
+            switch status {
+            case 401: throw APIError.unauthorized
+            case 403: throw APIError.forbidden
+            case 404: throw APIError.notFound
+            case let code: throw APIError.server(code)
+            }
         }
+
+        Log.info(.stream, "the change stream is open", Detail("route", .route(route)))
+        Metrics.shared.count(
+            Measured.streamState,
+            Tagged("route", .route(route)),
+            Tagged("state", .outcome(.ok))
+        )
 
         return AsyncThrowingStream { continuation in
             let reading = Task {
+                var nudges = 0
                 do {
                     for try await line in bytes.lines {
                         // Keep-alives arrive as comments (":" first) and event names
                         // as "event:", neither of which is news. A "data:" line is.
-                        if line.hasPrefix("data:") { continuation.yield(()) }
+                        if line.hasPrefix("data:") {
+                            nudges += 1
+                            Metrics.shared.count(
+                                Measured.streamNudge,
+                                Tagged("route", .route(route))
+                            )
+                            continuation.yield(())
+                        }
                     }
+                    // A stream that ends without an error has been hung up on, which is
+                    // ordinary -- a proxy timeout, a phone going to sleep -- and is still
+                    // worth a line, because "the list stopped updating" and "the stream
+                    // closed an hour ago" are the same event seen from two ends.
+                    Log.info(
+                        .stream, "the change stream closed",
+                        Detail("route", .route(route)),
+                        Detail("nudges", .count(nudges)),
+                        Detail("outcome", .outcome(.ok))
+                    )
+                    Metrics.shared.count(
+                        Measured.streamState,
+                        Tagged("route", .route(route)),
+                        Tagged("state", .outcome(.cancelled))
+                    )
                     continuation.finish()
                 } catch {
+                    Log.warn(
+                        .stream, "the change stream dropped",
+                        Detail("route", .route(route)),
+                        Detail("nudges", .count(nudges)),
+                        Detail("why", .failure(Plain.Failure(error)))
+                    )
+                    Metrics.shared.count(
+                        Measured.streamState,
+                        Tagged("route", .route(route)),
+                        Tagged("state", .outcome(.unreachable))
+                    )
                     continuation.finish(throwing: error)
                 }
             }
@@ -594,8 +662,71 @@ actor API {
         try await send(method, path, nil, body)
     }
 
+    /// Every request, timed and counted.
+    ///
+    /// Wrapped around ``perform(_:_:_:_:)`` rather than written into it so there is one
+    /// place a request can end — six `throw`s and one `return` were seven places to
+    /// remember to record, and the ones that would have been forgotten are the failures,
+    /// which are the interesting half.
+    ///
+    /// What is recorded is a ``Route`` and a ``RequestOutcome``: a class of request and
+    /// one of five endings. Never the path -- see `Route`, which exists because
+    /// `/api/lists/41/items` names a list and a share token travels in one too.
     @discardableResult
     private func send(
+        _ method: String,
+        _ path: String,
+        _ body: [String: Any]?,
+        _ encoded: Data? = nil
+    ) async throws -> Data {
+        let route = Route(path: path)
+        let began = DispatchTime.now()
+
+        do {
+            let data = try await perform(method, path, body, encoded)
+            note(route, .ok, since: began, bytes: data.count)
+            return data
+        } catch {
+            note(route, RequestOutcome(error: error), since: began, bytes: 0)
+            throw error
+        }
+    }
+
+    /// Writes down what one request cost and how it ended.
+    ///
+    /// `info` and below, so it is silent until somebody turns logging on -- a phone
+    /// scrolling a list makes a request per screen and this would otherwise be the
+    /// loudest thing in the file.
+    private func note(
+        _ route: Route,
+        _ outcome: RequestOutcome,
+        since began: DispatchTime,
+        bytes: Int
+    ) {
+        let took = Double(DispatchTime.now().uptimeNanoseconds - began.uptimeNanoseconds) / 1_000_000
+
+        Log.info(
+            .backend, "asked the server",
+            Detail("route", .route(route)),
+            Detail("outcome", .request(outcome)),
+            Detail("took", .milliseconds(Int(took))),
+            Detail("bytes", .count(bytes))
+        )
+        Metrics.shared.observe(
+            Measured.requestDuration,
+            milliseconds: took,
+            Tagged("route", .route(route)),
+            Tagged("outcome", .request(outcome))
+        )
+        Metrics.shared.count(
+            Measured.requests,
+            Tagged("route", .route(route)),
+            Tagged("outcome", .request(outcome))
+        )
+    }
+
+    @discardableResult
+    private func perform(
         _ method: String,
         _ path: String,
         _ body: [String: Any]?,

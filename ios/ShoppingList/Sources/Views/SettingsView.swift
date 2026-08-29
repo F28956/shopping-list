@@ -93,6 +93,10 @@ struct SettingsView: View {
                               """
                     )
                 }
+
+                // Last, and below the server: it is the section a person opens once,
+                // when something has gone wrong and somebody has asked them to.
+                DiagnosticsSettings()
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)

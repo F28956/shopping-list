@@ -348,7 +348,16 @@ final class Outbox: @unchecked Sendable {
     /// - **No connection** — nothing is forgotten and nothing is said. The ordinary case.
     func drain(through destination: Destination) async -> Drained {
         let queued = all()
+        // Reported whether or not there is anything to send: a depth of nought every
+        // minute is what makes a depth of six hundred legible, and a series that simply
+        // stops arriving looks the same as a device switched off.
+        Metrics.shared.gauge(Measured.queueDepth, queued.count)
         guard !queued.isEmpty else { return Drained() }
+
+        Log.info(.queue, "sending what is waiting", Detail("operations", .count(queued.count)))
+        // The operations themselves name rows and carry what somebody typed, so they
+        // are `debug` and no higher.
+        Log.debug(.queue, "the queue holds \(queued.map(\.onTheWire))")
 
         let answers: [AppliedOperation]
         do {
@@ -362,7 +371,16 @@ final class Outbox: @unchecked Sendable {
             // neither writes anything down. Not an assertion, unlike the cache's
             // failures -- a phone in a shop takes this path every few seconds and it is
             // not a bug.
-            print("[outbox] could not send \(queued.count) operations: \(error)")
+            //
+            // A `print` until now, which reaches Xcode's console and nowhere a phone in a
+            // shop can be read from -- and this is the single most useful line in the
+            // file when somebody says their list did not sync.
+            Log.warn(
+                .queue, "the queue did not move",
+                Detail("waiting", .count(queued.count)),
+                Detail("why", .failure(Plain.Failure(error)))
+            )
+            Metrics.shared.count(Measured.queueDrained, Tagged("result", .outcome(.unreachable)))
             return Drained(waiting: queued.count)
         }
 
@@ -387,6 +405,29 @@ final class Outbox: @unchecked Sendable {
                 forget(answer.id)
                 if let said = answer.lost { lost.append(said) }
             }
+        }
+
+        Log.info(
+            .queue, "the queue moved",
+            Detail("sent", .count(sent)),
+            Detail("waiting", .count(waiting)),
+            Detail("lost", .count(lost.count)),
+            Detail("adopted", .count(adopted.count)),
+            Detail("refused", .flag(refused))
+        )
+        // What was lost is a sentence about somebody's list -- "the bread you crossed
+        // off had been deleted" -- so it is counted here and spelled out only at `debug`.
+        Log.debug(.queue, "what will never land: \(lost)")
+
+        Metrics.shared.gauge(Measured.queueDepth, waiting)
+        Metrics.shared.count(Measured.queueDrained, Tagged("result", .outcome(.ok)), by: sent)
+        if refused {
+            Metrics.shared.count(Measured.syncRefused)
+            Metrics.shared.count(Measured.queueDrained, Tagged("result", .outcome(.refused)))
+        }
+        if !lost.isEmpty {
+            Metrics.shared.count(Measured.syncLost, by: lost.count)
+            Metrics.shared.count(Measured.queueDrained, Tagged("result", .outcome(.lost)))
         }
 
         return Drained(sent: sent, waiting: waiting, lost: lost, adopted: adopted, refused: refused)
