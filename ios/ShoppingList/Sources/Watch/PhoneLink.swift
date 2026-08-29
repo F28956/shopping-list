@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import WatchConnectivity
 
 /// The phone's half of the link to the watch.
@@ -63,6 +64,30 @@ final class PhoneLink: NSObject, WCSessionDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.pushSoon() }
         }
+
+        // Going away is the last chance to say anything.
+        //
+        // Every other push is debounced by 300ms, because loading a list writes the
+        // lists and then the items and a screenful of ticks writes once each -- sending
+        // a snapshot per write would spend the link on states nobody will ever see. But
+        // a debounce is a Task that is sleeping, and an app that is closed while it
+        // sleeps never wakes up: the last thing somebody did before putting the phone
+        // in their pocket was exactly the thing the watch never heard about.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pushNow() }
+        }
+    }
+
+    /// Pushes without waiting for the burst to settle.
+    ///
+    /// For the one case where there may not be a later: the app is going away.
+    private func pushNow() {
+        pending?.cancel()
+        push()
     }
 
     /// Pushes once, after the current burst of changes.
