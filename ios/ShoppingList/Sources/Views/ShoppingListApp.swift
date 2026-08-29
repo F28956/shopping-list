@@ -107,9 +107,21 @@ struct RootView: View {
         )
         // The device answers for itself when nobody has chosen a server, unless its
         // database will not open -- which falls back to the old path, cache and all.
-        let backend: any Backend = (ServerDirectory.isOnDeviceOnly
-            ? LocalBackend.readyForUse()
-            : nil) ?? CachingBackend(remote: api)
+        //
+        // And when somebody *has* chosen one, what this device already holds has to get
+        // into the cache before `CachingBackend` reads it: everything standalone is in
+        // `device.sqlite`, the queue is built by walking `cache.sqlite`, and until these
+        // two were joined adopting a server showed an empty account with a year of
+        // shopping still on disk. Nothing is deleted, so leaving the server brings it
+        // all back.
+        let backend: any Backend
+        if ServerDirectory.isOnDeviceOnly {
+            LocalBackend.mayHandOverAgain()
+            backend = LocalBackend.readyForUse() ?? CachingBackend(remote: api)
+        } else {
+            LocalBackend.handOverToAServer()
+            backend = CachingBackend(remote: api)
+        }
 
         self.api = api
         self.backend = backend

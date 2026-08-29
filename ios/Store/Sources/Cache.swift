@@ -598,6 +598,79 @@ final class Cache: @unchecked Sendable {
         return list
     }
 
+    /// Takes lists and their rows in as this device's own, keeping the names a server
+    /// will be told.
+    ///
+    /// The other end of `handOverIfNeeded`. That walks the cache for lists no server has
+    /// heard of and queues them; this is how the lists on a device that has been
+    /// answering for *itself* get into the cache to be walked. Without it, adopting a
+    /// server showed an empty account with a year of shopping still on disk: everything
+    /// lives in `device.sqlite`, `handOverIfNeeded` reads `cache.sqlite`, and nothing
+    /// joined the two.
+    ///
+    /// The uuids come in rather than being minted, unlike `makeListHere`. They are what
+    /// every queued operation names and what the server records, and a new one here
+    /// would make the same list twice the first time these two ever met. The ids are
+    /// local because that is precisely what "no server has heard of this" is written as.
+    ///
+    /// One transaction: a half-written handover is a device that would queue some of
+    /// somebody's shopping and quietly drop the rest.
+    func takeIn(_ incoming: [(list: List, items: [Item])]) {
+        guard !incoming.isEmpty else { return }
+
+        var nextList = nextLocalListID()
+        var nextItem = readOne { db in
+            try Int64.fetchOne(db, sql: "SELECT min(id) FROM items")
+        } ?? 0
+        nextItem = min(nextItem, 0)
+
+        write { db in
+            var position = try Int.fetchOne(db, sql: "SELECT count(*) FROM lists") ?? 0
+
+            for (list, items) in incoming {
+                // Already here, so this has run before or the two stores overlap. Left
+                // alone rather than written twice.
+                let known = try Int64.fetchOne(
+                    db,
+                    sql: "SELECT count(*) FROM lists WHERE uuid = ?",
+                    arguments: [list.uuid]
+                ) ?? 0
+                guard known == 0 else { continue }
+
+                try db.execute(
+                    sql: """
+                    INSERT INTO lists (id, uuid, name, owner_id, role, position)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        nextList, list.uuid, list.name, list.ownerID,
+                        Role.owner.rawValue, position,
+                    ]
+                )
+
+                for (at, item) in items.enumerated() {
+                    nextItem -= 1
+                    try db.execute(
+                        sql: """
+                        INSERT INTO items
+                            (id, uuid, list_id, name, amount, unit_id, done_at, tag_ids,
+                             position)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        arguments: [
+                            nextItem, item.uuid, nextList, item.name, item.amount,
+                            item.unitID, item.doneAt,
+                            item.tagIDs.map(String.init).joined(separator: ","), at,
+                        ]
+                    )
+                }
+
+                nextList -= 1
+                position += 1
+            }
+        }
+    }
+
     private func nextLocalListID() -> Int64 {
         let lowest = readOne { db in
             try Int64.fetchOne(db, sql: "SELECT min(id) FROM lists")

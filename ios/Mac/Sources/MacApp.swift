@@ -70,8 +70,16 @@ struct MacRootView: View {
         )
         self.api = api
         // As on the phone: the Mac answers for itself when nobody has chosen a
-        // server, and falls back to the old path if the database will not open.
-        self.standalone = ServerDirectory.isOnDeviceOnly ? LocalBackend.readyForUse() : nil
+        // server, and falls back to the old path if the database will not open. And
+        // when a server is chosen, what this Mac holds is handed to the cache first, or
+        // adopting one would show an empty account with everything still on disk.
+        if ServerDirectory.isOnDeviceOnly {
+            LocalBackend.mayHandOverAgain()
+            self.standalone = LocalBackend.readyForUse()
+        } else {
+            LocalBackend.handOverToAServer()
+            self.standalone = nil
+        }
     }
 
     var body: some View {

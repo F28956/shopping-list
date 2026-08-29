@@ -94,6 +94,93 @@ actor LocalBackend {
         return backend
     }
 
+    /// Puts what this device holds where a server can be told about it.
+    ///
+    /// The mirror of ``readyForUse(cache:)``, and the half that was missing. That one
+    /// carries the old cache *into* `device.sqlite` when somebody stops using a server;
+    /// this carries `device.sqlite` back *out* when somebody adopts one. Without it,
+    /// choosing a server showed an empty account with everything still on disk —
+    /// `handOverIfNeeded` walks the cache for lists no server has heard of, and on a
+    /// device that has only ever answered for itself the cache is empty.
+    ///
+    /// Nothing is deleted, for the same reason as the other direction: `device.sqlite`
+    /// is left exactly as it was, so stopping the server again brings it all back. That
+    /// is not a nicety — it is what makes this safe to run before anybody has proved the
+    /// server works.
+    ///
+    /// Returns false if the device's database will not open, which a caller should treat
+    /// as "do not adopt the server yet": going ahead would show an empty account, which
+    /// is the bug this exists to fix.
+    ///
+    /// - Note: Filing is carried across by tag *id*, and those are this device's. They
+    ///   agree with a server's for the categories both seeded from `reference.json`, and
+    ///   do not for one somebody made here — the server refuses a tag id it does not
+    ///   know, the drain forgets it, and the item arrives unfiled. Fixing that properly
+    ///   means naming tags on the wire rather than numbering them.
+    static func handOverToAServer(cache: Cache = .shared) -> Bool {
+        guard !hasHandedOver else { return true }
+        guard let backend = LocalBackend() else { return false }
+
+        guard let taken = backend.everythingHere() else { return false }
+        cache.takeIn(taken)
+        hasHandedOver = true
+        return true
+    }
+
+    /// Whether this device has already been handed to a server.
+    ///
+    /// Its own flag rather than `device.tookOver` reversed: the two are different
+    /// journeys and a device can make both, in either order, more than once. Somebody
+    /// who adopts a server, leaves it, and adopts another has handed over twice — and
+    /// what the second handover carries is whatever `device.sqlite` holds by then.
+    private static var hasHandedOver: Bool {
+        get { UserDefaults.standard.bool(forKey: "device.handedOver") }
+        set { UserDefaults.standard.set(newValue, forKey: "device.handedOver") }
+    }
+
+    /// Lets a device that has left one server be handed to the next.
+    ///
+    /// Called when a server is given up, because at that moment `device.sqlite` becomes
+    /// the truth again and anything added to it afterwards has never been sent anywhere.
+    static func mayHandOverAgain() {
+        hasHandedOver = false
+    }
+
+    /// Every list on this device with its rows, read straight through the FFI.
+    ///
+    /// `nonisolated` and synchronous for the same reason as `bringAcross`: this runs
+    /// once, at a composition root, before anything `await`s and before a screen exists
+    /// to show a half-done job.
+    nonisolated func everythingHere() -> [(list: List, items: [Item])]? {
+        guard let lists: [List] = try? decoded(embedded_lists(handle)) else { return nil }
+
+        var taken: [(list: List, items: [Item])] = []
+        for list in lists {
+            guard let rows: [Item] = try? decoded(embedded_items(handle, list.id)) else {
+                // One list that will not read is not a reason to hand over the others
+                // and quietly lose this one. Better to do nothing and stay standalone.
+                return nil
+            }
+            taken.append((list, rows))
+        }
+        return taken
+    }
+
+    /// `answer`, for a caller that is not on the actor.
+    nonisolated private func decoded<T: Decodable>(
+        _ raw: UnsafeMutablePointer<CChar>?
+    ) throws -> T {
+        guard let raw else { throw APIError.transport(NoLocalServer()) }
+        defer { embedded_free(raw) }
+
+        let data = Data(String(cString: raw).utf8)
+        let envelope = try Self.decoder.decode(Envelope<T>.self, from: data)
+
+        if let said = envelope.error { throw APIError.badInput(said) }
+        guard let value = envelope.ok else { throw APIError.transport(NoLocalServer()) }
+        return value
+    }
+
     /// Whether this device has already handed its cache over.
     ///
     /// A flag rather than "is the new database empty", because those differ in the case

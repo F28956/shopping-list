@@ -404,3 +404,146 @@ struct LocalBackendTests {
         }
     }
 }
+
+// MARK: - Handing a standalone device to a server
+
+/// The journey that had no code: everything a device made while answering for itself,
+/// getting to a server the day somebody chooses one.
+///
+/// `readyForUse` carries the old cache *into* `device.sqlite`. This is the other
+/// direction, and until now it did not exist — so adopting a server showed an empty
+/// account with a year of shopping still on disk, no error anywhere, and no way back
+/// except giving the server up again.
+struct HandingOverToAServerTests {
+
+    private func device() -> (LocalBackend, () -> Void)? {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("handover-\(UUID().uuidString).sqlite")
+        guard let made = LocalBackend(at: path) else { return nil }
+        return (made, { try? FileManager.default.removeItem(at: path) })
+    }
+
+    /// The whole journey, end to end: made on a device with no server, and afterwards
+    /// sitting in the queue with everything the server needs to be told.
+    @Test("what a standalone device holds ends up queued for the server")
+    func everythingReachesTheQueue() async throws {
+        let (backend, clean) = try #require(device())
+        defer { clean() }
+
+        let list = try await backend.createList(named: "Household")
+        try await backend.add("2 kg apples", to: list)
+        try await backend.add("milk", to: list)
+        let rows = try await backend.items(on: list).items
+        let milk = try #require(rows.first { $0.name.lowercased().contains("milk") })
+        try await backend.setDone(milk, on: list, done: true)
+
+        // A server appears. `sending` is true because one has been chosen.
+        let cache = Cache.inMemory(sending: { true })
+        let taken = try #require(backend.everythingHere())
+        cache.takeIn(taken)
+        cache.handOverIfNeeded()
+
+        let queued = cache.outbox.all()
+        #expect(
+            queued.contains { $0.kind == QueuedOperation.Kind.makeList },
+            "the list itself was never queued"
+        )
+        let added = queued.filter { $0.kind == QueuedOperation.Kind.add }
+        #expect(added.count == 2, "expected both rows, queued \(added.count)")
+        #expect(
+            queued.contains { $0.kind == QueuedOperation.Kind.setDone },
+            "what had been crossed off arrived as outstanding"
+        )
+    }
+
+    /// The uuids have to survive, or the first drain makes a second copy of everything.
+    ///
+    /// `MakeList` and `Add` are both idempotent by uuid on the server. Minting new ones
+    /// here — which is what `makeListHere` does, and what the obvious implementation
+    /// would have reused — would mean the device and the server disagreed about the
+    /// name of every row from the moment they met.
+    @Test("the names the server will be told are the device's own")
+    func uuidsSurviveTheCrossing() async throws {
+        let (backend, clean) = try #require(device())
+        defer { clean() }
+
+        let list = try await backend.createList(named: "Household")
+        try await backend.add("apples", to: list)
+        let apples = try #require(try await backend.items(on: list).items.first)
+
+        let cache = Cache.inMemory(sending: { true })
+        cache.takeIn(try #require(backend.everythingHere()))
+
+        let carried = try #require(cache.lists().first)
+        #expect(carried.uuid == list.uuid, "the list was renamed on the way")
+        #expect(Cache.isLocal(carried), "it arrived as something the server has heard of")
+        #expect(
+            cache.items(on: carried).map(\.uuid) == [apples.uuid],
+            "the row was renamed on the way"
+        )
+    }
+
+    /// Two lists, because the ids are minted here and the obvious loop gives the second
+    /// list's rows the ids the first list's already have — which is a primary key, and
+    /// which is the bug this codebase has now hit three times.
+    @Test("a second list does not collide with the first")
+    func twoListsBothArrive() async throws {
+        let (backend, clean) = try #require(device())
+        defer { clean() }
+
+        let home = try await backend.createList(named: "Home")
+        let boat = try await backend.createList(named: "Boat")
+        try await backend.add("apples", to: home)
+        try await backend.add("rope", to: boat)
+
+        let cache = Cache.inMemory(sending: { true })
+        cache.takeIn(try #require(backend.everythingHere()))
+
+        #expect(cache.lists().count == 2, "one of the two lists was lost")
+        for list in cache.lists() {
+            #expect(
+                cache.items(on: list).count == 1,
+                "\(list.name) came out with \(cache.items(on: list).count) rows"
+            )
+        }
+    }
+
+    /// Running it twice must not make a second copy — a device that adopts a server,
+    /// gives it up and adopts another has been through here more than once.
+    @Test("handing over twice does not duplicate anything")
+    func theCrossingIsIdempotent() async throws {
+        let (backend, clean) = try #require(device())
+        defer { clean() }
+
+        let list = try await backend.createList(named: "Household")
+        try await backend.add("apples", to: list)
+
+        let cache = Cache.inMemory(sending: { true })
+        let taken = try #require(backend.everythingHere())
+        cache.takeIn(taken)
+        cache.takeIn(taken)
+
+        #expect(cache.lists().count == 1, "the same list arrived twice")
+        #expect(cache.items(on: try #require(cache.lists().first)).count == 1)
+    }
+
+    /// And nothing is taken away. This is what makes adopting a server reversible
+    /// before anybody has proved the server works.
+    @Test("the device keeps everything it handed over")
+    func nothingIsDeleted() async throws {
+        let (backend, clean) = try #require(device())
+        defer { clean() }
+
+        let list = try await backend.createList(named: "Household")
+        try await backend.add("apples", to: list)
+
+        let cache = Cache.inMemory(sending: { true })
+        cache.takeIn(try #require(backend.everythingHere()))
+
+        #expect(try await backend.lists().items.count == 1, "the device lost its list")
+        #expect(
+            try await backend.items(on: list).items.count == 1,
+            "the device lost its shopping"
+        )
+    }
+}
