@@ -96,6 +96,21 @@ final class PhoneLink: NSObject, WCSessionDelegate {
     /// writes once each. Sending a snapshot per write would spend the link on states
     /// nobody will ever see; the watch only wants the one at the end.
     private func pushSoon() {
+        // A nudge raised by this type's own reading is not news.
+        //
+        // `snapshot()` reads through the backend, and a `CachingBackend` read writes
+        // what it found to the cache -- which is a change, which is a nudge, which asks
+        // for another snapshot. Left alone that is a loop at the speed of the network:
+        // it ran at twelve hundred requests a minute against a server with nothing to
+        // say, and every one of them was this type talking to itself.
+        //
+        // Remembered rather than dropped. A change made somewhere else while a snapshot
+        // is being built is real news, and it arrives in exactly this window.
+        guard !reading else {
+            heardWhileReading = true
+            return
+        }
+
         pending?.cancel()
         pending = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(300))
@@ -105,6 +120,12 @@ final class PhoneLink: NSObject, WCSessionDelegate {
     }
 
     private var pending: Task<Void, Never>?
+
+    /// Whether a snapshot is being read right now. See ``pushSoon()``.
+    private var reading = false
+
+    /// Whether anything asked for a push while one was being read.
+    private var heardWhileReading = false
 
     /// Watches everything this phone holds, so that a change made here reaches the wrist.
     private var following: Task<Void, Never>?
@@ -134,58 +155,45 @@ final class PhoneLink: NSObject, WCSessionDelegate {
     /// not re-read when another moves. "Anything at all" is the union of the two, and it
     /// has to be rebuilt whenever the set changes -- a list made a moment ago has no row
     /// stream yet.
+    /// The lists ``follow()`` is subscribed to.
+    ///
+    /// Compared against what a snapshot actually found, which is a read this was doing
+    /// anyway. The alternative -- asking the backend for the lists inside the nudge
+    /// handler -- is a network round trip per nudge, and the read writes the cache,
+    /// which raises another nudge. That version ran at seventy requests a second.
+    private var subscribedTo: Set<String> = []
+
     private func follow() {
         following?.cancel()
         following = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                guard let self, let backend = await self.backend?() else { return }
-                let lists = (try? await backend.lists().items) ?? []
-                let watching = Set(lists.map(\.uuid))
+            guard let self, let backend = await self.backend?() else { return }
+            let lists = (try? await backend.lists().items) ?? []
+            self.subscribedTo = Set(lists.map(\.uuid))
 
-                // One task per list plus one for the set, and the *only* thing that ends
-                // the round is the set of lists actually being different. A row moving
-                // pushes and carries on; a stream that fails leaves its own task and
-                // takes nothing else with it.
-                //
-                // This used to end the round whenever any of them returned, and rebuild
-                // everything after a 250ms floor. The set-of-lists stream answers the
-                // instant it is subscribed to -- a `ValueObservation` hands over the
-                // current state, which is not a change -- so it returned immediately,
-                // every time, for ever: two hundred and ten connections a minute to a
-                // single list's event stream, and news from another device arriving only
-                // when a reconnect happened to catch it.
-                let rows = lists.map { list in
-                    Task { @MainActor in
+            // One task per list plus one for the set, and every one of them does the
+            // same thing: ask for a push. `pushSoon` is debounced, so a burst of nudges
+            // costs one snapshot rather than one each.
+            //
+            // Nothing here decides to rebuild. Two earlier versions did -- one ending
+            // the round whenever any stream returned, one asking whether the set had
+            // changed on every nudge -- and both turned into a loop, because a read
+            // writes the cache and a cache write is another nudge. What the
+            // subscriptions are for is *sending*; noticing that the set of lists moved
+            // is `hand(over:)`'s job, from the snapshot it was building anyway.
+            await withTaskGroup(of: Void.self) { group in
+                for list in lists {
+                    group.addTask { @MainActor in
                         guard let stream = try? await backend.changes(on: list) else { return }
                         do {
                             for try await _ in stream { self.pushSoon() }
                         } catch {}
                     }
                 }
-
-                let set = Task { @MainActor () -> Bool in
-                    guard let stream = try? await backend.listChanges() else { return false }
+                group.addTask { @MainActor in
+                    guard let stream = try? await backend.listChanges() else { return }
                     do {
-                        for try await _ in stream {
-                            self.pushSoon()
-                            // Only a different *set* needs new subscriptions. A list
-                            // renamed, or one of its rows moving, is news to send and
-                            // nothing to rebuild.
-                            let now = Set(((try? await backend.lists().items) ?? []).map(\.uuid))
-                            if now != watching { return true }
-                        }
+                        for try await _ in stream { self.pushSoon() }
                     } catch {}
-                    return false
-                }
-
-                let changed = await set.value
-                rows.forEach { $0.cancel() }
-                guard changed else {
-                    // The stream ended rather than saying anything. Wait before trying
-                    // again: whatever is wrong is not fixed by asking immediately, and a
-                    // tight loop here is what the last version turned into.
-                    try? await Task.sleep(for: .seconds(10))
-                    continue
                 }
             }
         }
@@ -215,7 +223,42 @@ final class PhoneLink: NSObject, WCSessionDelegate {
     /// database on this device or a server -- and `push` is called from notification
     /// handlers that are not.
     private func hand(over session: WCSession) async {
-        guard let snapshot = await snapshot(), snapshot != lastSent else { return }
+        reading = true
+        let taken = await snapshot()
+
+        // Whether the read found anything the watch has not already been told.
+        //
+        // This is what tells our own nudges from real ones. Every read raises nudges,
+        // because a `CachingBackend` read writes what it found -- so "something asked
+        // for a push while I was reading" is true on every single pass and cannot mean
+        // anything on its own. What can: if the snapshot is identical to the last one
+        // sent, nothing happened, and whatever nudged was this type talking to itself.
+        //
+        // Answering that with another read is the loop. It ran at twelve hundred
+        // requests a minute, then at five hundred when the nudge was merely delayed
+        // rather than judged.
+        let changed = taken != nil && taken != lastSent
+
+        // A moment after the read, because the cache's own observation fires just behind
+        // the write that caused it -- ending the window on the last line would let the
+        // tail of our own writes back in.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            reading = false
+            let heard = heardWhileReading
+            heardWhileReading = false
+            // Only when the last look actually found something. A change made elsewhere
+            // during the window is then followed up; our own echo is not.
+            if heard && changed { pushSoon() }
+        }
+
+        guard let snapshot = taken, changed else { return }
+
+        // The set of lists moved, so the subscriptions are watching the wrong ones.
+        // Noticed here because the snapshot has just read every list -- no extra round
+        // trip, and only when it genuinely differs.
+        let found = Set(snapshot.lists.map(\.id))
+        if found != subscribedTo { follow() }
 
         do {
             try session.updateApplicationContext(WatchLink.encode(snapshot))
