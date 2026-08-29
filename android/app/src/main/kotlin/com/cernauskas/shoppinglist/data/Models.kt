@@ -54,7 +54,23 @@ data class Item(
 }
 
 @Serializable
-data class Unit(val id: Long, val name: String)
+data class Unit(
+    val id: Long,
+    val name: String,
+    /**
+     * Whether it may be written with no number in front of it — `pint milk`.
+     *
+     * A fact about each unit rather than a guess, and read from the same place the
+     * server reads it. Half of them are also the first word of ordinary things to buy —
+     * `can opener`, `tin foil`, `box grater` — and reading those as a quantity would be
+     * worse than not helping.
+     *
+     * Defaulted here and **not** where it crosses to the shared rules: a caller that
+     * forgets it there gets the old behaviour silently, which is how `pint milk` came to
+     * mean one unit of "pint milk" on a phone.
+     */
+    val bare: Boolean = false,
+)
 
 @Serializable
 data class Tag(

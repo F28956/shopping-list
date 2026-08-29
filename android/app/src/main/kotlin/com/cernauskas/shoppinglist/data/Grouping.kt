@@ -145,16 +145,21 @@ fun tokenIn(pasted: String): String? {
         // The fragment, after the `#`. A browser never sends a fragment to a server,
         // so a token there is written into no access log and no proxy log on the way
         // to somebody's home server, for the week it stays valid.
-        if (trimmed.contains('#')) {
-            return trimmed.substringAfterLast('#').ifEmpty { null }
-        }
+        // An *empty* fragment is not a token, and it does not mean there is none: a
+        // link ending in a bare `#` still carries one in its path. Returning null there
+        // is why `…/join/TOKEN#` worked on an iPhone and not here.
+        val fragment = trimmed.substringAfterLast('#', "")
+        if (fragment.isNotEmpty()) return fragment
+        // Whatever is left once the empty fragment comes off, or `…/join#` reads as a
+        // path ending in `join#` and is not recognised as the join page at all.
+        val withoutFragment = trimmed.substringBefore('#')
         // The older shape, with the token in the path. Still read, so that a link sent
         // before a server was updated keeps working in somebody's inbox.
         //
         // The scheme comes off first. Without that, "http://localhost:8080/" reduces
         // to "localhost:8080" and a bare origin is read as an invitation -- so an app
         // pointed at a server, with no link at all, would try to redeem its own host.
-        val afterHost = trimmed.substringAfter("://").substringAfter('/', "")
+        val afterHost = withoutFragment.substringAfter("://").substringAfter('/', "")
         return afterHost.trimEnd('/').substringAfterLast('/')
             .takeIf { it.isNotEmpty() && it != "join" }
     }

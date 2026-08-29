@@ -71,6 +71,33 @@ data class CachedReference(
     val position: Int,
 )
 
+/**
+ * What a list has taught the box, as this device last heard it.
+ *
+ * Keyed by the pair, because the memory belongs to the *list* rather than to whoever is
+ * signed in — the server moved it there so a household shares one. The same name on two
+ * lists is two habits: milk in pints at home, milk in litres for the office.
+ *
+ * Cached for the same reason the rows are: without it a phone in a shop offers no
+ * suggestions at all, and a re-typed line arrives bare — no amount, no unit, nothing
+ * filed. On a device answering for itself this is not used; the device's own server has
+ * the real thing.
+ */
+@Entity(tableName = "history", primaryKeys = ["list_id", "name"])
+data class CachedRemembered(
+    @ColumnInfo(name = "list_id") val listId: Long,
+    /** Trimmed and lowercased, so `Milk` and `milk ` are one memory. */
+    val name: String,
+    /** The spelling last used, for showing back. */
+    val display: String,
+    @ColumnInfo(name = "unit_id") val unitId: Long?,
+    val amount: Double?,
+    /** Comma-separated, as the items table does it and for the same reason. */
+    @ColumnInfo(name = "tag_ids") val tagIds: String,
+    val uses: Long,
+    @ColumnInfo(name = "last_used_at") val lastUsedAt: Long,
+)
+
 @Dao
 interface CacheDao {
     @Query("SELECT * FROM lists ORDER BY position")
@@ -117,6 +144,21 @@ interface CacheDao {
      */
     @Query("SELECT MIN(id) FROM items")
     suspend fun lowestItemId(): Long?
+
+    @Query("SELECT * FROM history WHERE list_id = :listId")
+    suspend fun remembered(listId: Long): List<CachedRemembered>
+
+    @Query("DELETE FROM history WHERE list_id = :listId")
+    suspend fun forgetRemembered(listId: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putRemembered(rows: List<CachedRemembered>)
+
+    @Transaction
+    suspend fun replaceRemembered(listId: Long, rows: List<CachedRemembered>) {
+        forgetRemembered(listId)
+        putRemembered(rows)
+    }
 
     @Query("UPDATE lists SET id = :real, owner_id = :owner WHERE id = :local")
     suspend fun renumberList(local: Long, real: Long, owner: Long)
@@ -214,9 +256,10 @@ interface CacheDao {
         CachedList::class,
         CachedItem::class,
         CachedReference::class,
+        CachedRemembered::class,
         QueuedOperation::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class CacheDatabase : RoomDatabase() {
@@ -234,6 +277,33 @@ abstract class CacheDatabase : RoomDatabase() {
  *
  * Kept in step with `app/schemas/…/2.json`, which is committed for exactly this reason.
  */
+/**
+ * Adds what each list has taught the box.
+ *
+ * Written by hand for the same reason as the outbox beside it, though for a weaker one:
+ * this table *is* disposable -- the server can hand it back -- but it shares a file with
+ * a queue that is not, so the file is migrated rather than dropped.
+ */
+val ADD_THE_MEMORY = object : Migration(2, 3) {
+    override fun migrate(connection: SupportSQLiteDatabase) {
+        connection.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `history` (
+                `list_id` INTEGER NOT NULL,
+                `name` TEXT NOT NULL,
+                `display` TEXT NOT NULL,
+                `unit_id` INTEGER,
+                `amount` REAL,
+                `tag_ids` TEXT NOT NULL,
+                `uses` INTEGER NOT NULL,
+                `last_used_at` INTEGER NOT NULL,
+                PRIMARY KEY(`list_id`, `name`)
+            )
+            """.trimIndent()
+        )
+    }
+}
+
 val ADD_THE_OUTBOX = object : Migration(1, 2) {
     override fun migrate(connection: SupportSQLiteDatabase) {
         connection.execSQL(
@@ -302,7 +372,7 @@ class Cache(
         // beside them holds changes that exist nowhere else, and the two share a file.
         // So the file is migrated properly and nobody loses a shop's worth of ticks to
         // an app update.
-        .addMigrations(ADD_THE_OUTBOX)
+        .addMigrations(ADD_THE_OUTBOX, ADD_THE_MEMORY)
         .build()
 
     private val dao = db.dao()
@@ -367,6 +437,46 @@ class Cache(
      * Counting down from the lowest already used, so two lists made in the same second
      * cannot collide.
      */
+    /** What this list has taught the box, as last heard from the server. */
+    suspend fun rememberedFor(list: ShoppingList): List<RememberedEntry> = read {
+        dao.remembered(list.id).map {
+            RememberedEntry(
+                name = it.name,
+                display = it.display,
+                unitId = it.unitId,
+                amount = it.amount,
+                tags = it.tagIds.split(",").filter(String::isNotBlank).map(String::toLong),
+                uses = it.uses,
+                lastUsedAt = it.lastUsedAt,
+            )
+        }
+    }
+
+    /**
+     * Takes the server's memory as this device's copy.
+     *
+     * A replace, like the item cache: what the server holds is the household's memory
+     * and this is a copy of it. Merging would mean deciding whose count and whose
+     * last-used wins, which is a conflict rule for something that has an authority.
+     */
+    suspend fun rememberHistory(list: ShoppingList, entries: List<RememberedEntry>) = write {
+        dao.replaceRemembered(
+            list.id,
+            entries.map {
+                CachedRemembered(
+                    listId = list.id,
+                    name = it.name,
+                    display = it.display,
+                    unitId = it.unitId,
+                    amount = it.amount,
+                    tagIds = it.tags.joinToString(","),
+                    uses = it.uses,
+                    lastUsedAt = it.lastUsedAt,
+                )
+            },
+        )
+    }
+
     /** See [CacheDao.lowestItemId]. Zero when nothing has been written down yet. */
     suspend fun lowestItemId(): Long = withContext(Dispatchers.IO) {
         runCatching { dao.lowestItemId() ?: 0L }.getOrDefault(0L)

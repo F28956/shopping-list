@@ -24,6 +24,7 @@ import com.cernauskas.shoppinglist.data.CachingBackend
 import com.cernauskas.shoppinglist.data.Capabilities
 import com.cernauskas.shoppinglist.data.LocalBackend
 import com.cernauskas.shoppinglist.data.LocalCapabilities
+import com.cernauskas.shoppinglist.data.Reference
 import com.cernauskas.shoppinglist.data.Cache
 import com.cernauskas.shoppinglist.data.Identity
 import com.cernauskas.shoppinglist.data.ServerDirectory
@@ -83,7 +84,7 @@ class MainActivity : ComponentActivity() {
                         // that reads `device.sqlite` would show an empty app with
                         // somebody's shopping still on disk.
                         LocalBackend.readyForUse(this@MainActivity, cache)
-                            ?: CachingBackend(api, cache)
+                            ?: CachingBackend(api, cache, Reference.bareUnitIds(this@MainActivity))
                     } else {
                         // A server has been chosen, so what this device already holds
                         // has to get into the cache before the queue is built from it.
@@ -92,7 +93,7 @@ class MainActivity : ComponentActivity() {
                         // shopping still on disk. Nothing is deleted, so leaving the
                         // server brings it back.
                         LocalBackend.open(this@MainActivity)?.use { it.handOverToAServer(cache) }
-                        CachingBackend(api, cache)
+                        CachingBackend(api, cache, Reference.bareUnitIds(this@MainActivity))
                     }
                 }
 

@@ -22,6 +22,12 @@ import java.util.UUID
 class CachingBackend(
     private val remote: Api,
     private val cache: Cache,
+    /**
+     * Which units may be written with no number in front of them, for the shared add
+     * rules. From the bundled vocabulary rather than the cache — see
+     * [Reference.bareUnitIds].
+     */
+    private val bareUnits: Set<Long> = emptySet(),
 ) : Backend {
 
     /** Whether the last attempt to reach the far end got there. */
@@ -102,14 +108,22 @@ class CachingBackend(
         remote.suggestions(typed, list)
     } catch (problem: ApiError.Transport) {
         reachedIt = false
-        emptyList()
+        // Ranked here by the shared policy rather than offered as nothing. It used to be
+        // network-only, so a phone in a shop got no suggestions at all -- and the
+        // ranking was half here besides: this filtered by score and ordered by how often
+        // a thing is bought, while the server ordered by how well it matched.
+        QuickAdd.suggest(
+            typed = typed,
+            history = cache.rememberedFor(list),
+            now = java.time.Instant.now().epochSecond,
+        )
     }
 
     override suspend fun history(list: ShoppingList): List<RememberedEntry> = try {
-        remote.history(list)
+        remote.history(list).also { cache.rememberHistory(list, it) }
     } catch (problem: ApiError.Transport) {
         reachedIt = false
-        emptyList()
+        cache.rememberedFor(list)
     }
 
     // MARK: - What is queued, laid back over what the server said
@@ -216,11 +230,44 @@ class CachingBackend(
     // MARK: - What is on one
 
     override suspend fun add(line: String, list: ShoppingList) {
-        // Queued first, then sent. That order is the whole of offline editing: a
-        // decision somebody has already made should not wait on a server they cannot
-        // influence.
-        val uuid = UUID.randomUUID().toString()
-        cache.outbox.add(uuid, localId = nextLocalItemId(), line = line, list = list)
+        // What the line *means*, decided by the shared rules rather than here. They
+        // answer more than the words: whether this names a row the list already has and
+        // should be merged onto or put back, and what the list remembers about it.
+        //
+        // Queued as what it resolved to and not as typed. The server reads the line
+        // again on the far side, so sending it raw would be asking two copies of the
+        // rules to agree -- and the queue's own answer is what the screen has already
+        // been shown.
+        val decision = QuickAdd.resolve(
+            line = line,
+            units = runCatching { units() }.getOrDefault(emptyList()),
+            bare = bareUnits,
+            rows = cache.items(list),
+            history = runCatching { history(list) }.getOrDefault(emptyList()),
+        )
+
+        when (decision) {
+            is QuickAdd.Decision.Existing -> {
+                // Already on the list. Putting it back is a tick, not a second row --
+                // which is the rule a second implementation of this always loses.
+                val row = cache.items(list).firstOrNull { it.uuid == decision.uuid }
+                if (row != null && decision.putBack) {
+                    cache.outbox.setDone(row, list, done = false)
+                }
+            }
+
+            is QuickAdd.Decision.New -> {
+                val uuid = UUID.randomUUID().toString()
+                cache.outbox.add(uuid, nextLocalItemId(), decision.name, list)
+                // Filing it takes a second operation: the wire has no field for it on an
+                // add, and the queue is ordered so these land behind.
+                decision.tagIds.forEach { tagId ->
+                    val made = Item(id = 0, uuid = uuid, name = decision.name, amount = decision.amount)
+                    cache.outbox.tag(made, list, tagId, attached = true)
+                }
+            }
+        }
+
         refreshQueued()
         sync()
     }

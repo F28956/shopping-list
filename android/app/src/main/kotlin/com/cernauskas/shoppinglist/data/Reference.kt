@@ -47,5 +47,16 @@ object Reference {
 
     fun units(context: Context): List<Unit> = read(context).units
 
+    /**
+     * Which units may be written with no number in front of them — `pint milk`.
+     *
+     * Read from here rather than from the cache, which has no column for it. That is
+     * not a gap to be migrated: `bare` is a fact about the shipped vocabulary, seeded by
+     * the same migration on every server, and this file is where the shipped vocabulary
+     * lives. A cached copy of it would be a second answer to a question that has one.
+     */
+    fun bareUnitIds(context: Context): Set<Long> =
+        read(context).units.filter { it.bare }.map { it.id }.toSet()
+
     fun tags(context: Context): List<Tag> = read(context).tags
 }

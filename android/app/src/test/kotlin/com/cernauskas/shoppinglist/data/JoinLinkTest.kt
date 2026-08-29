@@ -48,4 +48,20 @@ class JoinLinkTest {
         assertNull(tokenIn("http://localhost:8080/join"))
         assertNull(tokenIn("http://localhost:8080/join#"))
     }
+
+    /**
+     * A path-shaped link that happens to end in a bare `#`.
+     *
+     * The fragment is empty, which is not the same as there being no token — and
+     * reading it as "no token" is why this worked on an iPhone and not here. Mail
+     * clients and chat apps add stray characters to the end of a URL often enough that
+     * this is not a hypothetical.
+     */
+    @Test
+    fun `an empty fragment does not hide a token in the path`() {
+        assertEquals(
+            "abc123",
+            tokenIn("http://localhost:8080/join/abc123#"),
+        )
+    }
 }

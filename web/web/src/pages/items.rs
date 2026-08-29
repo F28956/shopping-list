@@ -305,11 +305,14 @@ fn group_by_category(b: &Board) -> Vec<(String, Vec<&item::Item>)> {
     // Where a tag falls for this person on this list: its place in `all_tags`, which
     // the service has already resolved. Position rather than `sort_order`, so a tag
     // somebody has put first leads even though the shop puts it last.
-    let placed = |id: tag::Id| -> i64 {
-        b.all_tags
-            .iter()
-            .position(|t| t.id == id)
-            .map_or(i64::MAX - 1, |at| at as i64)
+    // `None` for a tag this list does not order, rather than a number just short of
+    // "Other". A tag the walk does not mention is a tag this list has never heard of,
+    // and it used to sort *before* Other under a heading of its own -- so an item
+    // carrying only an unknown tag got a category to itself on the web and fell under
+    // "Other" on both phones and on Android. Three implementations, one of them
+    // disagreeing.
+    let placed = |id: tag::Id| -> Option<i64> {
+        b.all_tags.iter().position(|t| t.id == id).map(|at| at as i64)
     };
 
     for i in b.items.iter().filter(|i| i.done_at.is_none()) {
@@ -317,10 +320,10 @@ fn group_by_category(b: &Board) -> Vec<(String, Vec<&item::Item>)> {
         let primary = b
             .tags_by_item
             .get(&i.id.0)
-            .and_then(|ts| ts.iter().min_by_key(|t| placed(t.id)));
+            .and_then(|ts| ts.iter().filter(|t| placed(t.id).is_some()).min_by_key(|t| placed(t.id)));
         let (order, heading) = match primary {
             Some(t) => (
-                placed(t.id),
+                placed(t.id).unwrap_or(i64::MAX),
                 match &t.emoji {
                     Some(e) => format!("{} {}", e.0, t.name.0),
                     None => t.name.0.clone(),
@@ -601,7 +604,11 @@ pub async fn show(
 
 /// `2` rather than `2.0`, but `1.5` stays `1.5`.
 fn trim_amount(a: Amount) -> String {
-    if a.0.fract() == 0.0 {
+    // The guard is what the Swift and Kotlin copies of this already had and this did
+    // not: an `f64` beyond `i64`'s range saturates on the cast, so a browser showed
+    // `9223372036854775807` where the phones showed `1e20`. Cosmetic, and the same rule
+    // written three times with one of them different -- which is the part worth fixing.
+    if a.0.fract() == 0.0 && a.0.abs() < 1e15 {
         format!("{}", a.0 as i64)
     } else {
         format!("{}", a.0)
