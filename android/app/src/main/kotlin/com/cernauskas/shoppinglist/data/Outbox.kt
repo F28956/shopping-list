@@ -261,6 +261,15 @@ class Outbox(private val dao: OutboxDao) {
         withContext(Dispatchers.IO) { runCatching { dao.waiting() }.getOrDefault(0) }
 
     /** What is queued against one list, oldest first. */
+    /**
+     * Everything queued, in order.
+     *
+     * For the handover, which has to know what it has already asked for -- a list queued
+     * twice is that list made twice on the server.
+     */
+    suspend fun everything(): List<QueuedOperation> =
+        withContext(Dispatchers.IO) { runCatching { dao.all() }.getOrDefault(emptyList()) }
+
     suspend fun forList(listId: Long): List<QueuedOperation> =
         withContext(Dispatchers.IO) { runCatching { dao.forList(listId) }.getOrDefault(emptyList()) }
 

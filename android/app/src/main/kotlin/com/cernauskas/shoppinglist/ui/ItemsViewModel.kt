@@ -2,7 +2,7 @@ package com.cernauskas.shoppinglist.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.cernauskas.shoppinglist.data.Api
+import com.cernauskas.shoppinglist.data.Backend
 import com.cernauskas.shoppinglist.data.ApiError
 import com.cernauskas.shoppinglist.data.Cache
 import com.cernauskas.shoppinglist.data.Identity
@@ -31,8 +31,7 @@ import java.time.Instant
 
 /** What is on one list. */
 class ItemsViewModel(
-    private val api: Api,
-    private val cache: Cache,
+    private val backend: Backend,
     val list: ShoppingList,
     private val onSignedOut: (Identity.Departure) -> Unit,
 ) : ViewModel() {
@@ -73,7 +72,6 @@ class ItemsViewModel(
     private var draining = false
 
     init {
-        showWhatWeHave()
         loadReference()
         load()
         watch()
@@ -101,32 +99,6 @@ class ItemsViewModel(
     }
 
     /**
-     * Puts the list up as it was last seen, before asking anything.
-     *
-     * Reference data first and in the same breath: an item read out of the cache with
-     * no units and no tags is a bare name in no category, which is a worse answer than
-     * the one the shop actually needs.
-     */
-    private fun showWhatWeHave() = viewModelScope.launch {
-        val units = cache.units()
-        val tags = cache.tags(list)
-        val remembered = cache.items(list)
-        _state.update {
-            if (it.fresh) it
-            else it.copy(
-                unitList = units.ifEmpty { it.unitList },
-                units = if (units.isEmpty()) it.units else units.associate { u -> u.id to u.name },
-                tags = tags.ifEmpty { it.tags },
-                outstanding = if (remembered.isEmpty()) it.outstanding
-                    else inShopOrder(remembered.filter { item -> !item.isDone }, tags),
-                done = if (remembered.isEmpty()) it.done else remembered.filter { item -> item.isDone },
-                total = maxOf(it.total, remembered.size.toLong()),
-                loading = it.loading && remembered.isEmpty(),
-            )
-        }
-    }
-
-    /**
      * Units and tags, once.
      *
      * They are seeded by migration and change when the server is deployed, not when
@@ -135,10 +107,8 @@ class ItemsViewModel(
      */
     private fun loadReference() = viewModelScope.launch {
         try {
-            val units = api.units()
-            val tags = api.tagsOrderedFor(list)
-            cache.rememberUnits(units)
-            cache.rememberTags(list, tags)
+            val units = backend.units()
+            val tags = backend.tagsOrderedFor(list)
             _state.update {
                 it.copy(
                     unitList = units,
@@ -154,22 +124,16 @@ class ItemsViewModel(
             // bundled copy stands in. Without it `3 kg potatoes` parsed to an item
             // called "kg potatoes" -- the amount came off, the unit did not, because
             // there was no list of units for the parser to recognise `kg` against.
-            val (units, tags) = cache.seedReference(list)
-            _state.update {
-                it.copy(
-                    unitList = it.unitList.ifEmpty { units },
-                    units = it.units.ifEmpty { units.associate { unit -> unit.id to unit.name } },
-                    tags = it.tags.ifEmpty { tags },
-                )
-            }
+            // Left as it was. The backend already answers from the bundled set when it
+            // has nothing better -- see `Cache.seedReference`, which it reaches for --
+            // so there is nothing this could add beyond a second copy of that rule.
         }
     }
 
     fun load() = viewModelScope.launch {
         try {
-            val listing = api.items(list)
-            cache.rememberItems(list, listing.items)
-            val shown = withUnsent(listing.items)
+            val listing = backend.items(list)
+            val shown = listing.items
             _state.update { current ->
                 current.copy(
                     outstanding = inShopOrder(shown.filter { !it.isDone }, current.tags),
@@ -177,20 +141,14 @@ class ItemsViewModel(
                     total = listing.total,
                     truncated = listing.truncated,
                     loading = false,
-                    offline = false,
-                    fresh = true,
+                    // The backend is the only thing that knows: one answering from its
+                    // own database is never out of reach, and one falling back to what
+                    // it last saw raises no error to infer this from.
+                    offline = !backend.reachable,
+                    fresh = backend.reachable,
                 )
             }
-            // The server is reachable, so anything waiting can go now. This is what
-            // makes the queue drain on its own: coming back into signal reconnects the
-            // change stream, the stream triggers a load, and the load sends what has
-            // been waiting. Nobody has to reopen the screen.
-            drain()
-        } catch (e: ApiError.Transport) {
-            // See ListsViewModel.load: no signal is a state, not an event. What is on
-            // screen stays there -- it is the last thing the server said, and saying
-            // nothing instead would be the emptiness this whole change is about.
-            _state.update { it.copy(loading = false, offline = true) }
+            refreshUnsent()
         } catch (e: ApiError) {
             report(e)
             _state.update { it.copy(loading = false) }
@@ -209,7 +167,7 @@ class ItemsViewModel(
         while (true) {
             if (reconnecting) load()
             try {
-                api.changes(list).collect { load() }
+                backend.changes(list).collect { load() }
             } catch (e: ApiError.NotAdmitted) {
                 onSignedOut(Identity.Departure.Refused(e.message))
                 return@launch
@@ -265,24 +223,35 @@ class ItemsViewModel(
                 .firstOrNull { (_, name) -> name.equals(parsed.unit, ignoreCase = true) }
                 ?.key,
         )
-        cache.outbox.add(uuid, local.id, line, list)
+        // On screen first, then handed over. That order is the whole of offline
+        // editing: a decision somebody has already made should not wait on a server
+        // they cannot influence. What persists it is the backend -- with a server the
+        // queue, with none the device's own database.
         show { rows -> rows + local }
-        drain()
+        act { backend.add(line, list) }
     }
 
     fun toggle(item: Item) = viewModelScope.launch {
+        // A viewer's tap would be refused, and a row that greys out and comes back
+        // unchanged is a worse answer than one that does not move.
+        if (!list.mayEdit) return@launch
         val done = !item.isDone
-        cache.outbox.setDone(item, list, done)
         show { rows ->
-            rows.map { if (it.uuid == item.uuid) it.copy(doneAt = if (done) Instant.now().toString() else null) else it }
+            rows.map {
+                if (it.uuid == item.uuid) {
+                    it.copy(doneAt = if (done) Instant.now().toString() else null)
+                } else {
+                    it
+                }
+            }
         }
-        drain()
+        act { backend.setDone(item, list, done) }
     }
 
     fun delete(item: Item) = viewModelScope.launch {
-        cache.outbox.delete(item, list)
+        if (!list.mayEdit) return@launch
         show { rows -> rows.filter { it.uuid != item.uuid } }
-        drain()
+        act { backend.delete(item, list) }
     }
 
     /**
@@ -295,22 +264,14 @@ class ItemsViewModel(
     fun clearDone() = viewModelScope.launch {
         val done = _state.value.done
         if (done.isEmpty()) return@launch
-        cache.outbox.clearDone(done, list)
         show { rows -> rows.filter { row -> done.none { it.uuid == row.uuid } } }
-        drain()
+        act { backend.clearDone(list) }
     }
 
     fun save(item: Item, edit: ItemDraft.Edit, attached: List<Tag>) = viewModelScope.launch {
-        cache.outbox.update(item, list, edit.name, edit.amount, edit.unitId)
-
-        // Queued, not sent. Filing used to go straight to the network and apologise if
-        // it could not get there, which offline lost the change and on a device with no
-        // server meant the aisle picker never worked at all.
         val before = attached.map { it.id }.toSet()
-        _state.value.tags.filter { it.id in edit.tagIds && it.id !in before }
-            .forEach { cache.outbox.tag(item, list, it.id, attached = true) }
-        attached.filter { it.id !in edit.tagIds }
-            .forEach { cache.outbox.tag(item, list, it.id, attached = false) }
+        val filing = _state.value.tags.filter { it.id in edit.tagIds && it.id !in before }
+        val unfiling = attached.filter { it.id !in edit.tagIds }
 
         show { rows ->
             rows.map {
@@ -330,7 +291,14 @@ class ItemsViewModel(
             }
         }
 
-        drain()
+        act {
+            backend.update(item, list, edit.name, edit.amount, edit.unitId)
+            // Filing goes through the backend too. It used to go straight to the network
+            // and apologise if it could not get there, which offline lost the change and
+            // on a device with no server meant the aisle picker never worked at all.
+            filing.forEach { backend.attach(it, item, list) }
+            unfiling.forEach { backend.detach(it, item, list) }
+        }
     }
 
     /**
@@ -341,7 +309,9 @@ class ItemsViewModel(
      */
     private suspend fun show(change: (List<Item>) -> List<Item>) {
         val rows = change(_state.value.outstanding + _state.value.done)
-        cache.rememberItems(list, rows)
+        // Only the screen. What persists this is the call that follows every use of it
+        // -- with a server the queue, with none the device's own database. Writing here
+        // as well would be a second copy of the truth, kept by a screen.
         _state.update { current ->
             current.copy(
                 outstanding = inShopOrder(rows.filter { !it.isDone }, current.tags),
@@ -358,139 +328,41 @@ class ItemsViewModel(
      * Only losses are said out loud. "Three changes sent" is news about plumbing; "the
      * thing you crossed off had been deleted" is news about the list, and it is the one
      * case where somebody watched themselves do something that did not happen.
+     *
+     * On a device answering for itself this is a no-op that costs nothing: there is
+     * nowhere for a change to be waiting to go.
      */
     private suspend fun drain() {
-        if (draining) return
-
-        // Read the queue back even when there is nothing to send, and *before* the
-        // early return. The lists screen drains the same queue on its own -- it has to,
-        // because the app opens there -- so this screen's count can go stale the moment
-        // that happens. Returning early without refreshing left "3 changes waiting to
-        // be sent" on a screen whose queue had been empty for minutes.
+        val report = backend.sync()
         refreshUnsent()
-        if (cache.outbox.waiting() == 0) return
-
-        draining = true
-        val drained = cache.outbox.drain(api)
-        draining = false
-
-        refreshUnsent()
-        // A drain that sent nothing while something was queued is the other way to
-        // learn there is no connection, and often the first: it does not wait for a
-        // reload to fail.
         _state.update {
             it.copy(
-                refused = drained.refused,
-                offline = if (drained.sent > 0) false else it.offline || drained.waiting > 0 && !drained.refused,
+                refused = report.refused,
+                offline = !backend.reachable,
             )
         }
-        drained.lost.firstOrNull()?.let { lost ->
-            _state.update { it.copy(message = lost) }
-        }
-        // Read back what the server made of it -- which is also how a row created here
-        // gets its real id. Re-entry stops at the guard above: the queue is empty now.
-        if (drained.sent > 0) load().join()
+        report.lost.firstOrNull()?.let { lost -> _state.update { it.copy(message = lost) } }
+        if (report.sent > 0) load().join()
     }
 
     /**
      * Which rows are still waiting on a server, and how many.
      *
-     * Both are empty on a device with no server, and not because nothing is queued --
-     * on a list that is only ever this device's, *everything* is queued and nothing
-     * ever leaves. Marking every row as waiting says the app is behind on work it means
-     * to do, and it isn't: the list is already exactly what it should be. The queue is
-     * still kept, because a server added later is owed every one of them.
+     * Both are empty on a device answering for itself, and not because this asks
+     * whether there is a server: a backend with nowhere to send has nothing waiting to
+     * go, and says so. Marking every row as waiting would say the app is behind on work
+     * it means to do, and it isn't -- the list is already exactly what it should be.
      */
     private suspend fun refreshUnsent() {
-        if (ServerDirectory.isOnDeviceOnly) {
-            _state.update { it.copy(unsent = emptySet(), waiting = 0) }
-            return
-        }
-        val queued = cache.outbox.forList(list.id)
-        _state.update {
-            it.copy(unsent = queued.map { op -> op.itemUuid }.toSet(), waiting = queued.size)
-        }
-    }
-
-    /**
-     * The server's answer with this device's unsent changes laid back over it.
-     *
-     * Without this a successful load would visibly undo work that is still queued: the
-     * server has not been told, so it answers with the old state, and the rows would
-     * flick back for as long as the queue is stuck.
-     *
-     * Rows this device created and has not sent are not in the server's answer at all,
-     * so they are carried across from what is already on screen rather than rebuilt.
-     */
-    private suspend fun withUnsent(fromServer: List<Item>): List<Item> {
-        val queued = cache.outbox.forList(list.id)
-        if (queued.isEmpty()) return fromServer
-
-        // Only rows this device *created* and has not sent are carried across. Any
-        // queued operation used to qualify, which meant a tick queued against a row
-        // somebody else had deleted put that row back on screen as a ghost -- present
-        // here, gone everywhere else, and impossible to get rid of.
-        val known = fromServer.map { it.uuid }.toSet()
-        val onScreen = _state.value.outstanding + _state.value.done
-        val made = queued.filter { it.kind == QueuedOperation.ADD }.map { it.itemUuid }.toSet()
-        val notSentYet = onScreen.filter { it.uuid !in known && it.uuid in made }
-
-        var rows = fromServer + notSentYet
-        val now = Instant.now().toString()
-
-        for (operation in queued) {
-            rows = when (operation.kind) {
-                QueuedOperation.SET_DONE -> rows.map {
-                    if (it.uuid == operation.itemUuid) {
-                        it.copy(doneAt = if (operation.done) now else null)
-                    } else {
-                        it
-                    }
-                }
-
-                QueuedOperation.DELETE -> rows.filter { it.uuid != operation.itemUuid }
-
-                QueuedOperation.UPDATE -> rows.map {
-                    if (it.uuid == operation.itemUuid) {
-                        it.copy(
-                            name = operation.editedName ?: it.name,
-                            amount = operation.editedAmount ?: it.amount,
-                        )
-                    } else {
-                        it
-                    }
-                }
-
-                QueuedOperation.CLEAR_DONE ->
-                    rows.filter { it.uuid !in operation.sweptUuids }
-
-                QueuedOperation.ATTACH_TAG, QueuedOperation.DETACH_TAG -> {
-                    val tagId = operation.tagId
-                    if (tagId == null) {
-                        rows
-                    } else {
-                        val attaching = operation.kind == QueuedOperation.ATTACH_TAG
-                        rows.map {
-                            if (it.uuid != operation.itemUuid) {
-                                it
-                            } else {
-                                val filed = it.tagIds.filter { id -> id != tagId }
-                                it.copy(tagIds = if (attaching) filed + tagId else filed)
-                            }
-                        }
-                    }
-                }
-
-                else -> rows
-            }
-        }
-        return rows
+        val waiting = backend.pending
+        val unsent = backend.unsent(list)
+        _state.update { it.copy(unsent = unsent, waiting = waiting) }
     }
 
     fun setTagOrder(tags: List<Tag>) = viewModelScope.launch {
         try {
-            api.setTagOrder(tags, list)
-            _state.update { it.copy(tags = api.tagsOrderedFor(list)) }
+            backend.setTagOrder(tags, list)
+            _state.update { it.copy(tags = backend.tagsOrderedFor(list)) }
             load()
         } catch (e: ApiError) {
             report(e)
@@ -509,7 +381,7 @@ class ItemsViewModel(
      * crashed the app.
      */
     suspend fun tagsOn(item: Item): List<Tag> = try {
-        api.tagsOn(item, list)
+        backend.tagsOn(item, list)
     } catch (_: ApiError) {
         _state.value.tags.filter { it.id in item.tagIds }
     }
@@ -531,7 +403,7 @@ class ItemsViewModel(
         asking = viewModelScope.launch {
             delay(150)
             val found = try {
-                api.suggestions(wanted, list)
+                backend.suggestions(wanted, list)
             } catch (_: ApiError) {
                 emptyList()
             }
@@ -543,10 +415,17 @@ class ItemsViewModel(
 
     fun messageShown() = _state.update { it.copy(message = null) }
 
-    private fun act(work: suspend () -> Unit) = viewModelScope.launch {
+    /**
+     * A change, then whatever the backend wants to do about it.
+     *
+     * Every mutation on this screen is this shape: the screen has already been
+     * rewritten optimistically, so what is left is to hand the change over, send
+     * whatever that queued, and read back what became of it.
+     */
+    private fun act(work: suspend () -> kotlin.Unit) = viewModelScope.launch {
         try {
             work()
-            load()
+            drain()
         } catch (e: ApiError) {
             report(e)
         }

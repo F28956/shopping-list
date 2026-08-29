@@ -2,11 +2,12 @@ package com.cernauskas.shoppinglist.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.cernauskas.shoppinglist.data.Api
+import com.cernauskas.shoppinglist.data.Accounts
 import com.cernauskas.shoppinglist.data.ApiError
-import com.cernauskas.shoppinglist.data.Cache
+import com.cernauskas.shoppinglist.data.Backend
 import com.cernauskas.shoppinglist.data.Identity
 import com.cernauskas.shoppinglist.data.Person
+import com.cernauskas.shoppinglist.data.Sharing
 import com.cernauskas.shoppinglist.data.ShoppingList
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,8 +24,15 @@ import kotlinx.coroutines.launch
  * the composition goes with it.
  */
 class ListsViewModel(
-    private val api: Api,
-    private val cache: Cache,
+    private val backend: Backend,
+    /**
+     * Who else is on a list, when there is a server. Null on a device kept to itself,
+     * where there is no link to make and nobody on the other end of one -- and where
+     * [Capabilities] hides the controls rather than offering them to be refused.
+     */
+    private val sharing: Sharing?,
+    /** Who this is, when there is a server. Null for the same reason as [sharing]. */
+    private val accounts: Accounts?,
     private val onSignedOut: (Identity.Departure) -> Unit,
 ) : ViewModel() {
 
@@ -50,7 +58,6 @@ class ListsViewModel(
     val state: StateFlow<State> = _state.asStateFlow()
 
     init {
-        showWhatWeHave()
         load()
         watch()
         countWhatIsWaiting()
@@ -64,24 +71,8 @@ class ListsViewModel(
      */
     private fun countWhatIsWaiting() = viewModelScope.launch {
         while (true) {
-            _state.update { it.copy(waiting = cache.outbox.waiting()) }
+            _state.update { it.copy(waiting = backend.pending) }
             delay(2_000)
-        }
-    }
-
-    /**
-     * Puts the last-loaded lists up before asking the server anything.
-     *
-     * The screen is never blank while a request is in flight, and on a phone with no
-     * signal it is never blank at all. Guarded on [State.fresh] so a slow disk read
-     * cannot land after a fast server answer and put yesterday's lists back.
-     */
-    private fun showWhatWeHave() = viewModelScope.launch {
-        val remembered = cache.lists()
-        if (remembered.isEmpty()) return@launch
-        _state.update {
-            if (it.fresh) it
-            else it.copy(lists = remembered, total = remembered.size.toLong(), loading = false)
         }
     }
 
@@ -97,7 +88,7 @@ class ListsViewModel(
         while (true) {
             if (reconnecting) load()
             try {
-                api.listChanges().collect { load() }
+                backend.listChanges().collect { load() }
             } catch (e: ApiError.NotAdmitted) {
                 // Not a dropped connection. Reconnecting every three seconds to be
                 // refused again is a loop nothing ends.
@@ -115,51 +106,22 @@ class ListsViewModel(
 
     fun load() = viewModelScope.launch {
         try {
-            val listing = api.lists()
-            cache.rememberLists(listing.items)
+            val listing = backend.lists()
             _state.update {
                 it.copy(
                     lists = listing.items,
                     total = listing.total,
                     truncated = listing.truncated,
                     loading = false,
-                    offline = false,
-                    fresh = true,
-                )
-            }
-            // The server is reachable, so anything queued anywhere goes now.
-            //
-            // Here as well as on the list screen, because the app opens here: a phone
-            // that came out of a shop and went into a pocket would otherwise hold its
-            // changes until somebody happened to open the list they were made on.
-            val drained = cache.outbox.drain(api)
-
-            // Lists made here have just been given the server's own ids. Done before
-            // anything is shown, so the screen never has the same list twice — once
-            // under this device's numbering and once under the server's.
-            for (adopted in drained.adopted) {
-                cache.lists().firstOrNull { it.uuid == adopted.uuid }?.let { local ->
-                    cache.adopt(local, adopted.real)
-                }
-            }
-
-            _state.update {
-                it.copy(
-                    waiting = cache.outbox.waiting(),
-                    lists = if (drained.adopted.isEmpty()) it.lists else cache.lists(),
-                )
-            }
-        } catch (e: ApiError.Transport) {
-            // Not reported. Being out of signal is a state, not an event: a phone in a
-            // basement would raise this every few seconds, and a message for each is
-            // noise on top of an app that is still perfectly usable.
-            val remembered = if (_state.value.lists.isEmpty()) cache.lists() else _state.value.lists
-            _state.update {
-                it.copy(
-                    lists = remembered,
-                    total = maxOf(it.total, remembered.size.toLong()),
-                    loading = false,
-                    offline = true,
+                    // Not an error and not worth interrupting anybody over -- but the
+                    // difference between "you have no lists" and "I could not find out"
+                    // has to reach the screen. The backend is the only thing that knows,
+                    // because one that answers from its own database raises nothing.
+                    offline = !backend.reachable,
+                    // What was shown came from somewhere real either way; `fresh` says
+                    // whether the far end confirmed it.
+                    fresh = backend.reachable,
+                    waiting = backend.pending,
                 )
             }
         } catch (e: ApiError) {
@@ -181,38 +143,38 @@ class ListsViewModel(
      */
     fun create(name: String) = viewModelScope.launch {
         try {
-            api.createList(name)
+            // Wherever it can. With a server this goes there; with none it is written
+            // down here and is a list all the same. That choice is the backend's, and it
+            // is why this method no longer has two halves.
+            backend.createList(name)
             load()
-        } catch (e: ApiError.Transport) {
-            // Zero, because with no server there is no account. It is only ever
-            // compared with itself on this device — the server decides ownership from
-            // who sent the operation, not from what the device claimed.
-            val made = cache.makeListHere(name, ownedBy = 0L)
-            cache.outbox.makeList(made)
-            _state.update {
-                it.copy(
-                    lists = cache.lists(),
-                    waiting = cache.outbox.waiting(),
-                    offline = true,
-                )
-            }
         } catch (e: ApiError) {
             report(e)
         }
     }
-    fun rename(list: ShoppingList, name: String) = act { api.rename(list, name) }
-    fun delete(list: ShoppingList) = act { api.delete(list) }
-    fun join(token: String) = act { api.join(token) }
 
-    suspend fun people(list: ShoppingList): List<Person> = api.people(list)
+    fun rename(list: ShoppingList, name: String) = act { backend.rename(list, name) }
+
+    fun delete(list: ShoppingList) = act { backend.delete(list) }
+
+    // Sharing, and only where there is somebody to share with. `?: return` rather than a
+    // stub answer: a screen that can reach these is a screen [Capabilities] has already
+    // decided to show, so arriving here without a server is a bug worth being loud about
+    // rather than an empty list worth pretending about.
+    fun join(token: String) = act { sharing?.join(token) }
+
+    suspend fun people(list: ShoppingList): List<Person> = sharing?.people(list) ?: emptyList()
+
+    suspend fun invite(list: ShoppingList): String = sharing?.invite(list) ?: ""
+
+    suspend fun revokeInvites(list: ShoppingList) { sharing?.revokeInvites(list) }
+
+    suspend fun remove(person: Person, list: ShoppingList) { sharing?.remove(person, list) }
+
+    suspend fun whoAmI(): Long = accounts?.whoAmI()?.id ?: 0L
 
     /** One list's change stream, for a screen that wants to follow a single list. */
-    fun watchList(list: ShoppingList) = api.changes(list)
-
-    suspend fun invite(list: ShoppingList): String = api.invite(list)
-    suspend fun revokeInvites(list: ShoppingList) = api.revokeInvites(list)
-    suspend fun whoAmI(): Long = api.whoAmI().id
-    suspend fun remove(person: Person, list: ShoppingList) = api.remove(person, list)
+    fun watchList(list: ShoppingList) = backend.changes(list)
 
     fun messageShown() = _state.update { it.copy(message = null) }
 

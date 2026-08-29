@@ -137,5 +137,26 @@ data class Page<T>(
  * presented as the whole list makes the missing rows look deleted. */
 data class Listing<T>(val items: List<T>, val total: Long, val truncated: Boolean)
 
+/**
+ * One thing a list has taught the box: what it was called, and what it turned out to be.
+ *
+ * The memory belongs to the *list* rather than to whoever is signed in — the server
+ * moved it there so a household shares one, and hands it back per list like everything
+ * else. See `20260825160000_list_sharing`.
+ */
+@Serializable
+data class RememberedEntry(
+    /** The key: trimmed and lowercased, so `Milk` and `milk ` are one memory. */
+    val name: String,
+    /** The spelling last used, for showing back. */
+    val display: String = "",
+    @SerialName("unit_id") val unitId: Long? = null,
+    val amount: Double? = null,
+    val tags: List<Long> = emptyList(),
+    val uses: Long = 0,
+    /** Unix seconds, which is what the shared ranking policy wants. */
+    @SerialName("last_used_at") val lastUsedAt: Long = 0,
+)
+
 @Serializable
 data class Invitation(val token: String)

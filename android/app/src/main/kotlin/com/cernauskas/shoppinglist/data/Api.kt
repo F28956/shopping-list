@@ -82,7 +82,7 @@ class Api(
      * app appeared to need signing in again every time it was left alone for a while.
      */
     private val renew: suspend () -> String? = { null },
-) {
+) : Accounts, Sharing {
     private val json = Json { ignoreUnknownKeys = true }
 
     private val client = OkHttpClient.Builder()
@@ -125,13 +125,13 @@ class Api(
     // owner, in `domain::service::admission` rather than here.
 
     /** What this server says about itself, including whether it admits anybody. */
-    suspend fun serverAbout(): ServerAbout = get("/api/server")
+    override suspend fun serverAbout(): ServerAbout = get("/api/server")
 
     /** Every address that may sign in. */
-    suspend fun admissions(): List<Admitted> = get("/api/admissions")
+    override suspend fun admissions(): List<Admitted> = get("/api/admissions")
 
     /** Lets an address sign in. Admitting one twice is a double-click, not an error. */
-    suspend fun admit(email: String, note: String?) {
+    override suspend fun admit(email: String, note: String?) {
         val body = buildJsonObject {
             put("email", email)
             if (!note.isNullOrBlank()) put("note", note)
@@ -143,7 +143,7 @@ class Api(
      * Takes an address off the list. Takes effect on that person's very next request,
      * not whenever their session happens to expire.
      */
-    suspend fun withdraw(email: String) {
+    override suspend fun withdraw(email: String) {
         send("DELETE", "/api/admissions/${escaped(email)}", null)
     }
 
@@ -153,13 +153,13 @@ class Api(
      * The server refuses the last owner being demoted, and refuses promoting somebody
      * who has never signed in — there is no person yet to make an owner.
      */
-    suspend fun setOwner(email: String, owner: Boolean) {
+    override suspend fun setOwner(email: String, owner: Boolean) {
         val path = "/api/admissions/${escaped(email)}/owner"
         send(if (owner) "POST" else "DELETE", path, null)
     }
 
     /** Opens the server to anybody a provider vouches for, or closes it again. */
-    suspend fun setAdmitsAnyone(open: Boolean) {
+    override suspend fun setAdmitsAnyone(open: Boolean) {
         send("PUT", "/api/server", """{"admits_anyone":$open}""")
     }
 
@@ -188,6 +188,17 @@ class Api(
 
     /** What this list buys that matches what has been typed. Matched and ranked by
      * the service, so this shows what it is given. */
+    /**
+     * What this list has taught the box.
+     *
+     * The whole memory rather than one entry: which entry applies depends on what the
+     * line turns out to name, so a caller cannot know it in advance -- see
+     * `parsing::add::recall`. It belongs to the list rather than to whoever is signed
+     * in, so a household shares one.
+     */
+    suspend fun history(list: ShoppingList): List<RememberedEntry> =
+        get("/api/lists/${list.id}/history")
+
     suspend fun suggestions(typed: String, list: ShoppingList): List<String> =
         get("/api/lists/${list.id}/history?q=${typed.urlEncoded()}")
 
@@ -272,9 +283,9 @@ class Api(
 
     /** Who this is, so a screen can tell which member is you — and whether they
      * administer this server. */
-    suspend fun whoAmI(): Me = get("/api/me")
+    override suspend fun whoAmI(): Me = get("/api/me")
 
-    suspend fun people(list: ShoppingList): List<Person> = get("/api/lists/${list.id}/members")
+    override suspend fun people(list: ShoppingList): List<Person> = get("/api/lists/${list.id}/members")
 
     /**
      * A code to send, returned exactly once: only its hash is stored, so a lost code
@@ -285,7 +296,7 @@ class Api(
      * sent to. Whoever receives it pastes it into an app that already knows which
      * server it is talking to.
      */
-    suspend fun invite(list: ShoppingList): String {
+    override suspend fun invite(list: ShoppingList): String {
         val body = send(
             "POST",
             "/api/lists/${list.id}/members/invites",
@@ -294,7 +305,7 @@ class Api(
         return json.decodeFromString<Invitation>(body).token
     }
 
-    suspend fun revokeInvites(list: ShoppingList) {
+    override suspend fun revokeInvites(list: ShoppingList) {
         send("DELETE", "/api/lists/${list.id}/members/invites", null)
     }
 
@@ -305,12 +316,12 @@ class Api(
      * access log between here and somebody's home server writes down, and this token
      * is a credential that stays valid for a week.
      */
-    suspend fun join(token: String): ShoppingList =
+    override suspend fun join(token: String): ShoppingList =
         json.decodeFromString(
             send("POST", "/api/invites", json.encodeToString(Invitation.serializer(), Invitation(token))),
         )
 
-    suspend fun remove(person: Person, list: ShoppingList) {
+    override suspend fun remove(person: Person, list: ShoppingList) {
         send("DELETE", "/api/lists/${list.id}/members/${person.userId}", null)
     }
 

@@ -17,7 +17,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.runtime.CompositionLocalProvider
 import com.cernauskas.shoppinglist.data.Api
+import com.cernauskas.shoppinglist.data.Backend
+import com.cernauskas.shoppinglist.data.CachingBackend
+import com.cernauskas.shoppinglist.data.Capabilities
+import com.cernauskas.shoppinglist.data.LocalBackend
+import com.cernauskas.shoppinglist.data.LocalCapabilities
 import com.cernauskas.shoppinglist.data.Cache
 import com.cernauskas.shoppinglist.data.Identity
 import com.cernauskas.shoppinglist.data.ServerDirectory
@@ -45,6 +51,11 @@ class MainActivity : ComponentActivity() {
             renew = { identity.renew() },
         )
         val cache = Cache(this)
+        // The device's own server. Opened once for the life of the activity: it holds a
+        // SQLite connection and the threads its watches park on, and null means it would
+        // not open -- a disk that will not cooperate, which is not a state this app has
+        // a screen for.
+        val local = LocalBackend.open(this)
 
         setContent {
             ShoppingTheme {
@@ -58,6 +69,25 @@ class MainActivity : ComponentActivity() {
                  * settings, which is behind it. See [SignIn].
                  */
                 var correctingServer by remember { mutableStateOf(false) }
+
+                /**
+                 * What this device reads, built once and kept.
+                 *
+                 * The device answers for itself when nobody has chosen a server, unless
+                 * its own database will not open -- which falls back to the cached path,
+                 * exactly as the phones do. Rebuilt only when that answer changes, which
+                 * is when somebody chooses a server or stops using one: opening a
+                 * database on every recomposition is a connection and a set of watcher
+                 * threads per frame.
+                 */
+                fun openBackend(): Backend =
+                    if (ServerDirectory.isOnDeviceOnly) {
+                        local ?: CachingBackend(api, cache)
+                    } else {
+                        CachingBackend(api, cache)
+                    }
+
+                var backend by remember { mutableStateOf(openBackend()) }
 
                 // Only when there is somewhere to sign in to. Restoring asks Google,
                 // and Google asks the person -- which is a sign-in sheet in front of
@@ -75,8 +105,12 @@ class MainActivity : ComponentActivity() {
                     Shopping(
                         api = api,
                         cache = cache,
+                        backend = backend,
                         onSignedOut = {},
-                        onServerChanged = { hasServer = ServerDirectory.hasServer },
+                        onServerChanged = {
+                            hasServer = ServerDirectory.hasServer
+                            backend = openBackend()
+                        },
                     )
                     return@ShoppingTheme
                 }
@@ -125,7 +159,11 @@ class MainActivity : ComponentActivity() {
                     is Identity.State.SignedIn -> Shopping(
                         api = api,
                         cache = cache,
-                        onServerChanged = { hasServer = ServerDirectory.hasServer },
+                        backend = backend,
+                        onServerChanged = {
+                            hasServer = ServerDirectory.hasServer
+                            backend = openBackend()
+                        },
                         onSignedOut = { why ->
                             identity.signOut()
                             // Only what was asked for. A session that ended because
@@ -268,6 +306,13 @@ private fun SignIn(
 private fun Shopping(
     api: Api,
     cache: Cache,
+    /**
+     * What this device reads. Built by the caller, because choosing between the device's
+     * own server and a cache in front of somebody else's is the one decision the mode
+     * still makes -- and the only one. Everything below is handed a [Backend] and cannot
+     * tell which it has.
+     */
+    backend: Backend,
     onSignedOut: (Identity.Departure) -> Unit,
     /** Settings changed which server this device uses, if any. */
     onServerChanged: () -> Unit,
@@ -323,10 +368,19 @@ private fun Shopping(
     val nav = rememberNavController()
     var open by remember { mutableStateOf<ShoppingList?>(null) }
 
+    // Provided once, here, because every screen below asks the same three questions and
+    // none of them should be reading `ServerDirectory` to answer them -- see
+    // `Capabilities`.
+    CompositionLocalProvider(LocalCapabilities provides Capabilities.current) {
     NavHost(navController = nav, startDestination = "lists") {
         composable("lists") {
             val model: ListsViewModel = viewModel(
-                factory = factory { ListsViewModel(api, cache, onSignedOut) },
+                factory = factory {
+                    // `Sharing` and `Accounts` only where there is a server. Null is not
+                    // a degraded mode: it is the absence the screens already hide.
+                    val server = if (ServerDirectory.isOnDeviceOnly) null else api
+                    ListsViewModel(backend, server, server, onSignedOut)
+                },
             )
             ListsScreen(
                 model = model,
@@ -351,10 +405,11 @@ private fun Shopping(
 
             val model: ItemsViewModel = viewModel(
                 key = "items-${list.id}",
-                factory = factory { ItemsViewModel(api, cache, list, onSignedOut) },
+                factory = factory { ItemsViewModel(backend, list, onSignedOut) },
             )
             ItemsScreen(model = model, onBack = { nav.popBackStack() })
         }
+    }
     }
 }
 

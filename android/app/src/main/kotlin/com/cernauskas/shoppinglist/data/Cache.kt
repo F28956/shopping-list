@@ -96,6 +96,17 @@ interface CacheDao {
     @Query("SELECT count(*) FROM lists")
     suspend fun listCount(): Int
 
+    /**
+     * The lowest id any row has, so the next one this device mints can count down from
+     * it.
+     *
+     * Counted rather than taken from the clock. A millisecond timestamp is unique until
+     * two adds land in the same millisecond, and then it is a primary key collision that
+     * rolls back the whole write -- silently, if nobody is looking.
+     */
+    @Query("SELECT MIN(id) FROM items")
+    suspend fun lowestItemId(): Long?
+
     @Query("UPDATE lists SET id = :real, owner_id = :owner WHERE id = :local")
     suspend fun renumberList(local: Long, real: Long, owner: Long)
 
@@ -326,6 +337,11 @@ class Cache(context: Context) {
      * Counting down from the lowest already used, so two lists made in the same second
      * cannot collide.
      */
+    /** See [CacheDao.lowestItemId]. Zero when nothing has been written down yet. */
+    suspend fun lowestItemId(): Long = withContext(Dispatchers.IO) {
+        runCatching { dao.lowestItemId() ?: 0L }.getOrDefault(0L)
+    }
+
     suspend fun makeListHere(name: String, ownedBy: Long): ShoppingList {
         val list = ShoppingList(
             id = minOf(dao.lowestListId() ?: 0L, 0L) - 1,
