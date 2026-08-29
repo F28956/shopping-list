@@ -47,6 +47,10 @@ struct RootView: View {
     /// reads `ServerDirectory`.
     @State private var capabilities = Capabilities.current
 
+    /// What every screen below reads, and what the watch is told about. See ``open()``.
+    @State private var backend: (any Backend)?
+    @State private var api: API?
+
     var body: some View {
         Group {
             if hasServer {
@@ -63,13 +67,32 @@ struct RootView: View {
         // Settings is the only thing that changes this, and it changes it under our
         // feet, so the answer is re-read rather than remembered from launch.
         .environment(\.capabilities, capabilities)
+        .task { open() }
         .onReceive(NotificationCenter.default.publisher(for: .serverChanged)) { _ in
             hasServer = !ServerDirectory.isOnDeviceOnly
             capabilities = .current
+            // A different mode is a different backend -- the device's own server, or a
+            // cache in front of somebody else's.
+            open()
         }
     }
 
+    @ViewBuilder
     private var lists: some View {
+        if let backend, let api {
+            ListsView(api: api, backend: backend)
+        } else {
+            ProgressView()
+        }
+    }
+
+    /// Built once and kept, rather than made afresh every time a body runs.
+    ///
+    /// This was a computed property, so every re-render opened another database and
+    /// started another set of watchers, and `PhoneLink` pointed at whichever one
+    /// happened to be made last. Held as state, and rebuilt only when the answer
+    /// actually changes -- which is when somebody chooses a server, or stops using one.
+    private func open() {
         let api = API(
             baseURL: Config.apiBaseURL,
             token: { await identity.token() },
@@ -81,15 +104,15 @@ struct RootView: View {
             ? LocalBackend.readyForUse()
             : nil) ?? CachingBackend(remote: api)
 
+        self.api = api
+        self.backend = backend
+
         // The watch is told what *this* holds, so it has to be told by the same thing
         // this reads. It used to read `Cache.shared` directly, which stopped being the
         // phone's memory the day the device's own server took over: after a migration
         // the watch would have gone on receiving the picture taken the moment it ran,
         // for ever, with no error anywhere.
-        PhoneLink.shared.backend = { backend }
-        PhoneLink.shared.push()
-
-        return ListsView(api: api, backend: backend)
+        PhoneLink.shared.use(backend)
     }
 
     @ViewBuilder

@@ -81,6 +81,74 @@ final class PhoneLink: NSObject, WCSessionDelegate {
 
     private var pending: Task<Void, Never>?
 
+    /// Watches everything this phone holds, so that a change made here reaches the wrist.
+    private var following: Task<Void, Never>?
+
+    /// Hands over the backend this phone reads, and starts watching it.
+    ///
+    /// One call rather than two, because the two must not drift apart: a `backend` set
+    /// without a `follow` is a watch that receives one snapshot at launch and nothing
+    /// afterwards, which is exactly the state this app shipped in.
+    func use(_ backend: any Backend) {
+        self.backend = { backend }
+        follow()
+        push()
+    }
+
+    /// Pushes whenever anything this phone holds moves.
+    ///
+    /// `.cacheChanged` was the only trigger, and it stopped firing the day the device's
+    /// own server took over: `LocalBackend` writes `device.sqlite` through `domain` and
+    /// never touches the cache. So an item crossed off on the phone reached the wrist
+    /// only if something else happened to poke the link -- in practice never. The watch
+    /// showed a picture that was right when it arrived and then went quietly stale,
+    /// which looks identical to a picture that is correct.
+    ///
+    /// Both channels, because `domain` keeps them apart deliberately: a list's rows and
+    /// the set of lists are announced separately so that a screen watching one list does
+    /// not re-read when another moves. "Anything at all" is the union of the two, and it
+    /// has to be rebuilt whenever the set changes -- a list made a moment ago has no row
+    /// stream yet.
+    private func follow() {
+        following?.cancel()
+        following = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, let backend = await self.backend?() else { return }
+                let lists = (try? await backend.lists().items) ?? []
+
+                await withTaskGroup(of: Void.self) { group in
+                    for list in lists {
+                        group.addTask { @MainActor in
+                            guard let rows = try? await backend.changes(on: list) else { return }
+                            do {
+                                for try await _ in rows { self.pushSoon() }
+                            } catch {}
+                        }
+                    }
+                    group.addTask { @MainActor in
+                        guard let set = try? await backend.listChanges() else { return }
+                        do {
+                            for try await _ in set {
+                                self.pushSoon()
+                                // The set moved, so the row subscriptions above are the
+                                // wrong set. Leaving ends the round and rebuilds them.
+                                return
+                            }
+                        } catch {}
+                    }
+
+                    // The first child to return ends the round: either the set of lists
+                    // moved, or a stream failed. Either way the subscriptions are stale.
+                    await group.next()
+                    group.cancelAll()
+                }
+
+                // A floor, so a backend whose streams fail immediately cannot spin.
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
     // MARK: - Sending
 
     /// Hands the watch the current state of things.

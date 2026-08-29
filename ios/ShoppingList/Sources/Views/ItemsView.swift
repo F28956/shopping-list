@@ -45,7 +45,7 @@ struct ItemsView: View {
             }
 
             // "Nothing on this list yet" is a claim, and with nothing cached and a
-            // model.load that failed it is a claim nobody has checked. `fresh` is what earns
+            // load that failed it is a claim nobody has checked. `fresh` is what earns
             // it, and only the server can set that.
             //
             // Except on a device kept to itself, where there is no server to have
@@ -56,13 +56,13 @@ struct ItemsView: View {
                     Text(
                         model.offline
                             ? "Can't reach the server. This list will appear as soon as there is a connection."
-                            : "Couldn't model.load this list. What is on it is not known yet."
+                            : "Couldn't load this list. What is on it is not known yet."
                     )
                     .foregroundStyle(.secondary)
                 }
             } else if model.outstanding.isEmpty && model.loaded {
                 Section {
-                    Text(model.items.isEmpty ? "Nothing on this list yet." : "All model.done.")
+                    Text(model.items.isEmpty ? "Nothing on this list yet." : "All done.")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -188,7 +188,7 @@ struct ItemsView: View {
         // Asked rather than assumed: this is the one control on the screen that takes
         // several rows at once, and a mis-tap cannot be undone from here.
         .confirmationDialog(
-            "Clear \(model.done.count) model.done \(model.done.count == 1 ? "item" : "model.items")?",
+            "Clear \(model.done.count) done \(model.done.count == 1 ? "item" : "items")?",
             isPresented: $confirmingClear,
             titleVisibility: .visible
         ) {
@@ -209,7 +209,7 @@ struct ItemsView: View {
     /// conditional is exactly the kind of thing it gives up on.
     private var doneHeader: some View {
         HStack {
-            Text("\(model.done.count) model.done")
+            Text("\(model.done.count) done")
             Spacer()
             if list.mayEdit {
                 Button("Clear", role: .destructive) { confirmingClear = true }
