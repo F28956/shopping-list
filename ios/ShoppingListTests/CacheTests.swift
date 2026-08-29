@@ -362,6 +362,68 @@ struct CacheTests {
         #expect(cache.allTags().count == Reference.tags.count, "the shipped set did not come back")
     }
 
+    /// The memory belongs to the *list*, not to whoever is signed in.
+    ///
+    /// The server moved it there so a household shares one, and hands it back per list
+    /// like everything else. This kept it on sign-out anyway, on reasoning that had
+    /// expired -- so the next person on a shared device got the previous person's
+    /// shopping suggested to them, measured and filed, under names they never typed.
+    @Test("signing out forgets what the lists taught the box")
+    func signingOutForgetsTheHistory() {
+        let cache = Cache.inMemory()
+        let list = list()
+        cache.remember(lists: [list])
+        cache.remember(item(id: 1, name: "Gin"), on: list, isNew: true)
+        #expect(!cache.history(on: list).isEmpty, "the fixture never landed")
+
+        cache.forgetEverything()
+
+        #expect(cache.history(on: list).isEmpty, "a stranger's shopping was kept")
+    }
+
+    /// A list made offline carries everything to its real id.
+    ///
+    /// Two faults, and the second hid the first. `history` was never in the list of
+    /// tables to move and `reference` had stopped holding the tag order at v8, so both
+    /// would have been orphaned under a number nothing pointed at any more. But every
+    /// statement was also handed three arguments while only the first names three,
+    /// which GRDB refuses -- and the refusal rolled back the transaction, so this moved
+    /// *nothing*. Not the items, not the queue, not the list's own id.
+    ///
+    /// Nothing called it in a test, and `Cache.write` swallowed the throw. The visible
+    /// end of it: a list made offline stayed in the cache under its negative id, which
+    /// `remember(lists:)` spares, while the server's answer arrived as a second row --
+    /// the same list twice, one holding the shopping and one empty.
+    @Test("adopting a server id brings the history and the walking order along")
+    func adoptingCarriesTheMemory() {
+        let cache = Cache.inMemory()
+        let mine = List(id: -1, uuid: "abc", name: "Home", ownerID: 0, role: .owner)
+        let real = List(id: 42, uuid: "abc", name: "Home", ownerID: 7, role: .owner)
+        cache.remember(lists: [mine])
+        cache.remember(
+            tags: [Tag(id: 900, name: "dairy", emoji: nil, sortOrder: 0)],
+            on: mine
+        )
+        cache.remember(
+            Item(id: 5, uuid: "milk", name: "Milk", amount: 4,
+                 unitID: 2, doneAt: nil, tagIDs: [900]),
+            on: mine,
+            isNew: true
+        )
+
+        cache.adopt(mine, as: real)
+
+        #expect(cache.lists().map(\.id) == [42], "the list row itself did not move")
+        let carried = cache.history(on: real)
+        #expect(carried.map(\.name) == ["milk"], "the memory stayed behind")
+        #expect(carried.first?.amount == 4, "how much was forgotten on the way")
+        #expect(cache.history(on: mine).isEmpty, "it was copied rather than moved")
+        #expect(
+            cache.tags(on: real).contains { $0.id == 900 },
+            "the walking order stayed behind"
+        )
+    }
+
     /// The migration off the old per-list copies, driven against a database in the
     /// shape a real device is in: one list, twenty-one categories written under it.
     @Test func theOldPerListCopiesBecomeOneVocabulary() throws {

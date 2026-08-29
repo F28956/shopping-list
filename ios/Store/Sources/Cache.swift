@@ -604,9 +604,17 @@ final class Cache: @unchecked Sendable {
     /// Gives a locally-made list the id the server gave it.
     ///
     /// Everything keyed by the old id moves with it: the items on it, the tag order
-    /// remembered for it, and anything still queued against it. Missing one of those
-    /// would leave rows pointing at a list id that no longer exists, which reads on
-    /// screen as a list that lost its items the moment it was first synced.
+    /// remembered for it, what this list has taught the box, and anything still queued
+    /// against it. Missing one of those would leave rows pointing at a list id that no
+    /// longer exists, which reads on screen as a list that lost its items the moment it
+    /// was first synced.
+    ///
+    /// Two of them were missing. `reference` held the tag order until `v8` split it
+    /// into `tags` and `list_tag_order`, and this was not told; `history` was never
+    /// here at all. So a list made offline, walked in somebody's own aisle order and
+    /// added to for a fortnight, reached a server and arrived with its walking order
+    /// and its entire memory orphaned under a number nothing points at any more --
+    /// unreachable, undeletable, and gone from the suggestions.
     ///
     /// The `uuid` does not change and never has — it is what the server was told, and
     /// what every queued operation names. Only this device's own numbering moves.
@@ -614,13 +622,23 @@ final class Cache: @unchecked Sendable {
         guard Self.isLocal(local), !Self.isLocal(real) else { return }
 
         write { db in
-            for statement in [
-                "UPDATE lists SET id = ?2, owner_id = ?3 WHERE id = ?1",
-                "UPDATE items SET list_id = ?2 WHERE list_id = ?1",
-                "UPDATE reference SET list_id = ?2 WHERE list_id = ?1",
-                "UPDATE operations SET list_id = ?2 WHERE list_id = ?1",
-            ] {
-                try db.execute(sql: statement, arguments: [local.id, real.id, real.ownerID])
+            // The list first, then everything that points at it.
+            //
+            // Handed its own arguments, because the others take two and this takes
+            // three -- and every statement was previously given all three, which GRDB
+            // refuses as the wrong number for a statement that names two. The refusal
+            // took the whole transaction with it, so this moved *nothing*: not the
+            // history, not the walking order, and not the list either. It has never
+            // worked, and nothing called it in a test.
+            try db.execute(
+                sql: "UPDATE lists SET id = ?2, owner_id = ?3 WHERE id = ?1",
+                arguments: [local.id, real.id, real.ownerID]
+            )
+            for table in ["items", "reference", "list_tag_order", "history", "operations"] {
+                try db.execute(
+                    sql: "UPDATE \(table) SET list_id = ?2 WHERE list_id = ?1",
+                    arguments: [local.id, real.id]
+                )
             }
         }
     }
@@ -935,6 +953,20 @@ final class Cache: @unchecked Sendable {
             // next server does.
             try db.execute(sql: "DELETE FROM tags")
             try db.execute(sql: "DELETE FROM list_tag_order")
+            // And what the lists taught the box.
+            //
+            // This was kept, on the reasoning that a server can hand back the lists
+            // but nothing can hand back a memory the device built on its own. That was
+            // true when the memory belonged to the person and lived only here. It
+            // stopped being true when it moved to the *list* -- `20260825160000`, "so
+            // a household shares one" -- and the server began handing it back per list
+            // like everything else.
+            //
+            // What was left instead was one person's shopping seeded into the next
+            // person's suggestions on a shared device: names they never typed, arriving
+            // measured and filed. Keyed by `list_id`, and every list has just been
+            // deleted, so keeping it also kept rows belonging to nothing.
+            try db.execute(sql: "DELETE FROM history")
         }
         outbox.forgetEverything()
     }
