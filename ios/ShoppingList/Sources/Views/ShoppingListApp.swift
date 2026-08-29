@@ -74,6 +74,13 @@ struct RootView: View {
             // A different mode is a different backend -- the device's own server, or a
             // cache in front of somebody else's.
             open()
+            // Adopting a server means there is now somebody to be signed in as, and
+            // until something asks, `identity.state` stays `.unknown` -- which
+            // `signedInOrNot` renders as a spinner. It was asked only in the launch
+            // task, and only when a server was already configured, so a device that
+            // started standalone and then chose one sat on that spinner for ever with
+            // no way out but relaunching.
+            if hasServer { Task { await identity.restore() } }
         }
     }
 
