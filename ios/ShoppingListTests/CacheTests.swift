@@ -64,6 +64,34 @@ struct CacheTests {
         #expect(cache.items(on: kept).map(\.name) == ["Bread"], "the surviving list lost its rows")
     }
 
+    /// The server's own row for the list may already be here when it is adopted.
+    ///
+    /// A read between the drain and the adopt brings the list back under its real id,
+    /// and renaming the local row on top of it hits the primary key. That took the
+    /// whole transaction with it, so the items had already moved to a list id that then
+    /// did not exist -- a list that loses its shopping the moment it is first synced,
+    /// which is what `adopt` exists to prevent. It crashed a real Mac, which is the only
+    /// reason it was found.
+    @Test("adopting an id the cache already knows keeps the rows")
+    func adoptingOntoAnExistingRow() {
+        let cache = Cache.inMemory()
+        let mine = List(id: -1, uuid: "abc", name: "Home", ownerID: 0, role: .owner)
+        let real = List(id: 42, uuid: "abc", name: "Home", ownerID: 7, role: .owner)
+
+        cache.remember(lists: [mine])
+        cache.remember(items: [item(id: -1, name: "Bread")], on: mine)
+        // The server's answer, already written down by a read.
+        cache.remember(lists: [real])
+
+        cache.adopt(mine, as: real)
+
+        #expect(cache.lists().map(\.id) == [42], "the list is here twice")
+        #expect(
+            cache.items(on: real).map(\.name) == ["Bread"],
+            "the rows were stranded under an id that no longer exists"
+        )
+    }
+
     /// The same failure a list further down: rows whose list has gone, or whose id has
     /// changed, are unreachable from any list and cannot be cleared by a write that
     /// clears by list id.

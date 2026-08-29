@@ -872,3 +872,72 @@ async fn one_persons_resend_is_not_the_others(#[future(awt)] pool: SqlitePool) {
         "one person's applied-operation id was read as the other's resend"
     );
 }
+
+/// Filing something that is *already* filed, under a different operation id.
+///
+/// `filing_the_same_thing_twice_is_harmless` above resends the same operation id, which
+/// `remembered` answers before any of this is reached — so the case that actually
+/// happens was never covered. It happens whenever an answer is lost: the attach landed,
+/// the reply did not, and the device queues it again with a fresh id. It also happens
+/// when two people file the same row.
+///
+/// It used to raise `Conflict`, which is not a refusal of one operation but a failure
+/// of the whole batch — a 409 for everything, on every retry, for ever.
+#[rstest]
+#[tokio::test]
+async fn filing_what_is_already_filed_is_not_a_conflict(#[future(awt)] pool: SqlitePool) {
+    let t = two(pool).await;
+    let milk = t.add("Milk").await;
+    let dairy = a_tag(&t, "dairy").await;
+
+    let first = t.op("first", What::Tag { item: milk.uuid.clone(), tag: dairy, attached: true });
+    sync::replay(&t.ctx, &t.anna, vec![first]).await.unwrap();
+
+    // A different id: the same intention, queued again because the answer was lost.
+    let again = t.op("second", What::Tag { item: milk.uuid.clone(), tag: dairy, attached: true });
+    let answers = sync::replay(&t.ctx, &t.anna, vec![again]).await.unwrap();
+
+    assert!(
+        matches!(answers[0].outcome, Outcome::Applied { .. }),
+        "already filed came back as {:?}",
+        answers[0].outcome
+    );
+    assert_eq!(tags_on(&t, milk.id).await, vec![dairy], "filed twice over");
+}
+
+/// One operation the server cannot handle must not throw away the answers for the ones
+/// that already landed.
+///
+/// This is what turned a single conflicting `attach_tag` into a queue that could never
+/// drain: `replay` used `?`, so the whole batch came back as one error, the device was
+/// never told that the operations before it had applied, and it sent all thirteen again
+/// — hitting the same operation, getting the same nothing, for ever.
+#[rstest]
+#[tokio::test]
+async fn what_landed_before_a_failure_is_still_reported(#[future(awt)] pool: SqlitePool) {
+    let t = two(pool).await;
+    let milk = t.add("Milk").await;
+
+    let answers = sync::replay(
+        &t.ctx,
+        &t.anna,
+        vec![
+            t.op("tick", What::SetDone { item: milk.uuid.clone(), done: true }),
+            // A tag id that names nothing. Refused rather than fatal -- but the point
+            // of the test is the answer *before* it.
+            t.op("file", What::Tag { item: milk.uuid.clone(), tag: crate::models::tag::Id(9_999), attached: true }),
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        matches!(answers[0].outcome, Outcome::Applied { .. }),
+        "the tick that landed was not reported: {:?}",
+        answers[0].outcome
+    );
+    assert!(
+        t.rows().await.iter().any(|row| row.uuid == milk.uuid && row.done_at.is_some()),
+        "it was reported as applied without being applied"
+    );
+}

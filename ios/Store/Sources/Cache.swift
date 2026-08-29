@@ -736,14 +736,39 @@ final class Cache: @unchecked Sendable {
             // took the whole transaction with it, so this moved *nothing*: not the
             // history, not the walking order, and not the list either. It has never
             // worked, and nothing called it in a test.
-            try db.execute(
-                sql: "UPDATE lists SET id = ?2, owner_id = ?3 WHERE id = ?1",
-                arguments: [local.id, real.id, real.ownerID]
-            )
+            // Everything that points at the old number moves first. Safe even when the
+            // server's own row is already here: these are keyed by their own ids, which
+            // this device minted negative and the server mints positive, so nothing can
+            // collide. What the server sends next replaces them anyway.
             for table in ["items", "reference", "list_tag_order", "history", "operations"] {
                 try db.execute(
                     sql: "UPDATE \(table) SET list_id = ?2 WHERE list_id = ?1",
                     arguments: [local.id, real.id]
+                )
+            }
+
+            // The list row itself cannot simply be renumbered, because the server's row
+            // for it may already be here: a read between the drain and this brings the
+            // list back under its real id, and then renaming the local one on top of it
+            // hits the primary key -- which took the whole transaction with it, so the
+            // rows above stayed pointing at a list that no longer existed. That is a
+            // list which loses its shopping the moment it is first synced, which is the
+            // exact thing this method's comment promises not to do.
+            //
+            // The two rows are the same list -- that is what being adopted means -- so
+            // the local one goes rather than being renamed onto the other.
+            let already = try Int64.fetchOne(
+                db,
+                sql: "SELECT count(*) FROM lists WHERE id = ?",
+                arguments: [real.id]
+            ) ?? 0
+
+            if already > 0 {
+                try db.execute(sql: "DELETE FROM lists WHERE id = ?", arguments: [local.id])
+            } else {
+                try db.execute(
+                    sql: "UPDATE lists SET id = ?2, owner_id = ?3 WHERE id = ?1",
+                    arguments: [local.id, real.id, real.ownerID]
                 )
             }
         }

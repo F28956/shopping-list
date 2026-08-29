@@ -218,8 +218,25 @@ pub async fn replay(ctx: &Ctx, actor: &Actor, batch: Vec<Operation>) -> Result<V
     let mut answers = Vec::with_capacity(batch.len());
     for operation in batch {
         let id = operation.id.clone();
-        let outcome = one(ctx, actor, who, operation, arrived).await?;
-        answers.push(Applied { id, outcome });
+        match one(ctx, actor, who, operation, arrived).await {
+            Ok(outcome) => answers.push(Applied { id, outcome }),
+            // Every refusal a device can do something about is already an `Outcome`, so
+            // reaching here means the server itself had a problem with this one.
+            //
+            // Stop, but hand back what landed. `?` here discarded every answer already
+            // gathered, so the device was never told that the first four operations had
+            // applied -- it kept all thirteen and sent them again, hit the same
+            // operation, and got the same nothing. A queue that cannot make progress
+            // and cannot report why is the worst of the three outcomes, and it is what
+            // one unexpected error produced.
+            //
+            // Stopping rather than skipping, because the batch is one device's story in
+            // order and what follows may depend on what just failed.
+            Err(problem) => {
+                tracing::warn!(operation = %id, error = %problem, "stopping a batch early");
+                break;
+            }
+        }
     }
     Ok(answers)
 }
@@ -417,6 +434,22 @@ async fn apply(
                         Ok(Outcome::Refused { why: Refusal::Invalid })
                     }
                     Err(ServiceError::Forbidden) => Ok(Outcome::Refused { why: Refusal::NotAllowed }),
+                    // Already filed there, which is the end state the device asked for.
+                    // It arrives from an earlier attempt whose answer was lost, or from
+                    // somebody else filing it first, and it means the same thing either
+                    // way -- `docs/offline.md`: filing the same thing twice is harmless.
+                    //
+                    // This was an error, and an error here does not refuse one
+                    // operation: it fails the whole batch with a 409. A device that had
+                    // filed anything then had its entire queue refused, for ever, on
+                    // every retry. The existing test for this only resent the same
+                    // operation *id*, which never reaches here -- `remembered` answers
+                    // first.
+                    Err(ServiceError::Conflict) => Ok(finish(
+                        Item::get(&ctx.db, item::Lookup::Uuid(item.clone()))
+                            .await
+                            .map_err(Into::into),
+                    )),
                     Err(other) => Err(other),
                 }
             }

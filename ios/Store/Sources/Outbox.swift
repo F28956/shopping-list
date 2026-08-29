@@ -356,6 +356,13 @@ final class Outbox: @unchecked Sendable {
         } catch {
             // The request itself did not get through, or the route refused it rather
             // than the changes in it. Either way nothing here is thrown away.
+            //
+            // Said out loud, because "the queue is not moving" and "there is nothing to
+            // send" are otherwise the same silence: both leave the dot where it was and
+            // neither writes anything down. Not an assertion, unlike the cache's
+            // failures -- a phone in a shop takes this path every few seconds and it is
+            // not a bug.
+            print("[outbox] could not send \(queued.count) operations: \(error)")
             return Drained(waiting: queued.count)
         }
 
