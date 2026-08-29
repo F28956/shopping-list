@@ -1,6 +1,13 @@
 package com.cernauskas.shoppinglist.data
 
 import com.cernauskas.shoppinglist.BuildConfig
+import com.cernauskas.shoppinglist.diagnostics.Diagnostics
+import com.cernauskas.shoppinglist.diagnostics.Event
+import com.cernauskas.shoppinglist.diagnostics.Fact
+import com.cernauskas.shoppinglist.diagnostics.Field
+import com.cernauskas.shoppinglist.diagnostics.Metrics
+import com.cernauskas.shoppinglist.diagnostics.Outcome
+import com.cernauskas.shoppinglist.diagnostics.Route
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -365,6 +372,17 @@ class Api(
         val source = EventSources.createFactory(client).newEventSource(
             request,
             object : EventSourceListener() {
+                override fun onOpen(eventSource: EventSource, response: Response) {
+                    // Recorded because the opposite is what actually goes wrong: a
+                    // stream that dies without a FIN leaves a screen waiting for ever,
+                    // and the reconnect that triggers a reload -- and the reload that
+                    // empties the outbox -- both hang off this ending. Counting opens
+                    // against closes is how that shows up as a shape rather than as
+                    // "sometimes it stops syncing".
+                    Metrics.stream(opened = true)
+                    Diagnostics.info(Event.STREAM_OPENED, Fact.of(Field.ROUTE, Route.of(path)))
+                }
+
                 override fun onEvent(
                     eventSource: EventSource,
                     id: String?,
@@ -374,14 +392,32 @@ class Api(
                     trySend(kotlin.Unit)
                 }
 
+                override fun onClosed(eventSource: EventSource) {
+                    Metrics.stream(opened = false)
+                    Diagnostics.info(
+                        Event.STREAM_CLOSED,
+                        Fact.of(Field.ROUTE, Route.of(path)),
+                        Fact.of(Field.OUTCOME, Outcome.OK),
+                    )
+                    close()
+                }
+
                 override fun onFailure(
                     eventSource: EventSource,
                     t: Throwable?,
                     response: Response?,
                 ) {
-                    // Closed rather than reported: losing the connection is ordinary
-                    // — a lock screen, a doze, a server restart — and the collector
-                    // reconnects.
+                    Metrics.stream(opened = false)
+                    // Written down rather than reported to anybody: losing the
+                    // connection is ordinary -- a lock screen, a doze, a server restart
+                    // -- and the collector reconnects. It is only interesting in
+                    // aggregate, which is what this is for.
+                    Diagnostics.info(
+                        Event.STREAM_CLOSED,
+                        Fact.of(Field.ROUTE, Route.of(path)),
+                        Fact.of(Field.OUTCOME, Outcome.UNREACHABLE),
+                        *listOfNotNull(t?.let(Fact::failure)).toTypedArray(),
+                    )
                     close()
                 }
             },
@@ -408,13 +444,49 @@ class Api(
             throw ApiError.Transport(IOException("This device is not using a server."))
         }
 
-        return try {
-            attempt(method, path, body, token())
-        } catch (_: ApiError.Unauthorized) {
-            // Once, and only once. A second refusal is the server meaning it.
-            val fresh = renew() ?: throw ApiError.Unauthorized
-            attempt(method, path, body, fresh)
+        // Around the renewal rather than inside it, so what is measured is what the
+        // caller waited for. A request that took two round trips because a token had
+        // expired *did* take two round trips, and reporting the second one alone is how
+        // "the app is slow after it has been left alone" stays invisible.
+        val route = Route.of(path)
+        val began = System.nanoTime()
+        var outcome = Outcome.OK
+
+        try {
+            return try {
+                attempt(method, path, body, token())
+            } catch (_: ApiError.Unauthorized) {
+                // Once, and only once. A second refusal is the server meaning it.
+                val fresh = renew() ?: throw ApiError.Unauthorized
+                attempt(method, path, body, fresh)
+            }
+        } catch (problem: Throwable) {
+            outcome = outcomeOf(problem)
+            throw problem
+        } finally {
+            val millis = (System.nanoTime() - began) / 1_000_000
+            Metrics.request(route, outcome, millis)
+            // The route class and never the path: `/api/admissions/{email}` has an
+            // address in it, and a log line built from a path is a log line with
+            // somebody's address in it -- see `Route`.
+            Diagnostics.info(
+                Event.REQUEST,
+                Fact.of(Field.ROUTE, route),
+                Fact.of(Field.OUTCOME, outcome),
+                Fact.of(Field.MILLIS, millis),
+            )
         }
+    }
+
+    /** Which of the closed outcomes a failure was. */
+    private fun outcomeOf(problem: Throwable): Outcome = when (problem) {
+        is ApiError.Transport -> Outcome.UNREACHABLE
+        is ApiError.Unauthorized -> Outcome.UNAUTHORIZED
+        is ApiError.NotAdmitted -> Outcome.NOT_ADMITTED
+        is ApiError.Forbidden -> Outcome.FORBIDDEN
+        is ApiError.NotFound -> Outcome.NOT_FOUND
+        is ApiError.BadInput -> Outcome.BAD_INPUT
+        else -> Outcome.SERVER_FAULT
     }
 
     private suspend fun attempt(method: String, path: String, body: String?, bearer: String?): String =

@@ -1,5 +1,13 @@
 package com.cernauskas.shoppinglist.data
 
+import com.cernauskas.shoppinglist.diagnostics.Diagnostics
+import com.cernauskas.shoppinglist.diagnostics.Event
+import com.cernauskas.shoppinglist.diagnostics.Fact
+import com.cernauskas.shoppinglist.diagnostics.Field
+import com.cernauskas.shoppinglist.diagnostics.Metrics
+import com.cernauskas.shoppinglist.diagnostics.Mode
+import com.cernauskas.shoppinglist.diagnostics.Outcome
+import com.cernauskas.shoppinglist.diagnostics.Resolution
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
@@ -37,6 +45,22 @@ class CachingBackend(
     override val reachable: Boolean get() = reachedIt
 
     /**
+     * Records whether the far end answered, and says so on the way in and the way out.
+     *
+     * Only on the change, which is the whole value of it. Every read sets this, so
+     * recording each one would be a line per request saying what the line above it said
+     * — and the two moments anybody wants out of a log are the moment a phone lost the
+     * server and the moment it got it back. Buried in a thousand identical lines they
+     * are unfindable; as two lines with a gap between them they are the answer.
+     */
+    private fun reached(got: Boolean) {
+        if (reachedIt == got) return
+        reachedIt = got
+        Metrics.reachability(got)
+        Diagnostics.info(Event.REACHABILITY_CHANGED, Fact.of(Field.REACHABLE, got))
+    }
+
+    /**
      * What is queued, as a number a screen can show.
      *
      * Read rather than counted here, and cached: the status dot asks for it on every
@@ -54,50 +78,76 @@ class CachingBackend(
     override suspend fun lists(): Listing<ShoppingList> = try {
         val answer = remote.lists()
         cache.rememberLists(answer.items)
-        reachedIt = true
+        reached(true)
+        read(Outcome.OK, answer.items.size, answer.truncated)
         // The far end answered, so anything waiting for it goes now. Here rather than in
         // a screen, because "the server is reachable" is something only this knows and
         // draining is the only sensible thing to do with that news.
         sync()
         answer
     } catch (problem: ApiError.Transport) {
-        reachedIt = false
+        reached(false)
         // What was last seen, rather than nothing. A failed load is not evidence that
         // somebody has no lists -- which is the bug the cache exists for.
         val remembered = cache.lists()
+        // The count is the interesting half. "Answered from the cache with nothing in
+        // it" is the shape of the bug this whole type exists for, and it is
+        // indistinguishable from a healthy empty account unless the log says which.
+        read(Outcome.UNREACHABLE, remembered.size, false)
         Listing(remembered, remembered.size.toLong(), false)
     }
 
     override suspend fun items(list: ShoppingList): Listing<Item> = try {
         val answer = remote.items(list)
         cache.rememberItems(list, answer.items)
-        reachedIt = true
+        reached(true)
+        read(Outcome.OK, answer.items.size, answer.truncated, list)
+        Diagnostics.debug(Event.BACKEND_READ, Fact.of(Field.LIST, list.id)) {
+            answer.items.joinToString(", ") { "${it.name} x${it.amount}" }
+        }
         sync()
         Listing(laidOver(answer.items, list), answer.total, answer.truncated)
     } catch (problem: ApiError.Transport) {
-        reachedIt = false
+        reached(false)
         val remembered = cache.items(list)
+        read(Outcome.UNREACHABLE, remembered.size, false, list)
         Listing(laidOver(remembered, list), remembered.size.toLong(), false)
     }
+
+    /** One read, in the shape every read has: how many rows, from where, and whether it
+     * was the whole answer. */
+    private fun read(
+        outcome: Outcome,
+        count: Int,
+        truncated: Boolean,
+        list: ShoppingList? = null,
+    ) = Diagnostics.info(
+        Event.BACKEND_READ,
+        Fact.of(Field.MODE, Mode.SERVER),
+        Fact.of(Field.OUTCOME, outcome),
+        Fact.of(Field.COUNT, count),
+        Fact.of(Field.TRUNCATED, truncated),
+        *listOfNotNull(list?.let { Fact.of(Field.LIST, it.id) }).toTypedArray(),
+    )
 
     override suspend fun units(): List<Unit> = try {
         remote.units().also { cache.rememberUnits(it) }
     } catch (problem: ApiError.Transport) {
-        reachedIt = false
+        reached(false)
         cache.seedReference(NO_LIST).first
     }
 
     override suspend fun tagsOrderedFor(list: ShoppingList): List<Tag> = try {
         remote.tagsOrderedFor(list).also { cache.rememberTags(list, it) }
     } catch (problem: ApiError.Transport) {
-        reachedIt = false
+        reached(false)
         cache.seedReference(list).second
     }
 
     override suspend fun tagsOn(item: Item, list: ShoppingList): List<Tag> = try {
         remote.tagsOn(item, list)
     } catch (problem: ApiError.Transport) {
-        reachedIt = false
+        reached(false)
         // What the row itself says it is filed under. Poorer than the server's answer
         // and better than none, which would read as "filed under nothing".
         val known = cache.seedReference(list).second.associateBy { it.id }
@@ -107,7 +157,7 @@ class CachingBackend(
     override suspend fun suggestions(typed: String, list: ShoppingList): List<String> = try {
         remote.suggestions(typed, list)
     } catch (problem: ApiError.Transport) {
-        reachedIt = false
+        reached(false)
         // Ranked here by the shared policy rather than offered as nothing. It used to be
         // network-only, so a phone in a shop got no suggestions at all -- and the
         // ranking was half here besides: this filtered by score and ordered by how often
@@ -122,7 +172,7 @@ class CachingBackend(
     override suspend fun history(list: ShoppingList): List<RememberedEntry> = try {
         remote.history(list).also { cache.rememberHistory(list, it) }
     } catch (problem: ApiError.Transport) {
-        reachedIt = false
+        reached(false)
         cache.rememberedFor(list)
     }
 
@@ -206,15 +256,16 @@ class CachingBackend(
 
     override suspend fun createList(name: String): ShoppingList = try {
         remote.createList(name).also {
-            reachedIt = true
+            reached(true)
             cache.rememberLists(cache.lists() + it)
         }
     } catch (problem: ApiError.Transport) {
-        reachedIt = false
+        reached(false)
         // A list made with no signal is a list. Where it goes in the meantime is this
         // type's business, which is what took the fallback out of the screens.
         val made = cache.makeListHere(name, ownedBy = 0)
         cache.outbox.makeList(made)
+        wrote(made, Fact.of(Field.OUTCOME, Outcome.UNREACHABLE), Fact.length(Field.LENGTH, name))
         refreshQueued()
         made
     }
@@ -268,12 +319,42 @@ class CachingBackend(
             }
         }
 
+        // How long the line was and how it was read, without the line. A line the parser
+        // resolved to an existing row when somebody meant a new one is the recurring
+        // shape of this bug, and both halves of that are here -- see `Fact.length` for
+        // why the characters are not.
+        wrote(
+            list,
+            Fact.length(Field.LENGTH, line),
+            Fact.of(
+                Field.KIND,
+                if (decision is QuickAdd.Decision.New) Resolution.NEW_ROW else Resolution.EXISTING_ROW,
+            ),
+            Fact.of(Field.COUNT, (decision as? QuickAdd.Decision.New)?.tagIds?.size ?: 0),
+        )
+        Diagnostics.debug(Event.BACKEND_WRITE, Fact.of(Field.LIST, list.id)) { line }
+
         refreshQueued()
         sync()
     }
 
+    /**
+     * One write, queued rather than sent.
+     *
+     * The list and the row are named by their ids, which a server minted and which say
+     * nothing about the shopping. What they were *called* is at debug, where the
+     * settings screen has already said what that means.
+     */
+    private fun wrote(list: ShoppingList, vararg facts: Fact) = Diagnostics.info(
+        Event.BACKEND_WRITE,
+        Fact.of(Field.MODE, Mode.SERVER),
+        Fact.of(Field.LIST, list.id),
+        *facts,
+    )
+
     override suspend fun setDone(item: Item, list: ShoppingList, done: Boolean, at: Long?) {
         cache.outbox.setDone(item, list, done)
+        wrote(list, Fact.of(Field.ITEM, item.id), Fact.of(Field.COUNT, if (done) 1 else 0))
         refreshQueued()
         sync()
     }
@@ -286,6 +367,8 @@ class CachingBackend(
         unitId: Long?,
     ) {
         cache.outbox.update(item, list, name, amount, unitId)
+        wrote(list, Fact.of(Field.ITEM, item.id), Fact.length(Field.LENGTH, name))
+        Diagnostics.debug(Event.BACKEND_WRITE, Fact.of(Field.ITEM, item.id)) { "$name x$amount" }
         refreshQueued()
         sync()
     }
@@ -305,12 +388,14 @@ class CachingBackend(
     override suspend fun clearDone(list: ShoppingList) {
         val done = cache.items(list).filter { it.isDone }
         cache.outbox.clearDone(done, list)
+        wrote(list, Fact.of(Field.COUNT, done.size))
         refreshQueued()
         sync()
     }
 
     override suspend fun delete(item: Item, list: ShoppingList) {
         cache.outbox.delete(item, list)
+        wrote(list, Fact.of(Field.ITEM, item.id))
         refreshQueued()
         sync()
     }
@@ -350,12 +435,34 @@ class CachingBackend(
         val drained = cache.outbox.drain(remote)
         refreshQueued()
 
+        // The one place the whole queue's story is in one line. A queue that will not
+        // move is the complaint this app gets, and answering it means knowing which of
+        // the three it was: nothing sent because there was no connection, something
+        // refused and kept, or something sent and something lost behind it.
+        Metrics.drained(drained.sent, drained.waiting, drained.lost.size, drained.refused)
+        Metrics.queueDepth(drained.waiting)
+        Diagnostics.info(
+            Event.QUEUE_DRAINED,
+            Fact.of(Field.SENT, drained.sent),
+            Fact.of(Field.WAITING, drained.waiting),
+            Fact.of(Field.LOST, drained.lost.size),
+            Fact.of(Field.REFUSED, drained.refused),
+        )
+        // Separate and at warn, because it is the one outcome that does not heal on its
+        // own -- the same reason `OfflineNote` colours it and not the other two.
+        if (drained.refused) {
+            Diagnostics.warn(Event.QUEUE_REFUSED, Fact.of(Field.WAITING, drained.waiting))
+        }
+        // The losses say what they were, in words meant for a person, so they are
+        // shopping. Only where somebody has asked for a log that holds shopping.
+        Diagnostics.debug(Event.QUEUE_DRAINED) { drained.lost.joinToString("; ") }
+
         // A drain that sent nothing while something was queued is the other way to learn
         // there is no connection, and often the first: it does not wait for a read.
         if (drained.sent > 0) {
-            reachedIt = true
+            reached(true)
         } else if (drained.waiting > 0 && !drained.refused) {
-            reachedIt = false
+            reached(false)
         }
 
         // Lists made here have just been given the server's own ids. Without this the
@@ -390,10 +497,15 @@ class CachingBackend(
             .map { it.listUuid }
             .toSet()
 
+        var handedOver = 0
+        var rows = 0
+
         for (list in cache.lists()) {
             if (list.id >= 0 || list.uuid in alreadyQueued) continue
+            handedOver += 1
             cache.outbox.makeList(list)
             for (item in cache.items(list)) {
+                rows += 1
                 cache.outbox.add(item.uuid, item.id, item.name, list)
                 for (tagId in item.tagIds) {
                     cache.outbox.tag(item, list, tagId, attached = true)
@@ -403,6 +515,19 @@ class CachingBackend(
                 if (item.isDone) cache.outbox.setDone(item, list, true)
             }
         }
+
+        // Only when something actually moved: this runs on every drain, and a line per
+        // drain saying "nothing to hand over" would bury the one time it did. The
+        // counts are the thing worth having, because the failure this guards against is
+        // somebody adopting a server and finding half their lists.
+        if (handedOver > 0) {
+            Diagnostics.info(
+                Event.HANDOVER_TO_SERVER,
+                Fact.of(Field.COUNT, handedOver),
+                Fact.of(Field.DEPTH, rows),
+            )
+        }
+
         refreshQueued()
     }
 

@@ -23,5 +23,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!--
+          The exported log, handed to whatever somebody chooses to send it with.
+
+          Not exported, and no permission on it: the grant is per URI and per share,
+          made when the share sheet opens and gone when the other app is done. See
+          res/xml/diagnostics_paths.xml for the one directory it can reach.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.diagnostics"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/diagnostics_paths" />
+        </provider>
     </application>
 </manifest>

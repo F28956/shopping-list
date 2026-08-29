@@ -1,6 +1,9 @@
 package com.cernauskas.shoppinglist.data
 
 import android.util.Log
+import com.cernauskas.shoppinglist.diagnostics.Diagnostics
+import com.cernauskas.shoppinglist.diagnostics.Event
+import com.cernauskas.shoppinglist.diagnostics.Fact
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -54,6 +57,10 @@ object QuickAdd {
         true
     } catch (e: UnsatisfiedLinkError) {
         Log.e("QuickAdd", "the shared parser did not load; lines will not be read", e)
+        // Written down for the same reason `Embedded` writes its own: the fallback is
+        // silent and correct-looking, so `2 kg apples` quietly becomes an item called
+        // "2 kg apples" and nobody reports a crash because there is not one.
+        Diagnostics.error(Event.NATIVE_MISSING, Fact.failure(e))
         false
     }
 

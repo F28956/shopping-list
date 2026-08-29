@@ -14,6 +14,9 @@ import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.cernauskas.shoppinglist.diagnostics.Diagnostics
+import com.cernauskas.shoppinglist.diagnostics.Event
+import com.cernauskas.shoppinglist.diagnostics.Fact
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -689,8 +692,14 @@ class Cache(
         withContext(Dispatchers.IO) {
             try {
                 work()
-            } catch (_: Exception) {
-                // Nothing on the screen depends on this having happened.
+            } catch (problem: Exception) {
+                // Nothing on the screen depends on this having happened, which is
+                // exactly why it is written down. A cache write that fails every time
+                // -- a full disk, a constraint the migrations left behind -- shows up
+                // as an app that forgets what it saw the moment it goes offline, and
+                // there is no other trace of it anywhere: the read path answers
+                // "nothing cached" and is telling the truth.
+                Diagnostics.warn(Event.CACHE_WRITE_FAILED, Fact.failure(problem))
             }
         }
     }

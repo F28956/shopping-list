@@ -1,6 +1,11 @@
 package com.cernauskas.shoppinglist.data
 
 import android.util.Log
+import com.cernauskas.shoppinglist.diagnostics.Diagnostics
+import com.cernauskas.shoppinglist.diagnostics.Event
+import com.cernauskas.shoppinglist.diagnostics.Fact
+import com.cernauskas.shoppinglist.diagnostics.Field
+import com.cernauskas.shoppinglist.diagnostics.Mode
 
 /**
  * The device's own server.
@@ -54,6 +59,14 @@ object Embedded {
         true
     } catch (e: UnsatisfiedLinkError) {
         Log.e("Embedded", "the device's own server is not in this APK", e)
+        // In the file as well as in logcat. This happens once, at class initialisation,
+        // long before anybody plugs a phone in -- and everything downstream of it is a
+        // fallback that works, so the only trace of the real fault is here.
+        Diagnostics.error(
+            Event.NATIVE_MISSING,
+            Fact.of(Field.MODE, Mode.DEVICE),
+            Fact.failure(e),
+        )
         false
     }
 

@@ -1,6 +1,8 @@
 package com.cernauskas.shoppinglist.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
@@ -54,7 +56,16 @@ fun SettingsScreen(onDone: () -> Unit, onUseServer: () -> Unit, onLeaveServer: (
             )
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                // Scrolls, because the diagnostics below are two text fields and a
+                // paragraph taller than this screen used to be, and a settings screen
+                // whose last control is off the bottom on a small phone is a control
+                // nobody can reach.
+                .verticalScroll(rememberScrollState()),
+        ) {
             ListItem(
                 headlineContent = { Text("Server") },
                 trailingContent = { Text(server?.origin ?: "None") },
@@ -108,6 +119,11 @@ fun SettingsScreen(onDone: () -> Unit, onUseServer: () -> Unit, onLeaveServer: (
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(16.dp),
             )
+
+            // Below the server, because that is the order somebody arrives at them in:
+            // the reason to come here is to configure a server, and the reason to turn
+            // a log on is that one is already misbehaving.
+            DiagnosticsSection(hasServer = server != null)
         }
     }
 
