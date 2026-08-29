@@ -374,14 +374,23 @@ pub async fn events(
     lists::get(&s.ctx, &actor, list_id).await?;
 
     let watching = BroadcastStream::new(s.ctx.changes.watch());
-    let stream = watching.filter_map(move |heard| match heard {
-        Ok(changed) if changed.list_id == list_id => Some(Ok(Event::default()
-            .event("changed")
-            .data(changed.list_id.0.to_string()))),
-        // Lagging means events were dropped. For a nudge that is the same news as one
-        // arriving, and staying quiet would leave the page silently stale.
-        Err(_) => Some(Ok(Event::default().event("changed").data(id.to_string()))),
-        Ok(_) => None,
+
+    // Counted while the stream is open. Owned by the closure below, because this
+    // function returns as soon as the stream is built -- see the API's own `events`.
+    let subscriber = observability::SseStream::opened("web");
+
+    let stream = watching.filter_map(move |heard| {
+        let _held = &subscriber;
+
+        match heard {
+            Ok(changed) if changed.list_id == list_id => Some(Ok(Event::default()
+                .event("changed")
+                .data(changed.list_id.0.to_string()))),
+            // Lagging means events were dropped. For a nudge that is the same news as
+            // one arriving, and staying quiet would leave the page silently stale.
+            Err(_) => Some(Ok(Event::default().event("changed").data(id.to_string()))),
+            Ok(_) => None,
+        }
     });
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))

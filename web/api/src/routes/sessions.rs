@@ -12,7 +12,8 @@
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 use domain::models::session::Token;
-use domain::service::{identity, sessions};
+use domain::service::{ServiceError, identity, sessions};
+use observability::instruments::{SignIn, sign_in};
 
 use crate::auth::{Bearer, verify};
 use crate::error::AppError;
@@ -41,15 +42,40 @@ async fn open(
     Bearer(token): Bearer,
 ) -> Result<Json<Issued>, AppError> {
     let (provider, claims) = match &state.auth {
-        AuthMode::Providers(providers) => verify(&token, providers).await?,
+        AuthMode::Providers(providers) => match verify(&token, providers).await {
+            Ok(verified) => verified,
+            // Counted with the provider unknown, because a token that did not verify
+            // did not say whose it was in any way worth believing.
+            Err(e) => {
+                sign_in("unknown", SignIn::Rejected);
+                return Err(e);
+            }
+        },
         #[cfg(any(test, feature = "test-support"))]
         AuthMode::TrustTheToken => ("google", crate::auth::Claims::for_test(&token)),
     };
 
     let (sub, name, email) = claims.into();
-    let actor = identity::from_claims(&state.ctx, provider, sub, name, email).await?;
+    let actor = match identity::from_claims(&state.ctx, provider, sub, name, email).await {
+        Ok(actor) => actor,
+        Err(e) => {
+            // The refusal worth graphing separately. A server nobody can get into
+            // looks the same from the outside whether the tokens are wrong or the
+            // admission list is, and these are different problems with different
+            // fixes.
+            sign_in(
+                provider,
+                match &e {
+                    ServiceError::NotAdmitted => SignIn::NotAdmitted,
+                    _ => SignIn::Rejected,
+                },
+            );
+            return Err(e.into());
+        }
+    };
 
     let issued = sessions::issue(&state.ctx, &actor, provider).await?;
+    sign_in(provider, SignIn::Issued);
 
     Ok(Json(Issued {
         token: issued.0,

@@ -1,0 +1,27 @@
+[package]
+name = "observability"
+version = "0.1.0"
+edition = "2024"
+
+# What the process says about itself, in the two ways it can be asked.
+#
+# Deliberately light. This crate is linked by `api` and `web`, which are where the
+# interesting outcomes are known; the exporters -- OTLP, Prometheus, the subscriber --
+# belong to `server`, because that is the crate that decides how a process is wired.
+# Nothing here opens a socket or starts a runtime.
+#
+# It must never appear in `embedded`'s tree: that crate is compiled into phones, where
+# binary size and startup are load-bearing. `embedded` links `domain`, and `domain`
+# links nothing from here -- the arrow points this way round on purpose, and
+# `metrics_stay_out_of_the_phone` in server's tests is what keeps it that way.
+
+[dependencies]
+domain = { path = "../domain" }
+axum = "0.8.9"
+opentelemetry = { version = "0.32.0", features = ["metrics"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+rstest = "0.26.1"
+tokio = { version = "1.53.1", features = ["rt", "macros"] }
+tower = { version = "0.5.3", features = ["util"] }

@@ -155,18 +155,31 @@ async fn events(
     // authorisation read above and the client's first re-read is not lost.
     let watching = BroadcastStream::new(state.ctx.changes.watch());
 
-    let stream = watching.filter_map(move |heard| match heard {
-        // The id that changed, not the id being watched. They are equal after the
-        // filter, but writing the watched one makes the payload true by construction
-        // rather than by the filter above still being there.
-        Ok(changed) if changed.list_id == list_id => Some(Ok(Event::default()
-            .event("changed")
-            .data(changed.list_id.0.to_string()))),
-        // Falling behind means events were dropped, which for a nudge is the same
-        // news as one arriving: re-read. Ending the stream here would leave the
-        // client silently stale, which is the failure this whole route exists to fix.
-        Err(_) => Some(Ok(Event::default().event("changed").data(id.to_string()))),
-        Ok(_) => None,
+    // Counted while the stream is open, and released by `Drop` when the client hangs
+    // up. It goes into the closure rather than staying here because this function
+    // returns as soon as the stream is built: a count kept in scope here would fall to
+    // zero with every subscriber still connected.
+    let subscriber = observability::SseStream::opened("api");
+
+    let stream = watching.filter_map(move |heard| {
+        // Never read. Mentioning it is what makes the `move` closure own it, so it
+        // lives exactly as long as the stream the client is holding.
+        let _held = &subscriber;
+
+        match heard {
+            // The id that changed, not the id being watched. They are equal after the
+            // filter, but writing the watched one makes the payload true by
+            // construction rather than by the filter above still being there.
+            Ok(changed) if changed.list_id == list_id => Some(Ok(Event::default()
+                .event("changed")
+                .data(changed.list_id.0.to_string()))),
+            // Falling behind means events were dropped, which for a nudge is the same
+            // news as one arriving: re-read. Ending the stream here would leave the
+            // client silently stale, which is the failure this whole route exists to
+            // fix.
+            Err(_) => Some(Ok(Event::default().event("changed").data(id.to_string()))),
+            Ok(_) => None,
+        }
     });
 
     // Proxies and phone radios drop a connection that says nothing for long enough,

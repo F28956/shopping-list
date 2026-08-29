@@ -52,9 +52,14 @@ async fn join(
     user: CurrentUser,
     Json(redemption): Json<Redemption>,
 ) -> Result<Json<List>, AppError> {
-    Ok(Json(
-        lists::join(&state.ctx, &user.actor(), &Token(redemption.token)).await?,
-    ))
+    let joined = lists::join(&state.ctx, &user.actor(), &Token(redemption.token)).await;
+
+    // Counted, never labelled by the token. A share link is a bearer credential with
+    // seven days left on it, and a metric label is a string that ends up in a scrape
+    // endpoint, a collector, and whatever storage sits behind it.
+    observability::instruments::invite_redeemed(joined.is_ok());
+
+    Ok(Json(joined?))
 }
 
 /// Deserialised straight into the model's `Role`, so `owner` is rejected by the
