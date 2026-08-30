@@ -30,6 +30,6 @@
 	<key>WKApplication</key>
 	<true/>
 	<key>WKCompanionAppBundleIdentifier</key>
-	<string>com.cernauskas.shoppinglist</string>
+	<string>dev.f28956.shopping-list</string>
 </dict>
 </plist>

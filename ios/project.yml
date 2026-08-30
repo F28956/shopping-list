@@ -19,7 +19,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
 
 options:
-  bundleIdPrefix: com.cernauskas
+  bundleIdPrefix: dev.f28956
   deploymentTarget:
     iOS: "17.0"
     watchOS: "10.0"
@@ -97,7 +97,7 @@ targets:
           NSAllowsLocalNetworking: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.cernauskas.shoppinglist
+        PRODUCT_BUNDLE_IDENTIFIER: dev.f28956.shopping-list
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
@@ -160,7 +160,7 @@ targets:
         WKApplication: true
         # Which phone app this belongs to. Wrong, and the watch app installs as an
         # unrelated app that can never talk to its phone.
-        WKCompanionAppBundleIdentifier: com.cernauskas.shoppinglist
+        WKCompanionAppBundleIdentifier: dev.f28956.shopping-list
         ShoppingListAPIBaseURL: $(SHOPPING_LIST_API_BASE_URL)
         # C6's client half on this platform.
         #
@@ -182,7 +182,7 @@ targets:
       base:
         # The suffix is not decoration: watchOS requires the watch app's id to be the
         # companion's with exactly one component added.
-        PRODUCT_BUNDLE_IDENTIFIER: com.cernauskas.shoppinglist.watchkitapp
+        PRODUCT_BUNDLE_IDENTIFIER: dev.f28956.shopping-list.watchkitapp
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
@@ -248,7 +248,7 @@ targets:
         # token's audience is the bundle id, so sharing one means the server accepts
         # both apps' tokens with a single entry in APPLE_BUNDLE_IDS -- and it is one
         # app to a person either way.
-        PRODUCT_BUNDLE_IDENTIFIER: com.cernauskas.shoppinglist
+        PRODUCT_BUNDLE_IDENTIFIER: dev.f28956.shopping-list
         CODE_SIGN_ENTITLEMENTS: Mac/ShoppingListMac.entitlements
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
@@ -287,7 +287,7 @@ targets:
       - target: ShoppingListMac
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.cernauskas.shoppinglist.macuitests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.f28956.shopping-list.macuitests
         SWIFT_VERSION: "5.0"
         TEST_TARGET_NAME: ShoppingListMac
         GENERATE_INFOPLIST_FILE: "YES"
@@ -301,7 +301,7 @@ targets:
       - target: ShoppingList
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.cernauskas.shoppinglist.tests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.f28956.shopping-list.tests
         GENERATE_INFOPLIST_FILE: "YES"
         # `@testable import ShoppingList` re-exports what the app imported, so the
         # tests have to be able to find the parser's module map even though they never

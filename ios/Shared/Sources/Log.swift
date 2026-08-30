@@ -375,7 +375,7 @@ extension LogBook {
 /// level by the phone rather than reading one of its own.
 enum LogSettings {
     /// The reverse-DNS name every line is filed under in Console.
-    static let subsystem = "com.cernauskas.shoppinglist"
+    static let subsystem = "dev.f28956.shopping-list"
 
     private static let key = "diagnostics.level"
 

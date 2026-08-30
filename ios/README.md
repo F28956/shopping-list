@@ -41,7 +41,7 @@ Sign in with Apple is an entitlement, and an entitlement means a real signature.
 
 - Put your ten-character Team ID (developer.apple.com → Membership) in
   `ios/Config.xcconfig` as `DEVELOPMENT_TEAM`.
-- Enable **Sign in with Apple** for the `com.cernauskas.shoppinglist` App ID on
+- Enable **Sign in with Apple** for the `dev.f28956.shopping-list` App ID on
   developer.apple.com → Identifiers. Xcode will offer to do this for you the first
   time you build with automatic signing.
 - Building for a Mac or a handset registers that device against the account; the
@@ -50,7 +50,7 @@ Sign in with Apple is an entitlement, and an entitlement means a real signature.
 Then tell the server which apps to accept tokens from, in `web/.env`:
 
 ```
-APPLE_BUNDLE_IDS="com.cernauskas.shoppinglist"
+APPLE_BUNDLE_IDS="dev.f28956.shopping-list"
 ```
 
 Without that last step the server rejects everything the Apple apps send. A native
@@ -115,7 +115,7 @@ pairs`), and the watch app is installed separately:
 ```sh
 xcrun simctl install <watch-udid> \
     ~/Library/Developer/Xcode/DerivedData/.../Debug-watchsimulator/ShoppingListWatch.app
-xcrun simctl launch <watch-udid> com.cernauskas.shoppinglist.watchkitapp
+xcrun simctl launch <watch-udid> dev.f28956.shopping-list.watchkitapp
 ```
 
 Sign in on the paired phone first, or the watch has nothing to ask.

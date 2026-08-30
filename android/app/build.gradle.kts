@@ -63,8 +63,12 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        // The same identifier as the phone and Mac apps. Google's Android OAuth
-        // client is registered against it and the signing certificate's SHA-1.
+        // Google's Android OAuth client is registered against this and the signing
+        // certificate's SHA-1, so it is not free to change.
+        //
+        // No longer the same string as the Apple apps, which are `dev.f28956.shopping-list`.
+        // Nothing requires the two to match -- they are separate registrations with
+        // separate providers -- and this one is the expensive one to move.
         applicationId = "com.cernauskas.shoppinglist"
         minSdk = 26
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
