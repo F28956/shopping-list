@@ -88,8 +88,22 @@ list.example.com {
 }
 ```
 
-Bind the application to localhost if the proxy is on the same machine, and let the
-proxy be the only thing on a public port.
+Bind the application to loopback if the proxy is on the same machine, so the proxy is
+the only thing on a public port:
+
+```
+BIND=127.0.0.1
+```
+
+Without it the application answers on every interface, and anything on the house
+network — a television, a doorbell, a guest's phone — can reach it directly and skip
+the proxy, along with whatever the proxy was added to do. The server says at startup
+when it is bound this way, because a server nothing can reach is otherwise a silent
+condition.
+
+`BIND` takes an address and not a name: `127.0.0.1`, or `::1`, never `localhost`. A
+name would have to be resolved, and a resolver is not something a bind address should
+depend on.
 
 **One trap worth knowing**, from [docs/tls.md](../docs/tls.md) T6: if you put a
 *terminating* proxy in front and also want this server to hold its own certificate,

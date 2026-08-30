@@ -85,20 +85,24 @@ async fn main() -> anyhow::Result<()> {
     metrics.announce();
     let _meters = metrics.install(&db)?;
 
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", tls.port)).await?;
+    let listener = tokio::net::TcpListener::bind((tls.bind, tls.port)).await?;
     let scheme = if tls.mode.serves_tls() { "https" } else { "http" };
     tracing::info!("listening on {} ({scheme})", listener.local_addr()?);
 
     // Said out loud because `localhost` is the first thing to get wrong once a real
     // phone is involved: on the handset it means the handset.
-    if let Some(address) = lan_address(scheme, tls.port) {
-        tracing::info!("reachable from this network at {address}");
+    // Not said when bound to loopback, where it would be false: the routing table
+    // still has a LAN address, and nothing on the LAN can reach this on it.
+    if !tls.bind.is_loopback() {
+        if let Some(address) = lan_address(scheme, tls.port) {
+            tracing::info!("reachable from this network at {address}");
+        }
     }
 
     let status = tls::Status::for_mode(&tls.mode);
 
     if let Some(port) = tls.redirect_port {
-        redirect_listener(port, tls.port, status.clone());
+        redirect_listener(tls.bind, port, tls.port, status.clone());
     }
 
     let app = app(api_state, web_state, sessions, status.clone(), hsts(&tls.mode));
@@ -211,7 +215,7 @@ fn app(
 ///
 /// Failing to bind is a warning and not a failure: the redirect is a courtesy, and a
 /// process that cannot have port 80 should still serve the application.
-fn redirect_listener(port: u16, tls_port: u16, status: tls::Status) {
+fn redirect_listener(bind: std::net::IpAddr, port: u16, tls_port: u16, status: tls::Status) {
     use axum::http::{StatusCode, Uri};
     use axum::response::{IntoResponse, Redirect};
 
@@ -252,7 +256,7 @@ fn redirect_listener(port: u16, tls_port: u16, status: tls::Status) {
             )
             .fallback(to_https);
 
-        match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+        match tokio::net::TcpListener::bind((bind, port)).await {
             Ok(listener) => {
                 tracing::info!("redirecting http on port {port} to https");
                 if let Err(e) = axum::serve(listener, app).await {
@@ -750,6 +754,40 @@ mod security_tests {
         // Nothing to redirect *to*: on a cleartext server the plain listener is the
         // server, and opening a second one that redirected to itself would be a loop.
         assert_eq!(settings.redirect_port, None);
+    }
+
+    /// Every interface, so a phone on the same Wi-Fi can reach it. The metrics
+    /// listener defaults the other way and that difference is deliberate: this is the
+    /// application, and that is a stream of numbers nobody asked to publish.
+    #[test]
+    fn nothing_configured_listens_on_every_interface() {
+        assert_eq!(
+            settings_from(&[]).unwrap().bind,
+            std::net::IpAddr::from([0, 0, 0, 0])
+        );
+    }
+
+    /// The arrangement behind a reverse proxy on the same machine.
+    #[rstest]
+    #[case::ipv4("127.0.0.1")]
+    #[case::ipv6("::1")]
+    #[case::not_the_usual_loopback("127.0.0.53")]
+    fn loopback_is_sayable_and_recognised(#[case] address: &str) {
+        let settings = settings_from(&[("BIND", address)]).unwrap();
+
+        assert_eq!(settings.bind, address.parse::<std::net::IpAddr>().unwrap());
+        // `is_loopback` and not a comparison with 127.0.0.1, so every spelling counts
+        // -- the same rule the scrape endpoint follows.
+        assert!(settings.bind.is_loopback(), "{address} was not read as loopback");
+    }
+
+    /// A hostname is not an address, and refusing it here beats resolving it at boot.
+    #[rstest]
+    #[case::a_name(&[("BIND", "localhost")])]
+    #[case::nonsense(&[("BIND", "everywhere")])]
+    #[case::a_port_too(&[("BIND", "127.0.0.1:8080")])]
+    fn an_address_that_is_not_one_is_refused(#[case] vars: &[(&str, &str)]) {
+        assert!(settings_from(vars).is_err(), "{vars:?} was accepted");
     }
 
     #[test]

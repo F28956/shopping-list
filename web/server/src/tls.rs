@@ -11,6 +11,7 @@
 //! exceptions are deliberate and are both about telling the truth rather than changing
 //! behaviour: the HSTS header (T10) and what `/healthz` says (T11).
 
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
@@ -62,6 +63,18 @@ impl Mode {
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub mode: Mode,
+    /// The interface to listen on. `0.0.0.0` unless somebody said otherwise.
+    ///
+    /// Loopback is the right answer behind a reverse proxy on the same machine: the
+    /// proxy is then the only thing on a public port, and the application cannot be
+    /// reached directly by anything else on the network -- a television, a doorbell,
+    /// a guest's phone. It is the wrong answer for a server phones talk to directly,
+    /// which is why the default is every interface and not this.
+    ///
+    /// The metrics listener has had this since it was written and defaults the other
+    /// way, to loopback. The two defaults differ because the endpoints differ: one is
+    /// the application, and the other is a stream of numbers nobody asked to publish.
+    pub bind: IpAddr,
     pub port: u16,
     /// The plain-HTTP listener, which serves no application (T9). `None` where the
     /// operator said `off`, or where there is no TLS for it to redirect to.
@@ -123,6 +136,16 @@ impl Settings {
             other => anyhow::bail!("TLS_MODE is \"{other}\"; it must be off, files or acme"),
         };
 
+        let bind: IpAddr = match get("BIND").as_deref().map(str::trim) {
+            None | Some("") => IpAddr::from([0, 0, 0, 0]),
+            // Spelt out rather than a `localhost` alias, because a name here would
+            // have to be resolved and a resolver is not something a bind address
+            // should depend on.
+            Some(address) => address
+                .parse()
+                .with_context(|| format!("BIND is \"{address}\", which is not an address"))?,
+        };
+
         let port: u16 = match get("PORT") {
             Some(port) => port.parse().context("PORT is not a number")?,
             // 8080 stays the default even under TLS. A process that cannot bind 443
@@ -139,12 +162,19 @@ impl Settings {
             None => Some(80),
         };
 
-        Ok(Settings { mode, port, redirect_port })
+        Ok(Settings { mode, bind, port, redirect_port })
     }
 
     /// Said at startup in the same breath as `SESSION_INSECURE`, so a server serving
     /// cleartext says so every time it starts.
     pub fn announce(&self) {
+        if self.bind.is_loopback() {
+            tracing::info!(
+                "BIND is loopback: reachable only from this machine. Correct behind a \
+                 proxy on the same box, and a server nothing can reach anywhere else."
+            );
+        }
+
         match &self.mode {
             Mode::Off => tracing::warn!(
                 "TLS_MODE=off: serving cleartext. Correct behind a proxy that terminates \
