@@ -5,3 +5,10 @@ build/
 .idea/
 app/src/main/jniLibs/
 app/src/main/assets/reference.json
+
+# The signing key and what unlocks it. Losing these means every person holding the
+# app has to uninstall it to take an update, and uninstalling throws away whatever
+# their device has not sent to a server -- see keystore.properties.example.
+keystore.properties
+*.jks
+*.keystore

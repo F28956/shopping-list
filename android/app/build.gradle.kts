@@ -69,8 +69,33 @@ android {
         minSdk = 26
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         targetSdk = 36
-        versionCode = 1
+        // Not 1 for ever. Android refuses to install a build whose versionCode is
+        // not greater than the one already there, and the refusal says nothing about
+        // versions -- so a sideloaded update simply fails. The count of commits
+        // increases on its own and is the same number the Apple builds use; see
+        // release/common.sh, which has the same note and the same escape hatch.
+        versionCode = buildNumber()
         versionName = "0.1"
+    }
+
+    // Signing, if there is anything to sign with.
+    //
+    // Conditional rather than required, because every other thing this project builds
+    // -- debug installs, unit tests, instrumented tests, CI -- works without a
+    // keystore, and a build file that refused to configure without one would break
+    // all of them to serve a release nobody is cutting today.
+    //
+    // What is *not* conditional is release/android.sh, which refuses to hand you an
+    // unsigned APK. Silence here, loudness there.
+    signingConfigs {
+        keystoreProperties()?.let { held ->
+            create("release") {
+                storeFile = rootProject.file(held.getProperty("storeFile"))
+                storePassword = held.getProperty("storePassword")
+                keyAlias = held.getProperty("keyAlias")
+                keyPassword = held.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -82,6 +107,9 @@ android {
             buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${googleWebClientId()}\"")
         }
         release {
+            // Null where there is no keystore, which is what leaves `assembleRelease`
+            // producing an unsigned APK rather than failing to configure.
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = false
             buildConfigField("String", "API_BASE_URL", "\"https://example.invalid\"")
             buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${googleWebClientId()}\"")
@@ -124,6 +152,57 @@ ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 /// Read from `local.properties` rather than committed: it is not a secret -- it is
 /// embedded in every copy of the app -- but it names somebody's Google project, and a
 /// checkout should not silently authenticate against mine.
+/**
+ * The keystore, or null.
+ *
+ * `keystore.properties` is gitignored and personal, exactly as `local.properties` is.
+ * A missing file is not an error here -- see the note on `signingConfigs`.
+ *
+ * The file it names must be kept for ever. Android identifies an app by its package
+ * *and its signing certificate*, so signing an update with a different key does not
+ * produce an update: it produces an app the device refuses to install over the old
+ * one, and the way out is for every person who has it to uninstall first -- which on
+ * this app means throwing away a device that may be holding lists no server has heard
+ * of. There is no recovery from losing this that does not cost somebody their data.
+ *
+ * The certificate's SHA-1 is also registered with Google against this package name,
+ * so a new key means sign-in stops working until the console is told. See the note on
+ * `applicationId`.
+ */
+fun keystoreProperties(): Properties? {
+    val file = rootProject.file("keystore.properties")
+    if (!file.exists()) return null
+    val properties = Properties()
+    file.inputStream().use(properties::load)
+    // All four or none. A file with three of them configures a signing config that
+    // fails deep inside the packaging task, saying something about a null password.
+    val missing = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+        .filter { properties.getProperty(it).isNullOrBlank() }
+    require(missing.isEmpty()) { "keystore.properties is missing: ${missing.joinToString(", ")}" }
+    return properties
+}
+
+/**
+ * The build number, shared with the Apple builds and derived the same way.
+ *
+ * Falls back to 1 where git cannot answer -- a source zip with no history, say --
+ * rather than failing the build. That is a number that cannot be installed over
+ * anything, which is the safe direction to be wrong in.
+ */
+fun buildNumber(): Int {
+    System.getenv("BUILD_NUMBER")?.toIntOrNull()?.let { return it }
+    return try {
+        val process = ProcessBuilder("git", "rev-list", "--count", "HEAD")
+            .directory(rootProject.projectDir)
+            .start()
+        val counted = process.inputStream.bufferedReader().readText().trim()
+        process.waitFor()
+        counted.toIntOrNull() ?: 1
+    } catch (e: Exception) {
+        1
+    }
+}
+
 fun googleWebClientId(): String {
     val properties = Properties()
     val file = rootProject.file("local.properties")

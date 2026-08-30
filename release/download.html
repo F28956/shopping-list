@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install Shopping List</title>
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex, nofollow">
+<!--
+  The page that goes next to the build, on the server the build talks to.
+
+  Self-contained on purpose: it is served from somebody's own box, beside an .ipa and
+  a manifest, and a stylesheet it had to fetch from somewhere else would be one more
+  thing that can be missing at the moment somebody is standing in a kitchen trying to
+  install an app. `release/ios.sh` fills in the two placeholders.
+-->
+<style>
+  :root {
+    --bag-deep: #33503C;
+    --bag: #3E5C43;
+    --bag-lit: #5E8460;
+    --on-bag: #E7EEE6;
+    --on-bag-soft: #A9BEAB;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Roboto Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bag-deep);
+    color: var(--on-bag);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.55;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 34rem; margin: 0 auto; padding: 40px 22px 64px; }
+  h1 {
+    font-family: var(--mono);
+    font-size: 27px;
+    letter-spacing: -0.02em;
+    margin: 0 0 6px;
+  }
+  .version { font-family: var(--mono); font-size: 13px; color: var(--on-bag-soft); margin: 0 0 30px; }
+  h2 { font-family: var(--mono); font-size: 15px; margin: 34px 0 10px; font-weight: 700; }
+  p { margin: 0 0 12px; color: var(--on-bag-soft); }
+  strong { color: var(--on-bag); font-weight: 600; }
+
+  .get {
+    display: block;
+    background: var(--bag);
+    border: 1px solid rgba(231, 238, 230, 0.22);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin: 0 0 12px;
+    text-decoration: none;
+    color: var(--on-bag);
+  }
+  .get:hover { border-color: var(--bag-lit); }
+  .get-name { font-family: var(--mono); font-weight: 700; display: block; }
+  .get-for { font-size: 14px; color: var(--on-bag-soft); }
+
+  ol { padding-left: 1.2em; color: var(--on-bag-soft); }
+  li { margin-bottom: 7px; }
+
+  .note {
+    border-left: 2px solid var(--bag-lit);
+    padding: 2px 0 2px 15px;
+    margin: 22px 0;
+    font-size: 15px;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: rgba(0, 0, 0, 0.22);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Shopping List</h1>
+<p class="version">VERSION_GOES_HERE</p>
+
+<p>Not from a store. These are signed builds of a private server&rsquo;s own app —
+install them only if you run that server or somebody you trust does.</p>
+
+<h2>iPhone and Apple Watch</h2>
+
+<!-- Safari only. Other iOS browsers do not handle the scheme, and fail by doing
+     nothing at all, which reads as a broken link. -->
+<a class="get" href="itms-services://?action=download-manifest&amp;url=BASE_URL_GOES_HERE/manifest.plist">
+  <span class="get-name">Install on this iPhone</span>
+  <span class="get-for">Open this page in Safari and tap</span>
+</a>
+
+<p><strong>The Watch app comes with it.</strong> It lives inside the iPhone app, so
+there is nothing separate to install — open the Watch app on your phone after this
+finishes and it will be there, or already on its way.</p>
+
+<div class="note">
+<p>If tapping does nothing, you are not in Safari. Other browsers on iOS ignore this
+kind of link silently.</p>
+<p>If it says the app cannot be installed, this device has not been registered. Send
+whoever runs the server your device&rsquo;s identifier — Settings &rarr; General
+&rarr; About &rarr; scroll down.</p>
+</div>
+
+<h2>Mac</h2>
+
+<a class="get" href="BASE_URL_GOES_HERE/ShoppingList.dmg">
+  <span class="get-name">Download for Mac</span>
+  <span class="get-for">A disk image — open it and drag the app across</span>
+</a>
+
+<h2>Android</h2>
+
+<a class="get" href="BASE_URL_GOES_HERE/shopping-list.apk">
+  <span class="get-name">Download the APK</span>
+  <span class="get-for">Android 8 and later</span>
+</a>
+
+<ol>
+  <li>Tap the file once it has downloaded.</li>
+  <li>Android will say this browser is not allowed to install apps. Allow it — the
+    setting is per-app and you can turn it back off afterwards.</li>
+  <li>Tap install.</li>
+</ol>
+
+<p>To be told about updates rather than checking, add this address to
+<a href="https://github.com/ImranR98/Obtainium" style="color: var(--on-bag)">Obtainium</a>.</p>
+
+<h2>Then what</h2>
+
+<p>The app opens straight onto a list of its own and needs nothing else. To put it on
+the server, open <strong>Settings &rarr; Server</strong>, enter the address, and sign
+in. Anything already on the device goes up with you.</p>
+
+<div class="note">
+<p>The server address must be <code>https://</code>. These are release builds and they
+refuse plain HTTP — the token in every request is a bearer credential, and on plain
+HTTP it travels in the clear.</p>
+</div>
+
+</div>
+</body>
+</html>

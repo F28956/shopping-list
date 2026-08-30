@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Ad Hoc distribution: a signed build for devices you have registered by UDID.
+
+  `release-testing` is what Xcode 15.3 and later call the method that used to be
+  spelled `ad-hoc`. The old spelling still exports, with a deprecation warning; this
+  file uses the current one because the warning is the only thing that would ever
+  tell you the name had moved.
+
+  `teamID` is filled in by release/ios.sh from Config.xcconfig, so the team is named
+  in exactly one place in this repository.
+
+  The profile this produces is good for a year, unlike TestFlight's ninety days --
+  which is the whole reason for preferring it for a household.
+-->
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>release-testing</string>
+
+    <key>teamID</key>
+    <string>TEAM_ID_GOES_HERE</string>
+
+    <key>signingStyle</key>
+    <string>automatic</string>
+
+    <!-- The watch app is embedded in the phone app and is signed with it. Nothing
+         here mentions it, and nothing needs to. -->
+
+    <!-- Thinning would produce one .ipa per device variant, which is the opposite of
+         what over-the-air installation wants: one file, one manifest, one link. -->
+    <key>thinning</key>
+    <string>&lt;none&gt;</string>
+
+    <!-- Symbols stay in the archive rather than the .ipa. Nobody is collecting
+         crash reports from these builds, and the archive is where they would be
+         read from if that changes. -->
+    <key>uploadSymbols</key>
+    <false/>
+</dict>
+</plist>

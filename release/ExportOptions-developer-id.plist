@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Developer ID: a Mac app anybody can download and open.
+
+  No device list, no expiry and no review -- notarisation is an automated malware
+  scan, not App Review. This is the one genuinely open channel this project has, and
+  it is why the Mac app is the easiest of the three to hand somebody.
+
+  `teamID` is filled in by release/mac.sh from Config.xcconfig.
+-->
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>developer-id</string>
+
+    <key>teamID</key>
+    <string>TEAM_ID_GOES_HERE</string>
+
+    <key>signingStyle</key>
+    <string>automatic</string>
+
+    <!-- Notarisation is done afterwards by release/mac.sh, against the .dmg rather
+         than the .app. Stapling the disk image means the ticket travels with the
+         thing people actually download, so a first launch works with no network. -->
+    <key>destination</key>
+    <string>export</string>
+</dict>
+</plist>

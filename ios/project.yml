@@ -62,6 +62,14 @@ targets:
     info:
       path: ShoppingList/Info.plist
       properties:
+        # Both point at the build settings rather than holding a number, because
+        # XcodeGen's defaults are literals -- CFBundleVersion "1" and
+        # CFBundleShortVersionString "1.0" -- and a literal here silently ignores
+        # MARKETING_VERSION and CURRENT_PROJECT_VERSION below. The app reported 1.0
+        # for as long as that was true, and no build number ever changed, which means
+        # a device would have refused every update as not newer than what it had.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Shopping
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
@@ -140,6 +148,14 @@ targets:
     info:
       path: ShoppingListWatch/Info.plist
       properties:
+        # Both point at the build settings rather than holding a number, because
+        # XcodeGen's defaults are literals -- CFBundleVersion "1" and
+        # CFBundleShortVersionString "1.0" -- and a literal here silently ignores
+        # MARKETING_VERSION and CURRENT_PROJECT_VERSION below. The app reported 1.0
+        # for as long as that was true, and no build number ever changed, which means
+        # a device would have refused every update as not newer than what it had.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Shopping
         WKApplication: true
         # Which phone app this belongs to. Wrong, and the watch app installs as an
@@ -200,6 +216,14 @@ targets:
     info:
       path: Mac/Info.plist
       properties:
+        # Both point at the build settings rather than holding a number, because
+        # XcodeGen's defaults are literals -- CFBundleVersion "1" and
+        # CFBundleShortVersionString "1.0" -- and a literal here silently ignores
+        # MARKETING_VERSION and CURRENT_PROJECT_VERSION below. The app reported 1.0
+        # for as long as that was true, and no build number ever changed, which means
+        # a device would have refused every update as not newer than what it had.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Shopping
         ShoppingListAPIBaseURL: $(SHOPPING_LIST_API_BASE_URL)
         # C6's client half on this platform.
