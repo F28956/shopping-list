@@ -85,6 +85,36 @@ Two things about the keystore, both of which are worse than they sound:
   key means sign-in fails in exactly the builds you hand out, and works in every build
   you test.
 
+## The server, for a Linux box
+
+```bash
+release/server-linux.sh
+```
+
+Cross-compiles `x86_64-unknown-linux-gnu` and writes
+`release/out/server/shopping-list-server`. The toolchain, once:
+
+```bash
+brew tap messense/macos-cross-toolchains
+brew trust messense/macos-cross-toolchains
+brew install x86_64-unknown-linux-gnu
+rustup target add x86_64-unknown-linux-gnu
+```
+
+`brew trust` is Homebrew asking deliberately, because that is a third-party tap.
+
+Three crates in this workspace compile C or assembly rather than Rust and each needs a
+compiler aimed at the far end — `aws-lc-sys` (which also needs cmake), `ring`, and
+`libsqlite3-sys`, since SQLite is compiled in rather than linked from the box.
+
+**It needs glibc 2.28 or newer**, which means Debian 10, Ubuntu 20.04, RHEL 8 and
+anything since. Older than that — CentOS 7, Debian 9 — and it fails at exec with a
+message naming a version rather than anything useful. `ldd --version` on the box
+answers the question before you copy anything.
+
+Copying it over is `scp` and nothing else: it is one file, and the database, the
+`.env` and the certificate cache all live beside it wherever you put it.
+
 ## Build numbers
 
 `versionCode` on Android and `CURRENT_PROJECT_VERSION` on Apple both come from
