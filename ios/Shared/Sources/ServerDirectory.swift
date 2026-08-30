@@ -114,7 +114,7 @@ enum ServerDirectory {
     @discardableResult
     static func remember(_ address: ServerAddress) -> Bool {
         let changed = current != address
-        UserDefaults.standard.set(address.origin, forKey: key)
+        UserDefaults.standard.set(address.written, forKey: key)
         // The address is somebody's hostname, so it is not written down here. Whether it
         // is a *different* one is the fact that matters, because it is what tells the
         // caller to throw everything local away.

@@ -38,14 +38,31 @@ struct ServerAddressTests {
         #expect(origin("  HTTPS://Shopping.Example.COM  ") == "https://shopping.example.com")
     }
 
-    /// The trap. A base with a path silently loses it when a relative path is
-    /// appended, so it is refused rather than repaired — repairing means dropping part
-    /// of what somebody typed and letting them believe they are at the right server.
-    @Test func aPathIsRefusedRatherThanDropped() {
-        #expect(problem("https://example.com/lists") == .notJustAnOrigin)
-        #expect(problem("https://example.com/api/") == .notJustAnOrigin)
+    /// A path is the prefix the server is mounted under, and is kept.
+    ///
+    /// It used to be refused. One domain with several things behind it is an ordinary
+    /// arrangement, and insisting on a whole host was a constraint on somebody's DNS
+    /// rather than a property of this application. The server end is `BASE_PATH`.
+    @Test(arguments: [
+        ("https://example.com/sl", "https://example.com", "/sl"),
+        ("https://example.com/sl/", "https://example.com", "/sl"),
+        ("https://example.com/apps/shopping", "https://example.com", "/apps/shopping"),
+        ("https://example.com", "https://example.com", ""),
+        ("https://example.com/", "https://example.com", ""),
+    ])
+    func aPathIsKeptAsThePrefix(typed: String, origin: String, prefix: String) throws {
+        let address = try ServerAddress.parse(typed).get()
+
+        #expect(address.origin == origin)
+        #expect(address.prefix == prefix)
+        #expect(address.written == origin + prefix)
+    }
+
+    /// A query or a fragment is still refused: neither is beyond doubt.
+    @Test func aQueryOrFragmentIsStillRefused() {
         #expect(problem("https://example.com?x=1") == .notJustAnOrigin)
         #expect(problem("https://example.com#top") == .notJustAnOrigin)
+        #expect(problem("https://example.com/sl?x=1") == .notJustAnOrigin)
     }
 
     /// A non-default port is part of the origin; a default one is noise.
@@ -103,12 +120,21 @@ struct ServerAddressTests {
         }
     }
 
-    /// The whole point: appending a path to the stored origin gives the path.
-    @Test func aStoredOriginAppendsPathsCorrectly() {
-        let address = try! ServerAddress.parse("https://example.com/").get()
+    /// The whole point: one slash between the address and the path, and a prefix that
+    /// is still there afterwards.
+    ///
+    /// Built by joining strings and not by resolving a relative URL.
+    /// `URL(string: "/api/lists", relativeTo: "https://example.com/sl")` is
+    /// `https://example.com/api/lists` — correct by the RFC, and the prefix is gone.
+    @Test(arguments: [
+        ("https://example.com/", "https://example.com/api/lists"),
+        ("https://example.com/sl", "https://example.com/sl/api/lists"),
+        ("https://example.com/apps/shopping", "https://example.com/apps/shopping/api/lists"),
+        ("https://example.com:8443/sl", "https://example.com:8443/sl/api/lists"),
+    ])
+    func aRequestUrlKeepsThePrefix(typed: String, expected: String) throws {
+        let address = try ServerAddress.parse(typed).get()
 
-        let url = URL(string: "api/lists", relativeTo: address.url)!
-
-        #expect(url.absoluteString == "https://example.com/api/lists")
+        #expect(address.url(for: "/api/lists")?.absoluteString == expected)
     }
 }

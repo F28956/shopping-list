@@ -53,10 +53,36 @@ func server(in pasted: String) -> ServerAddress? {
     // Rebuilt from the parts rather than trimmed from the string, so that whatever
     // `ServerAddress` refuses is refused here too — one set of rules about what an
     // address is, and it lives there.
-    var origin = "\(scheme)://\(host)"
+    var address = "\(scheme)://\(host)"
     if let port = url.port {
-        origin += ":\(port)"
+        address += ":\(port)"
+    }
+    address += prefix(in: url)
+
+    return try? ServerAddress.parse(address).get()
+}
+
+/// Where the server sits under its host, read out of the link itself.
+///
+/// A server mounted at `https://example.com/sl` issues
+/// `https://example.com/sl/join#token`, and a reader that kept only the host would
+/// offer `https://example.com` — an address that either serves somebody else's
+/// application or nothing at all. The prefix is everything before the `/join`
+/// segment, so it is read from the link rather than asked of the person pasting it.
+///
+/// `""` for a link with no `join` in it, which is the shape this was written for
+/// before there were prefixes and is still what an unrecognised link should offer.
+private func prefix(in url: URL) -> String {
+    var segments = url.path.split(separator: "/").map(String.init)
+
+    // The older shape puts the token in the path, so the last segment is the token
+    // rather than `join`. Dropped first, leaving both shapes looking the same.
+    if segments.count >= 2, segments[segments.count - 2] == "join" {
+        segments.removeLast()
     }
 
-    return try? ServerAddress.parse(origin).get()
+    guard segments.last == "join" else { return "" }
+    segments.removeLast()
+
+    return segments.isEmpty ? "" : "/" + segments.joined(separator: "/")
 }

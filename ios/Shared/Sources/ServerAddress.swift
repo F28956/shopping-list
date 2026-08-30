@@ -7,17 +7,41 @@ import Foundation
 /// browser's location bar, which has a path on it, and the failure that causes is
 /// silent and much later.
 ///
-/// **The trap this type exists to close.** Requests are built with
-/// `URL(string: path, relativeTo: base)`, which resolves against the base's
-/// *directory*. So `https://example.com/lists` as a base silently loses `/lists` the
-/// moment a relative path is appended, and `https://example.com/lists/` does not.
-/// Deciding the shape once, here, is the only place that can be closed for every call
-/// site at once — which is why this stores an origin and refuses anything else.
+/// **The trap this type exists to close.** Requests used to be built with
+/// `URL(string: path, relativeTo: base)`, which resolves an *absolute* path against
+/// the base's host and throws the base's own path away — so a server mounted at
+/// `https://example.com/sl` would have been asked for `https://example.com/api/lists`
+/// and told nothing about it. Deciding the shape once, here, and handing out whole
+/// URLs through ``url(for:)`` is the only way to close that for every call site at
+/// once. Nothing outside this type appends to an address.
 struct ServerAddress: Equatable {
     /// `scheme://host` or `scheme://host:port`, lowercased, with no trailing slash.
     let origin: String
 
-    var url: URL { URL(string: origin)! }
+    /// Where the server is mounted under that origin: `""` at the root, or a path
+    /// beginning with `/` and not ending in one.
+    ///
+    /// One domain often has several things behind it, and a server at
+    /// `https://example.com/sl` is an ordinary arrangement rather than a mistake —
+    /// insisting on a whole host would be a constraint on somebody's DNS. The server
+    /// end of this is `BASE_PATH`.
+    var prefix: String = ""
+
+    /// The address as somebody would type it, and as it is stored.
+    var written: String { origin + prefix }
+
+    var url: URL { URL(string: written)! }
+
+    /// The URL for one of this application's own paths, such as `/api/lists`.
+    ///
+    /// Concatenated rather than resolved. URL resolution has rules about absolute
+    /// paths that are correct and are not what is wanted here: `/api/lists` against
+    /// `https://example.com/sl` resolves to `https://example.com/api/lists`, losing
+    /// the prefix silently. Joining the strings has no such rule to trip over.
+    func url(for path: String) -> URL? {
+        assert(path.hasPrefix("/"), "url(for:) takes an absolute path, got \(path)")
+        return URL(string: written + path)
+    }
 
     /// Why an address could not be used, in the words the screen says.
     enum Problem: LocalizedError, Equatable {
@@ -27,9 +51,12 @@ struct ServerAddress: Equatable {
         /// anywhere and permits cleartext puts somebody's shopping and their bearer
         /// token on whatever café Wi-Fi they are on.
         case insecure
-        /// A path, query or fragment — refused rather than silently dropped, because
+        /// A query or a fragment — refused rather than silently dropped, because
         /// dropping part of what somebody typed is how they end up at the wrong
         /// server believing they are at the right one.
+        ///
+        /// A *path* is no longer refused: it is kept, as the prefix the server is
+        /// mounted under. See ``prefix``.
         case notJustAnOrigin
 
         /// `LocalizedError`, so that a screen reaching for `localizedDescription`
@@ -48,7 +75,7 @@ struct ServerAddress: Equatable {
             case .insecure:
                 "Addresses must start with https://"
             case .notJustAnOrigin:
-                "Enter just the address, with no path after it."
+                "Enter the address without a ? query or # fragment."
             }
         }
     }
@@ -59,8 +86,11 @@ struct ServerAddress: Equatable {
     /// is lowercased, and surrounding whitespace is ignored — all of which are what
     /// the person meant beyond doubt.
     ///
-    /// Refused: a path, a query or a fragment. Those are *not* beyond doubt; see the
-    /// note on the type.
+    /// Kept: a path, which is the prefix the server is mounted under — see
+    /// ``prefix``. A lone trailing slash is not a path and goes.
+    ///
+    /// Refused: a query or a fragment. Those are *not* beyond doubt; see the note on
+    /// the type.
     ///
     /// There is deliberately **no way to ask for cleartext**. There used to be a
     /// parameter for it, and five call sites passed `true` -- including the one that
@@ -91,11 +121,13 @@ struct ServerAddress: Equatable {
         guard scheme == "https" || scheme == "http" else { return .failure(.notAnAddress) }
         guard scheme == "https" || allowsCleartext else { return .failure(.insecure) }
 
-        // A lone trailing slash is what a browser's location bar shows and is not a
-        // path anybody meant. Anything more is.
-        let path = parts.path
-        guard path.isEmpty || path == "/" else { return .failure(.notJustAnOrigin) }
         guard parts.query == nil, parts.fragment == nil else { return .failure(.notJustAnOrigin) }
+
+        // A lone trailing slash is what a browser's location bar shows and is not a
+        // path anybody meant. Anything more is the prefix the server is mounted under,
+        // kept with no trailing slash so that `written + "/api/lists"` has one slash
+        // between the two and never two.
+        let prefix = parts.path == "/" ? "" : String(parts.path.reversed().drop { $0 == "/" }.reversed())
 
         // Reassembled rather than trimmed, so the stored form is the one this type
         // promises whatever arrived.
@@ -104,7 +136,7 @@ struct ServerAddress: Equatable {
             origin += ":\(port)"
         }
 
-        return .success(ServerAddress(origin: origin))
+        return .success(ServerAddress(origin: origin, prefix: prefix))
     }
 
     private static func defaultPort(for scheme: String) -> Int {

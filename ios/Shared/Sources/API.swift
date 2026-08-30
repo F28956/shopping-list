@@ -508,7 +508,7 @@ actor API {
     /// does not close it, and does not need to: the stream carries no content, and
     /// every actual read still presents a fresh token.
     private func stream(at path: String) async throws -> AsyncThrowingStream<Void, Error> {
-        guard let url = URL(string: path, relativeTo: baseURL) else {
+        guard let url = URL(string: baseURL.absoluteString + path) else {
             throw APIError.badInput("Bad address for events")
         }
 
@@ -734,7 +734,7 @@ actor API {
     ) async throws -> Data {
         guard reachable else { throw APIError.transport(NoServer()) }
 
-        guard let url = URL(string: path, relativeTo: baseURL) else {
+        guard let url = URL(string: baseURL.absoluteString + path) else {
             throw APIError.badInput("Bad address: \(path)")
         }
 

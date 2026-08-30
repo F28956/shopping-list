@@ -52,6 +52,22 @@ struct JoinLinkTests {
         #expect(server(in: pasted)?.origin == expected)
     }
 
+    /// A link from a server mounted under a path names that path too.
+    ///
+    /// Keeping only the host would offer an address serving somebody else's
+    /// application, or nothing at all — and the person pasting has no way to notice
+    /// the prefix was dropped.
+    @Test(arguments: [
+        ("https://example.com/sl/join#abc123", "https://example.com/sl"),
+        ("https://example.com/sl/join/abc123", "https://example.com/sl"),
+        ("https://example.com/apps/shopping/join#abc", "https://example.com/apps/shopping"),
+        // No prefix, which is every link issued before this existed.
+        ("https://example.com/join#abc123", "https://example.com"),
+    ])
+    func aLinkNamesThePathItIsMountedUnder(pasted: String, expected: String) {
+        #expect(server(in: pasted)?.written == expected)
+    }
+
     /// A bare token names nothing, so there is nothing to offer — which is the case
     /// where the app must go on asking.
     @Test(arguments: ["abc123", "  abc123  ", "", "here is the link I promised"])
