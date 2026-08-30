@@ -33,11 +33,25 @@ Documentation=https://github.com/
 After=network-online.target
 Wants=network-online.target
 
+# The server refuses to start on configuration it cannot make sense of -- a bad
+# TLS_MODE, a METRICS_PORT that collides, an unreachable database. Without a limit
+# that refusal becomes a restart loop that fills the journal and hides the one line
+# saying what is wrong. Five tries and it stays down.
+#
+# **In [Unit] and not [Service].** systemd accepts these only here; in [Service] they
+# are ignored with a warning nobody reads, and the cap silently does not apply.
+StartLimitBurst=5
+StartLimitIntervalSec=120
+
 [Service]
 # `exec` rather than `simple`, so `systemctl start` fails when the binary cannot be
 # executed instead of reporting success and leaving a dead unit behind.
 Type=exec
 
+# This account must exist before the first start; systemd does not create it, and
+# says so as "Failed to determine user credentials: No such process", which names
+# neither the user nor the fact that it is missing. `shopping-list.sysusers` beside
+# this file creates it, or see the README.
 User=shopping-list
 Group=shopping-list
 
@@ -51,12 +65,6 @@ WorkingDirectory=/var/lib/shopping-list
 
 Restart=on-failure
 RestartSec=5s
-# The server refuses to start on configuration it cannot make sense of -- a bad
-# TLS_MODE, a METRICS_PORT that collides, an unreachable database. Without a limit
-# that refusal becomes a restart loop that fills the journal and hides the one line
-# saying what is wrong. Five tries and it stays down.
-StartLimitBurst=5
-StartLimitIntervalSec=120
 
 # --- What it may do -------------------------------------------------------------
 #

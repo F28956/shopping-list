@@ -163,8 +163,25 @@ apart on purpose:
 
 ### Once
 
+**The account first.** systemd will not create the user named in `User=`, and a
+missing one fails the unit *before* the binary runs — so the journal holds systemd's
+`Failed to determine user credentials: No such process` and not one word from the
+application.
+
+```bash
+sudo cp ops/shopping-list.sysusers /usr/lib/sysusers.d/shopping-list.conf
+sudo systemd-sysusers
+```
+
+or, the same thing by hand:
+
 ```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin shopping-list
+```
+
+Then the binary and the settings:
+
+```bash
 sudo install -o root -g root -m 0755 shopping-list-server /usr/local/bin/
 sudo install -d -o root -g root -m 0755 /etc/shopping-list
 sudo install -o root -g root -m 0600 /dev/null /etc/shopping-list/server.env
@@ -214,7 +231,46 @@ words when an ACME order failed.
 
 ### If it will not start
 
-The server refuses to start rather than run on configuration it cannot make sense of —
+**First, work out whether the binary ever ran.** If the journal holds systemd's own
+failure line and nothing from the application, it failed before exec and the
+application never had a chance to say anything.
+
+```bash
+systemctl status shopping-list -l --no-pager
+systemctl show shopping-list -p Result -p ExecMainStatus -p ExecMainCode
+```
+
+`Result=` and the exit status name the cause, and systemd's codes are specific:
+
+| | |
+|---|---|
+| `Result=exit-code`, status `217/USER` | the `shopping-list` account does not exist |
+| `Result=exit-code`, status `203/EXEC` | the binary is missing, not executable, or built for another architecture |
+| `Result=resources`, "Failed to load environment files" | `/etc/shopping-list/server.env` is not there |
+| `Result=exit-code`, status `226/NAMESPACE` | a sandbox directive cannot be applied on this kernel |
+| `Result=exit-code`, status `1` | the binary ran and refused — its own reason is in the journal |
+| `Result=exit-code`, status `200/CHDIR` | `WorkingDirectory=` does not exist |
+
+Only the last two mean the application was reached at all. A wrong architecture is
+worth ruling out early — `file /usr/local/bin/shopping-list-server` should say
+`x86-64`, and `ldd --version` should be 2.28 or newer.
+
+To take systemd out of it entirely and see what the server itself says:
+
+```bash
+sudo -u shopping-list env $(sudo cat /etc/shopping-list/server.env | grep -v '^#' | xargs) \
+    /usr/local/bin/shopping-list-server
+```
+
+And to check the unit file itself parses, which catches a directive in the wrong
+section:
+
+```bash
+systemd-analyze verify /etc/systemd/system/shopping-list.service
+```
+
+Once the binary is running, the server refuses to start rather than run on
+configuration it cannot make sense of —
 a `TLS_MODE` it does not recognise, a `METRICS_PORT` that collides with the
 application's, a scrape endpoint exposed to the network with no token, a database path
 that is wrong. All of those are one line in the journal.

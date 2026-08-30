@@ -1,0 +1,12 @@
+# The account the server runs as.
+#
+#   sudo cp shopping-list.sysusers /usr/lib/sysusers.d/shopping-list.conf
+#   sudo systemd-sysusers
+#
+# Declarative rather than a `useradd` somebody has to remember: systemd will not make
+# the user named in `User=`, and a missing one fails the unit before the binary ever
+# runs -- so the journal holds systemd's "Failed to determine user credentials: No
+# such process" and not one word from the application.
+#
+# Type u, no home, no shell. It owns /var/lib/shopping-list and nothing else.
+u shopping-list - "Shopping List" /var/lib/shopping-list /usr/sbin/nologin
