@@ -189,13 +189,36 @@ sudoedit /etc/shopping-list/server.env
 ```
 
 ```bash
+sudo install -d -o shopping-list -g shopping-list -m 0700 /var/lib/shopping-list
+sudo install -o shopping-list -g shopping-list -m 0600 /dev/null /var/lib/shopping-list/data.db
+
 sudo cp ops/shopping-list.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now shopping-list
 ```
 
-`/var/lib/shopping-list` is not created by hand — `StateDirectory=` in the unit makes
-it on first start and gives it to the service user.
+**The database file has to exist.** The server opens it and will not create it, so
+that a wrong path fails loudly instead of quietly serving an empty list. An empty file
+is enough — the migrations fill it on the first start. `StateDirectory=` would make
+the directory on its own, but the file inside it is yours to put there.
+
+### The database has to be under /var/lib
+
+`ProtectSystem=strict` makes the entire filesystem read-only to this service apart
+from what `StateDirectory=` grants. A `DATABASE_URL` pointing anywhere else —
+`/usr/local/share`, `/opt`, somebody's home — fails with:
+
+```
+Error: error returned from database: (code: 14) unable to open database file
+```
+
+which reads as a permissions problem on a file and is really a read-only mount. SQLite
+also needs to create `-wal` and `-shm` beside the database, so the *directory* must be
+writable, not just the file.
+
+To keep it somewhere else on purpose, add that path to `ReadWritePaths=` in the unit.
+`/var/lib/shopping-list` is what `StateDirectory=` is for, and is the answer unless
+something forces otherwise.
 
 ### The settings file is read by systemd, not by the application
 
