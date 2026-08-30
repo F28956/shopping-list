@@ -85,6 +85,19 @@ async fn main() -> anyhow::Result<()> {
     metrics.announce();
     let _meters = metrics.install(&db)?;
 
+    // Read before anything binds, so a prefix that cannot work is a message rather
+    // than a server that starts and writes broken links into every page.
+    //
+    // Installed into `web` as well as used for nesting below: routing is only half of
+    // it. A page served at /sl/lists that links to /lists sends the browser to the
+    // host's root, because an absolute path is resolved against the host and not
+    // against where the page came from.
+    let base = web::base::normalise(&std::env::var("BASE_PATH").unwrap_or_default())?;
+    web::base::install(base.clone());
+    if !base.is_empty() {
+        tracing::info!(base, "mounted under a base path");
+    }
+
     let listener = tokio::net::TcpListener::bind((tls.bind, tls.port)).await?;
     let scheme = if tls.mode.serves_tls() { "https" } else { "http" };
     tracing::info!("listening on {} ({scheme})", listener.local_addr()?);
@@ -106,6 +119,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let app = app(api_state, web_state, sessions, status.clone(), hsts(&tls.mode));
+
+    // `nest` strips the prefix before the inner router sees the request, so every
+    // handler is registered at the path it has always been registered at and none of
+    // them learns about this. The proxy in front passes /sl through untouched; it does
+    // not have to rewrite anything, which is one fewer place for the two halves to
+    // disagree.
+    let app = if base.is_empty() { app } else { Router::new().nest(&base, app) };
+
     tls::serve(&tls.mode, listener, app, status).await
 }
 
@@ -737,6 +758,32 @@ mod security_tests {
     // -----------------------------------------------------------------------
     // TLS
     // -----------------------------------------------------------------------
+
+    /// Nesting is what makes a prefixed request reach a handler registered without
+    /// one, and it is asserted on a real router rather than on the setting: the
+    /// setting being right and the router being unnested is exactly the bug this
+    /// would otherwise ship.
+    #[tokio::test]
+    async fn a_nested_router_answers_under_its_prefix_and_not_at_the_root() {
+        let app = Router::new()
+            .route("/healthz", get(|| async { "ok" }));
+        let nested = Router::new().nest("/sl", app);
+
+        let found = nested
+            .clone()
+            .oneshot(Request::builder().uri("/sl/healthz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(found.status(), StatusCode::OK);
+
+        // And the unprefixed path is gone, which is the half that says the prefix is
+        // doing something rather than being accepted alongside the old routes.
+        let missing = nested
+            .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    }
 
     fn settings_from(vars: &[(&str, &str)]) -> anyhow::Result<tls::Settings> {
         let vars: std::collections::HashMap<_, _> = vars.iter().copied().collect();

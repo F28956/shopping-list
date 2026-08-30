@@ -1,5 +1,6 @@
 //! What is on one list.
 
+use crate::base;
 use std::convert::Infallible;
 use std::time::Duration;
 
@@ -100,7 +101,7 @@ async fn board(s: &AppState, actor: &Actor, list_id: list::Id) -> Result<Board, 
 /// swaps this whole element, so anything that should stay open has to say so — and
 /// anything that finishes a job, like saving an edit, deliberately does not.
 fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
-    let base = format!("/lists/{}", list_id.0);
+    let base = base::at(&format!("/lists/{}", list_id.0));
     html! {
         div id="items" {
             @if b.items.is_empty() {
@@ -155,7 +156,7 @@ fn fragment(list_id: list::Id, b: &Board, open: Option<i64>) -> Markup {
 /// One item: what it is, what it is tagged, how much — and, behind the toggle,
 /// everything that changes it.
 fn item_row(list_id: list::Id, b: &Board, i: &item::Item, open: Option<i64>) -> Markup {
-    let base = format!("/lists/{}", list_id.0);
+    let base = base::at(&format!("/lists/{}", list_id.0));
     let item = format!("{base}/items/{}", i.id.0);
     let on_item = b.tags_by_item.get(&i.id.0);
 
@@ -462,7 +463,7 @@ pub async fn tag_order(
     let list = lists::get(&s.ctx, &actor, list::Id(id)).await?;
     let ordered = tags::order_for(&s.ctx, &actor, list.id).await?;
 
-    let base = format!("/lists/{}", list.id.0);
+    let base = base::at(&format!("/lists/{}", list.id.0));
     let last = ordered.len().saturating_sub(1);
 
     Ok(view::page(
@@ -537,7 +538,7 @@ pub async fn move_tag(
         }
     }
 
-    Ok(Redirect::to(&format!("/lists/{id}/tags")))
+    Ok(Redirect::to(&base::at(&format!("/lists/{id}/tags"))))
 }
 
 pub async fn reset_tag_order(
@@ -547,7 +548,7 @@ pub async fn reset_tag_order(
 ) -> Result<Redirect, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     tags::set_order(&s.ctx, &actor, list::Id(id), &[]).await?;
-    Ok(Redirect::to(&format!("/lists/{id}/tags")))
+    Ok(Redirect::to(&base::at(&format!("/lists/{id}/tags"))))
 }
 
 pub async fn show(
@@ -572,7 +573,7 @@ pub async fn show(
         Some(&crate::pages::who(&user)),
         html! {
             p {
-                a href="/lists" { "← all lists" }
+                a href=(base::at("/lists")) { "← all lists" }
                 " · "
                 a href={ "/lists/" (list.id.0) "/tags" } { "tag order" }
             }
@@ -787,7 +788,7 @@ async fn swap(
     list_id: list::Id,
     open: Option<i64>,
 ) -> Result<Response, AppError> {
-    let to = format!("/lists/{}", list_id.0);
+    let to = base::at(&format!("/lists/{}", list_id.0));
     if crate::htmx::is_htmx(headers) {
         let b = board(s, actor, list_id).await?;
         Ok(swap_or_redirect(headers, fragment(list_id, &b, open), &to))

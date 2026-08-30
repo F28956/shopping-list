@@ -1,5 +1,6 @@
 //! Notes: freeform reminders that are not on any particular list.
 
+use crate::base;
 use axum::extract::{Form, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
@@ -73,8 +74,8 @@ pub async fn index(session: Session, State(s): State<AppState>) -> Result<Markup
         html! {
             (fragment(&notes, total, truncated))
 
-            form class="add" method="post" action="/notes"
-                 hx-post="/notes" hx-target="#notes" hx-swap="outerHTML" {
+            form class="add" method="post" action=(base::at("/notes"))
+                 hx-post=(base::at("/notes")) hx-target="#notes" hx-swap="outerHTML" {
                 input type="text" name="body" placeholder="Add a note" required maxlength="4096";
                 button class="primary" { "Add" }
             }

@@ -1,6 +1,7 @@
 //! The shared shell. One place that knows what a page looks like, so the handlers
 //! only decide what is on it.
 
+use crate::base;
 use maud::{DOCTYPE, Markup, html};
 
 pub fn page(title: &str, who: Option<&str>, inner: Markup) -> Markup {
@@ -14,7 +15,7 @@ pub fn page(title: &str, who: Option<&str>, inner: Markup) -> Markup {
                 // Served rather than inlined so the Content-Security-Policy can say
                 // `self` and nothing else — an inline block would need
                 // `unsafe-inline`, which is most of what a CSP is for.
-                link rel="stylesheet" href="/static/app.css";
+                link rel="stylesheet" href=(base::at("/static/app.css"));
                 // Vendored, not from a CDN — see assets.rs. `defer` because nothing on
                 // the page needs them before the HTML is parsed.
                 script src="/static/htmx.js" defer {}
@@ -22,13 +23,13 @@ pub fn page(title: &str, who: Option<&str>, inner: Markup) -> Markup {
             }
             body {
                 header {
-                    h1 { a href="/lists" { "Shopping list" } }
+                    h1 { a href=(base::at("/lists")) { "Shopping list" } }
                     @if let Some(name) = who {
-                        span class="who" { (name) " · " a href="/auth/logout" { "sign out" } }
+                        span class="who" { (name) " · " a href=(base::at("/auth/logout")) { "sign out" } }
                     }
                 }
                 @if who.is_some() {
-                    nav { a href="/lists" { "Lists" } a href="/notes" { "Notes" } }
+                    nav { a href=(base::at("/lists")) { "Lists" } a href=(base::at("/notes")) { "Notes" } }
                 }
                 (inner)
             }
@@ -44,7 +45,7 @@ pub fn sign_in() -> Markup {
         html! {
             p class="empty" { "Keep your shopping lists in one place." }
             p style="text-align:center" {
-                a href="/auth/login" { button class="primary" { "Sign in with Google" } }
+                a href=(base::at("/auth/login")) { button class="primary" { "Sign in with Google" } }
             }
         },
     )

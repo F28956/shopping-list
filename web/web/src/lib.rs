@@ -22,6 +22,7 @@ use std::sync::Arc;
 use tower_sessions::{Expiry, Session, SessionManagerLayer, cookie::SameSite};
 
 pub mod assets;
+pub mod base;
 pub mod auth;
 pub mod csrf;
 pub mod error;
@@ -61,7 +62,7 @@ async fn login(session: Session, State(s): State<AppState>) -> Result<Redirect, 
 
 async fn logout(session: Session) -> Result<Redirect, AppError> {
     session.flush().await?;
-    Ok(Redirect::to("/"))
+    Ok(Redirect::to(&base::at("/")))
 }
 
 async fn callback(
@@ -141,10 +142,10 @@ async fn callback(
             domain::service::lists::join(&s.ctx, &actor, &domain::models::invite::Token(token))
                 .await
     {
-        return Ok(Redirect::to(&format!("/lists/{}", list.id.0)));
+        return Ok(Redirect::to(&base::at(&format!("/lists/{}", list.id.0))));
     }
 
-    Ok(Redirect::to("/"))
+    Ok(Redirect::to(&base::at("/")))
 }
 
 /// Builds the state this crate's routes need, discovering Google's OIDC endpoints.

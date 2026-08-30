@@ -1,5 +1,6 @@
 //! Your lists.
 
+use crate::base;
 use axum::extract::{Form, Path, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
@@ -126,7 +127,7 @@ pub async fn home(session: Session, State(s): State<AppState>) -> Result<Respons
     if let Some(id) = session.get::<i64>(auth::LAST_LIST).await?
         && lists::get(&s.ctx, &actor, list::Id(id)).await.is_ok()
     {
-        return Ok(Redirect::to(&format!("/lists/{id}")).into_response());
+        return Ok(Redirect::to(&base::at(&format!("/lists/{id}"))).into_response());
     }
 
     session.remove::<i64>(auth::LAST_LIST).await?;
@@ -147,8 +148,8 @@ pub async fn index(session: Session, State(s): State<AppState>) -> Result<Markup
         html! {
             (fragment(&lists, total, truncated, &sharing))
 
-            form class="add" method="post" action="/lists"
-                 hx-post="/lists" hx-target="#lists" hx-swap="outerHTML" {
+            form class="add" method="post" action=(base::at("/lists"))
+                 hx-post=(base::at("/lists")) hx-target="#lists" hx-swap="outerHTML" {
                 input type="text" name="name" placeholder="New list" required maxlength="128";
                 button class="primary" { "Add list" }
             }

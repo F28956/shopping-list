@@ -4,6 +4,7 @@
 //! you do *to* a list, alongside renaming and deleting it, not something you do while
 //! shopping.
 
+use crate::base;
 use axum::Form;
 use axum::extract::{Path, State};
 use axum::response::Redirect;
@@ -34,7 +35,7 @@ pub async fn show(
         &format!("Sharing {}", list.name.0),
         Some(&crate::pages::who(&user)),
         html! {
-            p { a href="/lists" { "← all lists" } }
+            p { a href=(base::at("/lists")) { "← all lists" } }
             h2 style="font-size:1.1rem;margin:.5rem 0 1rem" { "Sharing " (list.name.0) }
 
             @if members.is_empty() {
@@ -117,8 +118,13 @@ pub async fn invite(
 }
 
 /// Where the invitation link points.
+///
+/// The origin and the base path, because a link that dropped the prefix would send
+/// somebody to a host that serves something else entirely at `/join`.
 fn origin() -> String {
-    std::env::var("PUBLIC_ORIGIN").unwrap_or_else(|_| "http://localhost:8080".to_string())
+    let origin = std::env::var("PUBLIC_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:8080".to_string());
+    format!("{}{}", origin.trim_end_matches('/'), base::get())
 }
 
 fn role_name(role: Role) -> &'static str {
@@ -136,7 +142,7 @@ pub async fn revoke(
 ) -> Result<Redirect, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     lists::revoke_invites(&s.ctx, &actor, list::Id(id)).await?;
-    Ok(Redirect::to(&format!("/lists/{id}/share")))
+    Ok(Redirect::to(&base::at(&format!("/lists/{id}/share"))))
 }
 
 pub async fn remove_member(
@@ -146,7 +152,7 @@ pub async fn remove_member(
 ) -> Result<Redirect, AppError> {
     let actor = auth::require_actor(&session, &s.ctx).await?;
     lists::remove_member(&s.ctx, &actor, list::Id(id), user::Id(who)).await?;
-    Ok(Redirect::to(&format!("/lists/{id}/share")))
+    Ok(Redirect::to(&base::at(&format!("/lists/{id}/share"))))
 }
 
 /// Leaving is removing yourself, so it is the same operation.
@@ -162,7 +168,7 @@ pub async fn leave(
     // Forget it as well, or the next visit sends them back to a list they just left.
     forget_if_last(&session, id).await?;
 
-    Ok(Redirect::to("/lists"))
+    Ok(Redirect::to(&base::at("/lists")))
 }
 
 /// Drops the remembered list if it is this one.
@@ -190,7 +196,7 @@ pub async fn joining() -> Markup {
             // field is visible only without scripting, where somebody has to paste
             // the whole link in themselves -- the browser will not read its own
             // address bar for them.
-            form class="add" method="post" action="/join" {
+            form class="add" method="post" action=(base::at("/join")) {
                 noscript {
                     p { "Paste the link you were sent." }
                     input type="text" name="token" placeholder="https://…/join#…"
@@ -228,9 +234,9 @@ pub async fn join(
 
     let Some(actor) = auth::current_actor(&session, &s.ctx).await? else {
         session.insert(auth::PENDING_INVITE, &token).await?;
-        return Ok(Redirect::to("/auth/login"));
+        return Ok(Redirect::to(&base::at("/auth/login")));
     };
 
     let list = lists::join(&s.ctx, &actor, &Token(token)).await?;
-    Ok(Redirect::to(&format!("/lists/{}", list.id.0)))
+    Ok(Redirect::to(&base::at(&format!("/lists/{}", list.id.0))))
 }

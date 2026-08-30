@@ -2,6 +2,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
+use crate::base;
 use domain::service::ServiceError;
 
 #[derive(Debug, thiserror::Error)]
@@ -39,7 +40,7 @@ impl IntoResponse for AppError {
         if matches!(self, AppError::Unauthenticated)
             || matches!(self, AppError::Service(ServiceError::Unauthenticated))
         {
-            return Redirect::to("/auth/login").into_response();
+            return Redirect::to(&base::at("/auth/login")).into_response();
         }
 
         let status = match &self {
