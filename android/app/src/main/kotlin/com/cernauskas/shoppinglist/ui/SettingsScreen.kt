@@ -68,7 +68,7 @@ fun SettingsScreen(onDone: () -> Unit, onUseServer: () -> Unit, onLeaveServer: (
         ) {
             ListItem(
                 headlineContent = { Text("Server") },
-                trailingContent = { Text(server?.origin ?: "None") },
+                trailingContent = { Text(server?.written ?: "None") },
             )
 
             if (server == null) {
@@ -86,7 +86,7 @@ fun SettingsScreen(onDone: () -> Unit, onUseServer: () -> Unit, onLeaveServer: (
                     TextButton(
                         onClick = { scope.launch { use(suggested) } },
                         modifier = Modifier.padding(horizontal = 16.dp),
-                    ) { Text("Use ${suggested.origin}") }
+                    ) { Text("Use ${suggested.written}") }
                 }
 
                 refusal?.let {

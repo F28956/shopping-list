@@ -68,7 +68,7 @@ class Api(
      * pasted. An `Api` built at launch would otherwise be pointed at nothing for the
      * whole first run.
      */
-    private val server: () -> String = { ServerDirectory.current?.origin.orEmpty() },
+    private val server: () -> String = { ServerDirectory.current?.written.orEmpty() },
     private val token: suspend () -> String?,
     /**
      * Whether somebody is signed in on this device, whether or not there is a token to

@@ -70,7 +70,7 @@ fun ServerAddressScreen(
                 .onSuccess { about ->
                     // Shown back, because the repair is silent otherwise: somebody who
                     // typed a host with no scheme should see what it became.
-                    typed = address.origin
+                    typed = address.written
                     onAccepted(address, about)
                 }
                 .onFailure { failure -> problem = failure.serverRefusal?.sentence() }
@@ -97,9 +97,9 @@ fun ServerAddressScreen(
         suggestion?.let { found ->
             // Shown, not silently adopted. The host is the thing being trusted, so it
             // is the thing on screen.
-            OutlinedButton(onClick = { typed = found.origin; check(found.origin) }) {
+            OutlinedButton(onClick = { typed = found.written; check(found.written) }) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Use ${found.origin}")
+                    Text("Use ${found.written}")
                     Text("from the link you copied", style = MaterialTheme.typography.labelSmall)
                 }
             }

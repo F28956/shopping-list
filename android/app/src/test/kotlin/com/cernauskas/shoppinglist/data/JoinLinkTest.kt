@@ -3,8 +3,19 @@ package com.cernauskas.shoppinglist.data
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
-/** Reading the token out of whatever somebody pastes. */
+/**
+ * Reading the token, and the server, out of whatever somebody pastes.
+ *
+ * Robolectric because reading the *server* out of a link goes through `Uri`, which is
+ * Android's -- the same reason `ServerAddressTest` needs it. Reading the token alone
+ * does not, and used to be all this file did.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class JoinLinkTest {
     /**
      * The shape a server issues: the token after the `#`, where no proxy and no access
@@ -63,5 +74,24 @@ class JoinLinkTest {
             "abc123",
             tokenIn("http://localhost:8080/join/abc123#"),
         )
+    }
+
+    /**
+     * A link from a server mounted under a path names that path too.
+     *
+     * Keeping only the host would offer an address serving somebody else's
+     * application, and the person pasting has no way to notice the prefix was dropped.
+     */
+    @Test
+    fun `a link names the path it is mounted under`() {
+        for ((pasted, expected) in listOf(
+            "https://example.com/sl/join#abc123" to "https://example.com/sl",
+            "https://example.com/sl/join/abc123" to "https://example.com/sl",
+            "https://example.com/apps/shopping/join#abc" to "https://example.com/apps/shopping",
+            // No prefix, which is every link issued before this existed.
+            "https://example.com/join#abc123" to "https://example.com",
+        )) {
+            assertEquals(pasted, expected, serverAddressIn(pasted)?.written)
+        }
     }
 }

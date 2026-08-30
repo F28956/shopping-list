@@ -18,7 +18,20 @@ import com.cernauskas.shoppinglist.BuildConfig
 data class ServerAddress(
     /** `scheme://host` or `scheme://host:port`, lowercased, with no trailing slash. */
     val origin: String,
+    /**
+     * Where the server is mounted under that origin: `""` at the root, or a path
+     * beginning with `/` and not ending in one.
+     *
+     * One domain often has several things behind it, and a server at
+     * `https://example.com/sl` is an ordinary arrangement rather than a mistake --
+     * insisting on a whole host would be a constraint on somebody's DNS. The server
+     * end of this is `BASE_PATH`.
+     */
+    val prefix: String = "",
 ) {
+    /** The address as somebody would type it, as it is stored, and as requests use it. */
+    val written: String get() = origin + prefix
+
     /** Why an address could not be used, in the words the screen says. */
     enum class Problem {
         EMPTY,
@@ -32,9 +45,12 @@ data class ServerAddress(
         INSECURE,
 
         /**
-         * A path, query or fragment — refused rather than silently dropped, because
+         * A query or fragment — refused rather than silently dropped, because
          * dropping part of what somebody typed is how they end up at the wrong server
          * believing they are at the right one.
+         *
+         * A *path* is no longer refused: it is kept, as the prefix the server is
+         * mounted under. See [ServerAddress.prefix].
          */
         NOT_JUST_AN_ORIGIN,
         ;
@@ -43,7 +59,7 @@ data class ServerAddress(
             EMPTY -> "Enter the address of your Shopping List server."
             NOT_AN_ADDRESS -> "That does not look like an address."
             INSECURE -> "Addresses must start with https://"
-            NOT_JUST_AN_ORIGIN -> "Enter just the address, with no path after it."
+            NOT_JUST_AN_ORIGIN -> "Enter the address without a ? query or # fragment."
         }
     }
 
@@ -55,7 +71,9 @@ data class ServerAddress(
          * is lowercased, surrounding whitespace is ignored. All of those are what the
          * person meant beyond doubt.
          *
-         * Refused: a path, a query or a fragment. Those are not beyond doubt.
+         * Kept: a path, which is the prefix the server is mounted under.
+         *
+         * Refused: a query or a fragment. Those are not beyond doubt.
          *
          * There is deliberately **no way to ask for cleartext**. There used to be a
          * parameter for it and every caller but one passed `true` — including the one
@@ -90,15 +108,16 @@ data class ServerAddress(
                 return Result.failure(Refused(Problem.INSECURE))
             }
 
-            // A lone trailing slash is what a browser's address bar shows and is not a
-            // path anybody meant. Anything more is.
-            val path = uri.path.orEmpty()
-            if (path.isNotEmpty() && path != "/") {
-                return Result.failure(Refused(Problem.NOT_JUST_AN_ORIGIN))
-            }
             if (uri.query != null || uri.fragment != null) {
                 return Result.failure(Refused(Problem.NOT_JUST_AN_ORIGIN))
             }
+
+            // A lone trailing slash is what a browser's address bar shows and is not a
+            // path anybody meant. Anything more is the prefix the server is mounted
+            // under, kept without a trailing slash so that `written + "/api/lists"` has
+            // one slash between the two and never two.
+            val path = uri.path.orEmpty()
+            val prefix = if (path == "/") "" else path.trimEnd('/')
 
             // Reassembled rather than trimmed, so the stored form is the one this type
             // promises whatever arrived.
@@ -108,7 +127,7 @@ data class ServerAddress(
                 if (port != -1 && port != defaultPort(scheme)) append(':').append(port)
             }
 
-            return Result.success(ServerAddress(origin))
+            return Result.success(ServerAddress(origin, prefix))
         }
 
         private fun defaultPort(scheme: String) = if (scheme == "https") 443 else 80

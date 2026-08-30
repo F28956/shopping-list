@@ -54,12 +54,48 @@ class ServerAddressTest {
      * The trap. A base with a path silently loses it when a relative path is appended,
      * so it is refused rather than repaired.
      */
+    /**
+     * A path is the prefix the server is mounted under, and is kept.
+     *
+     * It used to be refused. One domain with several things behind it is an ordinary
+     * arrangement, and insisting on a whole host was a constraint on somebody's DNS
+     * rather than a property of this application. The server end is `BASE_PATH`.
+     */
     @Test
-    fun `a path is refused rather than dropped`() {
-        assertEquals(ServerAddress.Problem.NOT_JUST_AN_ORIGIN, problem("https://example.com/lists"))
-        assertEquals(ServerAddress.Problem.NOT_JUST_AN_ORIGIN, problem("https://example.com/api/"))
+    fun `a path is kept as the prefix`() {
+        for ((typed, origin, prefix) in listOf(
+            Triple("https://example.com/sl", "https://example.com", "/sl"),
+            Triple("https://example.com/sl/", "https://example.com", "/sl"),
+            Triple("https://example.com/apps/shopping", "https://example.com", "/apps/shopping"),
+            Triple("https://example.com", "https://example.com", ""),
+            Triple("https://example.com/", "https://example.com", ""),
+        )) {
+            val address = ServerAddress.parse(typed).getOrThrow()
+            assertEquals(typed, origin, address.origin)
+            assertEquals(typed, prefix, address.prefix)
+            assertEquals(typed, origin + prefix, address.written)
+        }
+    }
+
+    /** The whole point: one slash between the address and the path, prefix intact. */
+    @Test
+    fun `a request address keeps the prefix`() {
+        for ((typed, expected) in listOf(
+            "https://example.com/" to "https://example.com/api/lists",
+            "https://example.com/sl" to "https://example.com/sl/api/lists",
+            "https://example.com:8443/sl" to "https://example.com:8443/sl/api/lists",
+        )) {
+            val address = ServerAddress.parse(typed).getOrThrow()
+            assertEquals(typed, expected, address.written + "/api/lists")
+        }
+    }
+
+    /** A query or a fragment is still refused: neither is beyond doubt. */
+    @Test
+    fun `a query or fragment is still refused`() {
         assertEquals(ServerAddress.Problem.NOT_JUST_AN_ORIGIN, problem("https://example.com?x=1"))
         assertEquals(ServerAddress.Problem.NOT_JUST_AN_ORIGIN, problem("https://example.com#top"))
+        assertEquals(ServerAddress.Problem.NOT_JUST_AN_ORIGIN, problem("https://example.com/sl?x=1"))
     }
 
     @Test

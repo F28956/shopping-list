@@ -152,7 +152,7 @@ class MainActivity : ComponentActivity() {
                         SignIn(
                             configured = identity.isConfigured,
                             problem = current.problem,
-                            server = ServerDirectory.current?.origin,
+                            server = ServerDirectory.current?.written,
                             onSignIn = { scope.launch { state = identity.signIn() } },
                             onChangeServer = { correctingServer = true },
                             onlyThisDevice = {

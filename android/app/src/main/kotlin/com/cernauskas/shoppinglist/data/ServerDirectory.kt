@@ -118,7 +118,7 @@ object ServerDirectory {
      */
     fun remember(address: ServerAddress): Boolean {
         val changed = current != address
-        prefs.edit().putString(KEY, address.origin).apply()
+        prefs.edit().putString(KEY, address.written).apply()
         return changed
     }
 
@@ -187,7 +187,7 @@ object ServerDirectory {
         address: ServerAddress,
         client: OkHttpClient = OkHttpClient(),
     ): Result<About> = withContext(Dispatchers.IO) {
-        val request = Request.Builder().url("${address.origin}/api/server").build()
+        val request = Request.Builder().url("${address.written}/api/server").build()
 
         try {
             client.newCall(request).execute().use { response ->

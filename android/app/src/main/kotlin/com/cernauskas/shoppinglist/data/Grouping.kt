@@ -191,10 +191,39 @@ fun serverAddressIn(pasted: String): ServerAddress? {
     // Rebuilt from the parts rather than trimmed from the string, so that whatever
     // `ServerAddress` refuses is refused here too — one set of rules about what an
     // address is, and it lives there.
-    val origin = buildString {
+    val address = buildString {
         append(scheme).append("://").append(host)
         if (uri.port != -1) append(':').append(uri.port)
+        append(prefixIn(uri))
     }
 
-    return ServerAddress.parse(origin).getOrNull()
+    return ServerAddress.parse(address).getOrNull()
+}
+
+/**
+ * Where the server sits under its host, read out of the link itself.
+ *
+ * A server mounted at `https://example.com/sl` issues
+ * `https://example.com/sl/join#token`, and a reader that kept only the host would offer
+ * `https://example.com` — an address serving somebody else's application, or nothing.
+ * The prefix is everything before the `/join` segment, so it is read from the link
+ * rather than asked of the person pasting it.
+ *
+ * The twin of `prefix(in:)` in `ios/UI/Sources/JoinLink.swift`, and the same rules: two
+ * clients that disagree about what a link means are two clients that end up at
+ * different servers from the same paste.
+ */
+private fun prefixIn(uri: android.net.Uri): String {
+    val segments = uri.pathSegments.toMutableList()
+
+    // The older shape puts the token in the path, so the last segment is the token
+    // rather than `join`. Dropped first, leaving both shapes looking the same.
+    if (segments.size >= 2 && segments[segments.size - 2] == "join") {
+        segments.removeAt(segments.size - 1)
+    }
+
+    if (segments.lastOrNull() != "join") return ""
+    segments.removeAt(segments.size - 1)
+
+    return if (segments.isEmpty()) "" else "/" + segments.joinToString("/")
 }
