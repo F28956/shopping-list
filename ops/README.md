@@ -150,6 +150,99 @@ It answers `ok` and a line saying what TLS is doing, including the CA's own word
 an order failed. `tls: acme, list.example.com, no certificate — ...no A record for
 list.example.com` is a sentence you can act on.
 
+## Running it under systemd
+
+[`shopping-list.service`](shopping-list.service) is the unit. Three directories, kept
+apart on purpose:
+
+| | |
+|---|---|
+| `/usr/local/bin/shopping-list-server` | the binary, root-owned and not writable by the service |
+| `/etc/shopping-list/server.env` | the settings, root-owned `0600` |
+| `/var/lib/shopping-list/` | the database, owned by the service user |
+
+### Once
+
+```bash
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin shopping-list
+sudo install -o root -g root -m 0755 shopping-list-server /usr/local/bin/
+sudo install -d -o root -g root -m 0755 /etc/shopping-list
+sudo install -o root -g root -m 0600 /dev/null /etc/shopping-list/server.env
+sudoedit /etc/shopping-list/server.env
+```
+
+```bash
+sudo cp ops/shopping-list.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now shopping-list
+```
+
+`/var/lib/shopping-list` is not created by hand — `StateDirectory=` in the unit makes
+it on first start and gives it to the service user.
+
+### The settings file is read by systemd, not by the application
+
+`EnvironmentFile=` is loaded **as root, before privileges are dropped**, so the file
+holding a Google client secret never has to be readable by the account the server runs
+as. Leaving a `.env` in the working directory would mean the opposite: `dotenvy`
+searches from there, so anything running as `shopping-list` could read the secret.
+
+The syntax is close to a `.env` but not identical — no `export`, no mid-line `#`
+comments, and quote any value containing spaces.
+
+### Claiming it
+
+The claim code is printed once at startup, while nobody owns the server:
+
+```bash
+sudo journalctl -u shopping-list -n 40
+```
+
+It is new on every restart and never stored, so reading it out of last month's journal
+gets you nothing.
+
+### Checking on it
+
+```bash
+systemctl status shopping-list
+journalctl -u shopping-list -f
+curl http://localhost:8080/healthz
+```
+
+`/healthz` answers `ok` and a line saying what TLS is doing, including the CA's own
+words when an ACME order failed.
+
+### If it will not start
+
+The server refuses to start rather than run on configuration it cannot make sense of —
+a `TLS_MODE` it does not recognise, a `METRICS_PORT` that collides with the
+application's, a scrape endpoint exposed to the network with no token, a database path
+that is wrong. All of those are one line in the journal.
+
+The unit gives up after five attempts in two minutes rather than restarting for ever,
+because a restart loop buries that line. `systemctl reset-failed shopping-list` clears
+the count once the file is fixed.
+
+### Binding port 443
+
+Only relevant if this process holds its own certificate; behind a reverse proxy it
+does not. Two lines near the end of the unit are commented out and grant
+`CAP_NET_BIND_SERVICE` — uncomment both, or use
+`net.ipv4.ip_unprivileged_port_start=443`, rather than running the whole application
+as root.
+
+### Backups
+
+`ops/backup.sh` reads the database directly and needs no cooperation from the running
+server, so a timer can run it while the service is up:
+
+```bash
+sudo systemctl edit --force --full shopping-list-backup.timer
+```
+
+The sandboxing in the unit does not apply to it — it is a separate job, and it needs
+`BACKUP_RECIPIENT` from the same place your key lives.
+
 ## Retention
 
 What this server deletes on its own, and when:
