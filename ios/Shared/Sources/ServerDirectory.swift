@@ -159,10 +159,13 @@ enum ServerDirectory {
     ///
     /// Three failures a person fixes in three different ways, so they get three
     /// sentences rather than "could not connect".
-    enum Refusal: Error, Equatable {
+    enum Refusal: LocalizedError, Equatable {
         case unreachable
         case notThisSoftware
         case certificateRefused
+
+        /// See the note on `ServerAddress.Problem`.
+        var errorDescription: String? { sentence }
 
         var sentence: String {
             switch self {

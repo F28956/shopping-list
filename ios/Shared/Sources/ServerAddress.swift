@@ -20,7 +20,7 @@ struct ServerAddress: Equatable {
     var url: URL { URL(string: origin)! }
 
     /// Why an address could not be used, in the words the screen says.
-    enum Problem: Error, Equatable {
+    enum Problem: LocalizedError, Equatable {
         case empty
         case notAnAddress
         /// C6. Release builds accept `https://` only: an app that can be pointed
@@ -31,6 +31,13 @@ struct ServerAddress: Equatable {
         /// dropping part of what somebody typed is how they end up at the wrong
         /// server believing they are at the right one.
         case notJustAnOrigin
+
+        /// `LocalizedError`, so that a screen reaching for `localizedDescription`
+        /// gets these words rather than "the operation could not be completed,
+        /// ServerAddress.Problem error 3". A bare `Error` renders as its case index,
+        /// and the Mac settings window showed exactly that to anybody who typed an
+        /// address with a path on the end.
+        var errorDescription: String? { sentence }
 
         var sentence: String {
             switch self {

@@ -80,6 +80,22 @@ struct ServerAddressTests {
         #expect(problem("://nope") == .notAnAddress)
     }
 
+    /// A screen that reaches for `localizedDescription` gets the sentence too.
+    ///
+    /// The Mac settings window did exactly that, and a bare `Error` renders as its
+    /// case index -- so somebody who typed an address with a path on the end was told
+    /// "the operation could not be completed, ServerAddress.Problem error 3".
+    @Test(arguments: [
+        ServerAddress.Problem.empty,
+        .notAnAddress,
+        .insecure,
+        .notJustAnOrigin,
+    ])
+    func aProblemReadsTheSameWhicheverWayItIsAsked(_ problem: ServerAddress.Problem) {
+        #expect(problem.localizedDescription == problem.sentence)
+        #expect(!problem.localizedDescription.contains("error"))
+    }
+
     /// Every problem has a sentence, because a screen has to say something.
     @Test func everyProblemSaysSomething() {
         for problem: ServerAddress.Problem in [.empty, .notAnAddress, .insecure, .notJustAnOrigin] {

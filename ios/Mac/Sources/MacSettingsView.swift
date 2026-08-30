@@ -204,7 +204,7 @@ struct MacSettingsView: View {
     private func use(_ entered: String) async {
         switch ServerAddress.parse(entered) {
         case .failure(let refusal):
-            problem = refusal.localizedDescription
+            problem = refusal.sentence
         case .success(let address):
             await adopt(address)
         }
@@ -226,7 +226,7 @@ struct MacSettingsView: View {
             current = address
             typed = ""
         case .failure(let refusal):
-            problem = refusal.localizedDescription
+            problem = refusal.sentence
         }
     }
 
