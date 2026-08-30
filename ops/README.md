@@ -71,6 +71,39 @@ The clients refuse `http://` in release builds, so this is a prerequisite rather
 a hardening step. There are two ways to it and the server supports both; pick by what
 you already run.
 
+### Under a path rather than a host
+
+One name with several things behind it is ordinary, and this does not need a subdomain
+of its own. Tell the server where it is mounted:
+
+```
+BASE_PATH=/sl
+```
+
+and point the proxy at it **without rewriting the path**:
+
+```
+# Caddyfile
+example.com {
+    handle /sl/* {
+        reverse_proxy localhost:8080
+    }
+}
+```
+
+`handle` and not `handle_path`: the second strips the prefix, and the server is
+expecting to see it. Only one of the two may strip it, and the server is the half that
+also has to write the prefix into every link, form and redirect it emits — so it is the
+half that should know.
+
+The apps take the whole address, `https://example.com/sl`, in Settings → Server. Share
+links carry the prefix, and a pasted one offers the right address.
+
+Two settings that are **not** the base path and are still origins, with no path on
+them: `PUBLIC_ORIGIN` (a browser's `Origin` header never carries a path, and this is
+compared against it) and `REDIRECT_URI`, which is a whole URL and *does* include the
+prefix — `https://example.com/sl/auth/callback`.
+
 ### Behind a reverse proxy — start here
 
 If you already run Caddy, nginx or Traefik, this is the answer. Certificate renewal
