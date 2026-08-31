@@ -27,7 +27,7 @@
 
 [Unit]
 Description=Shopping List
-Documentation=https://github.com/
+Documentation=https://github.com/F28956/shopping-list
 # `network-online` rather than `network`: an ACME order on the first boot needs a
 # route to exist, and `network.target` is reached long before one does.
 After=network-online.target
