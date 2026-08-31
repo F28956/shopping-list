@@ -1,262 +1,1004 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Install — Shopping List</title>
-<meta name="description" content="Where to get Shopping List, how to start the server, and how to point the apps at it.">
-<meta name="color-scheme" content="dark">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon-180.png">
-<link rel="stylesheet" href="styles.css">
-</head>
-<body>
-<a class="skip" href="#main">Skip to content</a>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Install — Shopping List</title>
+        <meta
+            name="description"
+            content="Where to get Shopping List, how to start the server, and how to point the apps at it."
+        />
+        <meta name="color-scheme" content="dark" />
+        <link rel="icon" href="icon.svg" type="image/svg+xml" />
+        <link rel="apple-touch-icon" href="icon-180.png" />
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+    <body>
+        <a class="skip" href="#main">Skip to content</a>
 
-<header class="wrap masthead">
-  <a href="index.html"><img class="masthead-mark" src="icon.svg" alt="Shopping List home" width="38" height="38"></a>
-  <p class="masthead-name">Shopping&nbsp;List</p>
-  <nav class="masthead-nav" aria-label="Site">
-    <a href="install.html">Install</a>
-    <a href="support.html">Support</a>
-    <a href="privacy.html">Privacy</a>
-  </nav>
-</header>
+        <header class="wrap masthead">
+            <a href="index.html"
+                ><img
+                    class="masthead-mark"
+                    src="icon.svg"
+                    alt="Shopping List home"
+                    width="38"
+                    height="38"
+            /></a>
+            <p class="masthead-name">Shopping&nbsp;List</p>
+            <nav class="masthead-nav" aria-label="Site">
+                <a href="install.html">Install</a>
+                <a href="support.html">Support</a>
+                <a href="privacy.html">Privacy</a>
+            </nav>
+        </header>
 
-<main id="main" class="doc">
-<div class="wrap doc-wrap">
+        <main id="main" class="doc">
+            <div class="wrap doc-wrap">
+                <h1 class="doc-title">Install</h1>
+                <p class="doc-meta">
+                    The app on its own, and the server for when one device stops
+                    being enough
+                </p>
 
-<h1 class="doc-title">Install</h1>
-<p class="doc-meta">Two halves: a server you run, and an app that points at it</p>
+                <div class="callout">
+                    <p>
+                        <strong>Nothing is published yet.</strong> Every
+                        download below is marked coming soon, and the
+                        instructions describe what installing will look like
+                        when they are ready. The settings are real — they are
+                        what the server reads today, and it refuses to start on
+                        any of them it cannot make sense of.
+                    </p>
+                </div>
 
-<div class="callout">
-<p><strong>Nothing is published yet.</strong> Every download below is marked coming
-soon, and the instructions describe what installing will look like when they are
-ready. The setup steps and settings are real — they are what the server reads
-today.</p>
-</div>
+                <h2>Downloads</h2>
 
-<h2>Downloads</h2>
+                <ul class="downloads">
+                    <li class="download">
+                        <span class="download-name">App Store</span>
+                        <span class="pill">Coming soon</span>
+                        <span class="download-for"
+                            >iPhone, iPad, Mac and Apple Watch</span
+                        >
+                    </li>
+                    <li class="download">
+                        <span class="download-name">Google Play</span>
+                        <span class="pill">Coming soon</span>
+                        <span class="download-for"
+                            >Android phones and tablets</span
+                        >
+                    </li>
+                    <li class="download">
+                        <span class="download-name">Server</span>
+                        <span class="pill">Coming soon</span>
+                        <span class="download-for"
+                            >A single binary for macOS and Linux</span
+                        >
+                    </li>
+                    <li class="download">
+                        <span class="download-name">Source</span>
+                        <span class="pill">Coming soon</span>
+                        <span class="download-for"
+                            >Build it yourself with a Rust toolchain</span
+                        >
+                    </li>
+                </ul>
 
-<ul class="downloads">
-  <li class="download">
-    <span class="download-name">App Store</span>
-    <span class="pill">Coming soon</span>
-    <span class="download-for">iPhone, iPad, Mac and Apple Watch</span>
-  </li>
-  <li class="download">
-    <span class="download-name">Google Play</span>
-    <span class="pill">Coming soon</span>
-    <span class="download-for">Android phones and tablets</span>
-  </li>
-  <li class="download">
-    <span class="download-name">Server</span>
-    <span class="pill">Coming soon</span>
-    <span class="download-for">A single binary for macOS and Linux</span>
-  </li>
-  <li class="download">
-    <span class="download-name">Source</span>
-    <span class="pill">Coming soon</span>
-    <span class="download-for">Build it yourself with a Rust toolchain</span>
-  </li>
-</ul>
+                <h2 id="need">Do you need a server?</h2>
 
-<p>You need the server before the apps are any use to you. If somebody else is running
-one and has invited you, skip to <a href="#connect">connecting an app</a>.</p>
+                <p>
+                    Probably not to start with. Install the app and it works
+                    immediately — it keeps its own list on the device, and it is
+                    not a cut-down version of the real thing: the app carries
+                    the server's own code and runs it locally, so the typed
+                    lines are parsed the same way, the categories are the same
+                    categories, and the history is the same history. There is
+                    nothing to sign in to and nothing to configure.
+                </p>
 
-<h2>Setting up the server</h2>
+                <p>Run a server when you want one of these:</p>
 
-<ol class="steps">
-  <li class="step">
-    <span class="step-mark">01</span>
-    <div>
-      <p class="step-title">Make a Google sign-in client</p>
-      <p class="step-body">Sign-in is Google's, so there is no password for this server
-        to store or lose. In the
-        <a href="https://console.cloud.google.com/apis/credentials" rel="noopener">Google
-        Cloud console</a>, create an OAuth client of type <strong>Web
-        application</strong>. Add <code>https://your-address/auth/callback</code> as an
-        authorised redirect URI. Keep the client id and secret.</p>
-    </div>
-  </li>
+                <ul>
+                    <li>
+                        <strong>The same list on more than one device.</strong>
+                        Your phone and your laptop, or your phone and somebody
+                        else's.
+                    </li>
+                    <li>
+                        <strong>Sharing a list.</strong> Invitations need
+                        somewhere to meet.
+                    </li>
+                    <li>
+                        <strong>The web app.</strong> The browser has no device
+                        to keep a list on.
+                    </li>
+                </ul>
 
-  <li class="step">
-    <span class="step-mark">02</span>
-    <div>
-      <p class="step-title">Put the binary where it will live</p>
-      <p class="step-body">One executable and one SQLite file beside it. It serves the
-        browser, the phone apps and the watch from the same process, so there is nothing
-        else to install — no database server, no reverse proxy required, no runtime.</p>
-    </div>
-  </li>
+                <p>
+                    You can decide later. Adopting a server takes what is
+                    already on the device with it — lists, items, categories and
+                    history — so nothing is lost by starting without one. If
+                    somebody else runs a server and has invited you, skip to
+                    <a href="#connect">connecting an app</a>.
+                </p>
 
-  <li class="step">
-    <span class="step-mark">03</span>
-    <div>
-      <p class="step-title">Write the settings file</p>
-      <p class="step-body">A file called <code>.env</code> next to the binary. The
-        minimum is a database path, a Google client, and who may sign in.</p>
-    </div>
-  </li>
+                <h2>Setting up the server</h2>
 
-  <li class="step">
-    <span class="step-mark">04</span>
-    <div>
-      <p class="step-title">Start it</p>
-      <p class="step-body">It listens on port 8080 and prints the address a phone on
-        the same network can reach it at. If the database path is wrong it refuses to
-        start rather than quietly serving an empty list.</p>
-    </div>
-  </li>
+                <ol class="steps">
+                    <li class="step">
+                        <span class="step-mark">01</span>
+                        <div>
+                            <p class="step-title">Decide how people sign in</p>
+                            <p class="step-body">
+                                There is no password for this server to store or
+                                lose; it verifies tokens Apple and Google have
+                                already issued. <strong>Apple</strong> needs no
+                                console at all — a native token's audience is
+                                the app's bundle identifier, which is the same
+                                for every install, so you list it in
+                                <code>APPLE_BUNDLE_IDS</code> and that is the
+                                whole of it. <strong>Google</strong> is how the
+                                browser and Android sign in, and it needs an
+                                OAuth client of type
+                                <strong>Web application</strong> from the
+                                <a
+                                    href="https://console.cloud.google.com/apis/credentials"
+                                    rel="noopener"
+                                    >Google Cloud console</a
+                                >, with
+                                <code>https://your-address/auth/callback</code>
+                                as an authorised redirect URI. Keep the client
+                                id and secret.
+                            </p>
+                        </div>
+                    </li>
 
-  <li class="step">
-    <span class="step-mark">05</span>
-    <div>
-      <p class="step-title">Open it and sign in</p>
-      <p class="step-body">Visit the address in a browser and sign in with Google. That
-        is the whole setup — you now have a list.</p>
-    </div>
-  </li>
-</ol>
+                    <li class="step">
+                        <span class="step-mark">02</span>
+                        <div>
+                            <p class="step-title">
+                                Put the binary where it will live
+                            </p>
+                            <p class="step-body">
+                                One executable and one SQLite file beside it. It
+                                serves the browser, the phone apps and the watch
+                                from the same process, and it can hold its own
+                                certificate — so there is nothing else to
+                                install: no database server, no runtime, and a
+                                reverse proxy only if you already wanted one.
+                            </p>
+                        </div>
+                    </li>
 
-<h3>The settings file</h3>
+                    <li class="step">
+                        <span class="step-mark">03</span>
+                        <div>
+                            <p class="step-title">Write the settings file</p>
+                            <p class="step-body">
+                                A file called <code>.env</code> next to the
+                                binary. The minimum is a database path and a
+                                Google client. Who may sign in is managed from
+                                inside the app once you have claimed it. Running it as a service instead? The same keys go in
+                                <code>/etc/shopping-list/server.env</code> — see
+                                <a href="#service">running it as a service</a>.
+                            </p>
+                        </div>
+                    </li>
 
-<pre class="code"><span class="comment"># The Google client from step 01.</span>
-GOOGLE_CLIENT_ID="000000000000-xxxxxxxx.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET="GOCSPX-xxxxxxxxxxxxxxxxxxxxxxx"
+                    <li class="step">
+                        <span class="step-mark">04</span>
+                        <div>
+                            <p class="step-title">Give it a certificate</p>
+                            <p class="step-body">
+                                Released apps refuse plain <code>http://</code>,
+                                so this is a prerequisite and not a finishing
+                                touch. Either let the server order one itself
+                                with <code>TLS_MODE=acme</code>, or point it at
+                                PEM files you already have with
+                                <code>TLS_MODE=files</code>. Leave it
+                                <code>off</code> only behind a proxy that
+                                terminates TLS for it. See
+                                <a href="#https">HTTPS</a>.
+                            </p>
+                        </div>
+                    </li>
 
-<span class="comment"># An absolute path, and mind the three slashes.</span>
+                    <li class="step">
+                        <span class="step-mark">05</span>
+                        <div>
+                            <p class="step-title">Start it and claim it</p>
+                            <p class="step-body">
+                                It prints the address a phone on the same
+                                network can reach it at, and — while nobody owns
+                                it yet — a <strong>claim code</strong>. Sign in
+                                with that code and the server is yours. The code
+                                is new on every restart and is never stored, so
+                                a port that was briefly public does not cost you
+                                the box.
+                            </p>
+                        </div>
+                    </li>
+                </ol>
+
+                <h3>The settings file</h3>
+
+                <pre
+                    class="code"
+                ><span class="comment"># An absolute path, and mind the three slashes.</span>
 DATABASE_URL="sqlite:///var/lib/shopping-list/data.db"
 
 <span class="comment"># The address this is served from. Changes that claim to come from
-# anywhere else are refused.</span>
+# anywhere else are refused, and share links are built from it.</span>
 PUBLIC_ORIGIN="https://lists.example.com"
 
-<span class="comment"># Who may sign in. Comma-separated, or "*" to admit anyone.</span>
-ALLOWED_EMAILS="you@example.com,someone@example.com"</pre>
+<span class="comment"># The browser and Android sign in with Google.</span>
+GOOGLE_CLIENT_ID="000000000000-xxxxxxxx.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET="GOCSPX-xxxxxxxxxxxxxxxxxxxxxxx"
+REDIRECT_URI="https://lists.example.com/auth/callback"
 
-<h3>Starting it</h3>
+<span class="comment"># The Apple apps sign in with Apple. No console, no client id --
+# just the bundle identifier the app ships with.</span>
+APPLE_BUNDLE_IDS="dev.f28956.shopping-list"
 
-<pre class="code">./shopping-list-server
+<span class="comment"># A certificate this process orders and renews by itself.</span>
+TLS_MODE="acme"
+TLS_DOMAINS="lists.example.com"
+ACME_CONTACT="you@example.com"</pre>
 
-<span class="comment">  INFO listening on 0.0.0.0:8080
-  INFO reachable from this network at http://192.168.1.24:8080
-  INFO sign-in restricted admitted=2</span></pre>
+                <h3>Starting it</h3>
 
-<h2>Every setting</h2>
+                <pre class="code">./shopping-list-server
 
-<div class="table-scroll">
-<table class="settings">
-  <thead>
-    <tr><th scope="col">Name</th><th scope="col">Needed</th><th scope="col">What it is</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>DATABASE_URL</td><td>required</td>
-      <td>Absolute path to the SQLite file, as <code>sqlite:///…</code>. The server will
-        not create a missing database — a wrong path fails loudly instead of serving an
-        empty one.</td>
-    </tr>
-    <tr>
-      <td>ALLOWED_EMAILS</td><td>required</td>
-      <td>The addresses allowed to sign in, comma-separated, or <code>*</code> to admit
-        anybody. There is no default: leaving it out looks exactly like meaning
-        &ldquo;anyone&rdquo;, so the server refuses to start instead.</td>
-    </tr>
-    <tr>
-      <td>GOOGLE_CLIENT_ID</td><td>required</td>
-      <td>The web client from step 01.</td>
-    </tr>
-    <tr>
-      <td>GOOGLE_CLIENT_SECRET</td><td>required</td>
-      <td>Its secret. Used for the browser sign-in flow only.</td>
-    </tr>
-    <tr>
-      <td>PUBLIC_ORIGIN</td><td>recommended</td>
-      <td>The address this server is served from. Defaults to
-        <code>http://localhost:8080</code>. Share links are built from it, and
-        state-changing requests that say they came from elsewhere are refused.</td>
-    </tr>
-    <tr>
-      <td>REDIRECT_URI</td><td>optional</td>
-      <td>Where Google sends the browser back to. Defaults to
-        <code>http://localhost:8080/auth/callback</code>; set it to match your own
-        address.</td>
-    </tr>
-    <tr>
-      <td>SESSION_INSECURE</td><td>optional</td>
-      <td>Set to <code>true</code> only for a local run over plain
-        <code>http://</code>. Anything reachable from outside must not have it — the
-        session cookie is marked <code>Secure</code> unless this says otherwise.</td>
-    </tr>
-    <tr>
-      <td>GOOGLE_IOS_CLIENT_ID</td><td>optional</td>
-      <td>The iPhone app's own client id, if you build the iOS app yourself. One
-        provider issues a different client id per platform, so the phone's tokens carry
-        a different audience from the browser's.</td>
-    </tr>
-    <tr>
-      <td>GOOGLE_ANDROID_CLIENT_ID</td><td>optional</td>
-      <td>Normally nothing. Android is given the web client id above and its tokens come
-        back addressed to that. Set this only if one turns up addressed elsewhere.</td>
-    </tr>
-    <tr>
-      <td>RUST_LOG</td><td>optional</td>
-      <td>How much the server says. Defaults to something readable.</td>
-    </tr>
-  </tbody>
-</table>
-</div>
+<span class="comment">  INFO opening database url=sqlite:///var/lib/shopping-list/data.db
+  INFO accepting Google tokens audiences=1
+  INFO accepting Apple tokens audiences=1
+  INFO admission seed configured=2
+  INFO ordering and renewing a certificate names=["lists.example.com"]
+  INFO listening on 0.0.0.0:8080 (https)
+  INFO reachable from this network at https://192.168.1.24:8080
+  INFO redirecting http on port 80 to https
 
-<h2 id="connect">Connecting an app</h2>
+  WARN
+  WARN   Nobody owns this server yet.
+  WARN   Claim it when you sign in, with the code:  7QK4-2MJD
+  WARN</span></pre>
 
-<p>Install the app, open it, and it asks for the server address before anything else —
-something like <code>https://lists.example.com</code>. Enter it, sign in with Google,
-and you are on the list.</p>
+                <h2 id="https">HTTPS</h2>
 
-<p>The address is kept in the app's settings and can be changed later under
-<strong>Settings &rarr; Server</strong>. Changing it signs you out and clears the lists
-held on the device, because those belong to the old server.</p>
+                <p>
+                    The server terminates TLS itself. That is worth saying
+                    plainly because it used not to: there is no longer a reverse
+                    proxy in the minimum setup, and
+                    <code>TLS_MODE</code> chooses between three arrangements.
+                </p>
 
-<h3>Things that catch people out</h3>
+                <div class="table-scroll">
+                    <table class="settings">
+                        <thead>
+                            <tr>
+                                <th scope="col">TLS_MODE</th>
+                                <th scope="col">What it does</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>acme</td>
+                                <td>
+                                    <strong
+                                        >Use it when you have a name pointing at
+                                        the box.</strong
+                                    >
+                                    It orders a certificate from Let&rsquo;s
+                                    Encrypt and renews it in-process — no cron,
+                                    no restart, connections in flight
+                                    undisturbed. Needs <code>TLS_DOMAINS</code>,
+                                    a name that resolves, and the challenge to
+                                    reach it: the CA connects to
+                                    <em>public</em> 443 or 80 and there is
+                                    nowhere to tell it otherwise. Serving on
+                                    <code>PORT=443</code>, or forwarding public
+                                    443 to whatever port you serve on, both work
+                                    — the challenge arrives on the same socket
+                                    as ordinary traffic. Behind CGNAT with
+                                    nothing forwarded, use <code>files</code>.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>files</td>
+                                <td>
+                                    <strong
+                                        >Use it when you already have a
+                                        certificate.</strong
+                                    >
+                                    Reads a PEM chain and key from
+                                    <code>TLS_CERT</code> and
+                                    <code>TLS_KEY</code> — a corporate CA, a
+                                    wildcard, or <code>mkcert</code> on a
+                                    development machine. Give it the
+                                    <em>whole chain</em>: a leaf on its own
+                                    works in a browser that cached the
+                                    intermediate and fails on a phone that did
+                                    not.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>off</td>
+                                <td>
+                                    <strong
+                                        >Use it when something in front already
+                                        does TLS.</strong
+                                    >
+                                    The default, and cleartext. Correct behind
+                                    Caddy or nginx, and a leak anywhere else —
+                                    it says so in the log every time it starts.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
 
-<ul>
-  <li><strong><code>localhost</code> on a phone means the phone.</strong> Use the
-    address the server prints at startup, and make sure the phone is on the same
-    network.</li>
-  <li><strong>Android refuses plain <code>http://</code>.</strong> A server reachable
-    from outside your home should be served over <code>https://</code> anyway.</li>
-  <li><strong>&ldquo;This account may not use this server&rdquo;</strong> means sign-in
-    worked and the address is not admitted. Add it to the server's list and try
-    again.</li>
-  <li><strong>The watch is set up by the phone.</strong> Open the app on the paired
-    iPhone once; the watch takes the address and the sign-in from there.</li>
-</ul>
+                <p>
+                    Under <code>acme</code> the certificate and account key are
+                    kept in <code>TLS_CACHE_DIR</code> rather than in the
+                    database, and the directory must be <code>0700</code>. The
+                    database is the thing that gets copied to a laptop to debug
+                    and attached to an issue; losing the cache costs a fresh
+                    order, and leaking the database should not also cost a
+                    private key.
+                </p>
 
-<h2>Putting it on the internet</h2>
+                <p>
+                    Leave <code>ACME_DIRECTORY</code> alone unless you are
+                    fighting with port forwarding. Staging produces a server
+                    that starts cleanly, serves happily, and is rejected by
+                    every client — a failure that looks like a success
+                    everywhere except a browser&rsquo;s advanced-options dialog.
+                </p>
 
-<p>Everything above works on a home network as it stands. Reaching it from outside means
-a name, a certificate and a way in — a reverse proxy in front of port 8080 is the usual
-answer. The server does not serve HTTPS itself.</p>
+                <h2>Every setting</h2>
 
-<p>Do that before you hand the address to anybody: the token in every request is a
-bearer credential, and on plain HTTP it travels in the clear.</p>
+                <div class="table-scroll">
+                    <table class="settings">
+                        <thead>
+                            <tr>
+                                <th scope="col">Name</th>
+                                <th scope="col">Needed</th>
+                                <th scope="col">What it is</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>DATABASE_URL</td>
+                                <td>required</td>
+                                <td>
+                                    Absolute path to the SQLite file, as
+                                    <code>sqlite:///…</code>. The server will
+                                    not create a missing database — a wrong path
+                                    fails loudly instead of serving an empty
+                                    one.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>GOOGLE_CLIENT_ID</td>
+                                <td>required</td>
+                                <td>
+                                    The web client from step 01. Required
+                                    because it is how the browser signs in, and
+                                    a server nobody can reach in a browser
+                                    cannot be administered.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>GOOGLE_CLIENT_SECRET</td>
+                                <td>required</td>
+                                <td>
+                                    Its secret. Used for the browser sign-in
+                                    flow only.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>APPLE_BUNDLE_IDS</td>
+                                <td>for Apple apps</td>
+                                <td>
+                                    The bundle identifiers whose Sign in with
+                                    Apple tokens this server accepts,
+                                    comma-separated. Left out, it says so at
+                                    startup and the iPhone, Mac and Watch apps
+                                    cannot sign in. There is no client id and no
+                                    secret — the audience of a native Apple
+                                    token is the bundle id itself.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>PUBLIC_ORIGIN</td>
+                                <td>recommended</td>
+                                <td>
+                                    The address this server is served from.
+                                    Defaults to
+                                    <code>http://localhost:8080</code>. Share
+                                    links are built from it, and state-changing
+                                    requests that say they came from elsewhere
+                                    are refused.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>REDIRECT_URI</td>
+                                <td>optional</td>
+                                <td>
+                                    Where Google sends the browser back to.
+                                    Defaults to
+                                    <code
+                                        >http://localhost:8080/auth/callback</code
+                                    >; set it to match your own address.
+                                </td>
+                            </tr>
+                            <tr>
+                              <td>BASE_PATH</td><td>optional</td>
+                              <td>Where this server is mounted under its host, such as <code>/sl</code>, when a
+                                domain has several things behind it. Empty by default, meaning the root. The
+                                proxy in front must pass the prefix through rather than strip it — in Caddy that
+                                is <code>handle</code> and not <code>handle_path</code> — because the server also
+                                writes the prefix into every link it emits, so it is the half that has to know.
+                                Give the apps the whole address, <code>https://example.com/sl</code>.</td>
+                            </tr>
+                            <tr>
+                              <td>BIND</td><td>optional</td>
+                              <td>The interface to listen on, as an address and never a name. Defaults to
+                                <code>0.0.0.0</code> — every interface, which is what a phone on the same
+                                Wi-Fi needs. Set it to <code>127.0.0.1</code> behind a reverse proxy on the
+                                same machine, so the proxy is the only thing on a public port and nothing
+                                else on the network can skip it. The server says so at startup when it is
+                                bound this way.</td>
+                            </tr>
+                            <tr>
+                                <td>PORT</td>
+                                <td>optional</td>
+                                <td>
+                                    Defaults to <code>8080</code>, under TLS as
+                                    well. A process that cannot bind 443 without
+                                    help should not be told to try by a default.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>SESSION_INSECURE</td>
+                                <td>optional</td>
+                                <td>
+                                    Set to <code>true</code> only for a local
+                                    run over plain <code>http://</code>.
+                                    Anything reachable from outside must not
+                                    have it — the session cookie is marked
+                                    <code>Secure</code> unless this says
+                                    otherwise.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>GOOGLE_IOS_CLIENT_ID</td>
+                                <td>optional</td>
+                                <td>
+                                    Only for an iOS build that still signs in
+                                    with Google. The shipped Apple apps do not —
+                                    they use <code>APPLE_BUNDLE_IDS</code>.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>GOOGLE_ANDROID_CLIENT_ID</td>
+                                <td>optional</td>
+                                <td>
+                                    Normally nothing. Android is given the web
+                                    client id above and its tokens come back
+                                    addressed to that. Set this only if one
+                                    turns up addressed elsewhere.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
 
-</div>
-</main>
+                <h3>The certificate</h3>
 
-<footer class="footer">
-  <div class="wrap footer-grid">
-    <p class="footer-note">Shopping List · self-hosted</p>
-    <nav class="footer-links" aria-label="Footer">
-      <a href="index.html">Home</a>
-      <a href="install.html">Install</a>
-      <a href="privacy.html">Privacy</a>
-      <a href="support.html">Support</a>
-      <!-- Replace with the repository address once it has one. -->
-      <a href="#">Source</a>
-    </nav>
-  </div>
-</footer>
-</body>
+                <div class="table-scroll">
+                    <table class="settings">
+                        <thead>
+                            <tr>
+                                <th scope="col">Name</th>
+                                <th scope="col">Needed</th>
+                                <th scope="col">What it is</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>TLS_MODE</td>
+                                <td>optional</td>
+                                <td>
+                                    <code>off</code> (the default),
+                                    <code>files</code> or <code>acme</code>.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>TLS_CERT<br />TLS_KEY</td>
+                                <td>with <code>files</code></td>
+                                <td>
+                                    PEM paths. The full chain, not only the
+                                    leaf.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>TLS_DOMAINS</td>
+                                <td>with <code>acme</code></td>
+                                <td>
+                                    The names to certify, comma-separated. An IP
+                                    address is refused here rather than minutes
+                                    later by the CA, which no public authority
+                                    will certify.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>ACME_CONTACT</td>
+                                <td>optional</td>
+                                <td>
+                                    An address for expiry warnings. A bare
+                                    address is read as <code>mailto:</code>.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>TLS_CACHE_DIR</td>
+                                <td>optional</td>
+                                <td>
+                                    Where the certificate and account key live.
+                                    Defaults to <code>./tls</code>, is created
+                                    <code>0700</code>, and an existing directory
+                                    that is more open than that is refused
+                                    rather than quietly narrowed.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>ACME_DIRECTORY</td>
+                                <td>optional</td>
+                                <td>
+                                    <code>staging</code> to use Let&rsquo;s
+                                    Encrypt&rsquo;s staging CA while testing.
+                                    Production otherwise — deliberately, since a
+                                    staging certificate fails in a way that
+                                    looks like success.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>HTTP_REDIRECT_PORT</td>
+                                <td>optional</td>
+                                <td>
+                                    A plain-HTTP listener that serves no
+                                    application and only redirects to HTTPS.
+                                    Defaults to <code>80</code> when TLS is on,
+                                    to nothing when it is off, and
+                                    <code>off</code> turns it off.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3>Logs and metrics</h3>
+
+                <div class="table-scroll">
+                    <table class="settings">
+                        <thead>
+                            <tr>
+                                <th scope="col">Name</th>
+                                <th scope="col">Needed</th>
+                                <th scope="col">What it is</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>LOG_LEVEL</td>
+                                <td>optional</td>
+                                <td>
+                                    <code>error</code>, <code>warn</code>,
+                                    <code>info</code>, <code>debug</code> or
+                                    <code>trace</code> — or a per-crate filter
+                                    such as
+                                    <code>api=debug,domain=trace</code> if you
+                                    want that instead. See
+                                    <a href="#logs">what the log contains</a>
+                                    before choosing.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>LOG_FORMAT</td>
+                                <td>optional</td>
+                                <td>
+                                    <code>text</code> (the default) or
+                                    <code>json</code>, for a log that is going
+                                    somewhere that will parse it.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>RUST_LOG</td>
+                                <td>optional</td>
+                                <td>
+                                    The same idea, for anybody who already
+                                    thinks in these. <code>LOG_LEVEL</code> wins
+                                    where both are set, and the server says so
+                                    at startup rather than letting a variable
+                                    left over in a shell quietly beat the one
+                                    you meant.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>METRICS_MODE</td>
+                                <td>optional</td>
+                                <td>
+                                    <code>off</code> (the default),
+                                    <code>pull</code>, <code>push</code> or
+                                    <code>both</code>. Off opens no port and
+                                    exports nothing.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>METRICS_BIND<br />METRICS_PORT</td>
+                                <td>with <code>pull</code></td>
+                                <td>
+                                    The scrape listener, defaulting to
+                                    <code>127.0.0.1</code> and
+                                    <code>9100</code>. It is a listener of its
+                                    own, not a route on the application — so it
+                                    can be firewalled separately and shares no
+                                    session layer with anything.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>METRICS_TOKEN</td>
+                                <td>off loopback</td>
+                                <td>
+                                    The bearer a scraper must present, at least
+                                    16 characters. Binding the scrape endpoint
+                                    to anything but loopback
+                                    <em>without</em> one is refused at startup:
+                                    that is the moment it becomes reachable by
+                                    every device on the house Wi-Fi.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>METRICS_OTLP_ENDPOINT</td>
+                                <td>with <code>push</code></td>
+                                <td>
+                                    An <code>http(s)</code> collector URL to
+                                    push OTLP to. The right answer when the
+                                    server is behind a NAT and nothing can
+                                    scrape it.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>METRICS_OTLP_HEADERS</td>
+                                <td>optional</td>
+                                <td>
+                                    Whatever the collector wants for
+                                    authentication, as
+                                    <code>name=value,name=value</code>. Never
+                                    written to the log.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>METRICS_OTLP_INTERVAL_SECONDS</td>
+                                <td>optional</td>
+                                <td>How often to push. Defaults to 60.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+
+                <h2 id="service">Running it as a service</h2>
+
+                <p>Everything above starts the server in a terminal, which is the
+                right way to watch it work once. To have it survive a reboot and a
+                crash, hand it to <strong>systemd</strong>. The unit is
+                <code>ops/shopping-list.service</code> in the source, alongside a
+                matching section in <code>ops/README.md</code>.</p>
+
+                <p>Three locations, kept apart deliberately:</p>
+
+                <div class="table-scroll">
+                <table class="settings">
+                  <thead>
+                    <tr><th scope="col">Path</th><th scope="col">Owner</th><th scope="col">What lives there</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>/usr/local/bin/</td><td>root</td>
+                      <td>The binary. Not writable by the account that runs it.</td>
+                    </tr>
+                    <tr>
+                      <td>/etc/shopping-list/server.env</td><td>root, 0600</td>
+                      <td>The settings, including the Google client secret.</td>
+                    </tr>
+                    <tr>
+                      <td>/var/lib/shopping-list/</td><td>the service user</td>
+                      <td>The database, and the certificate cache if this process holds one.</td>
+                    </tr>
+                  </tbody>
+                </table>
+                </div>
+
+                <div class="callout">
+                <p><strong>The database has to live under <code>/var/lib</code>.</strong>
+                The unit sets <code>ProtectSystem=strict</code>, which makes the whole
+                filesystem read-only to this service apart from what
+                <code>StateDirectory=</code> grants it. A
+                <code>DATABASE_URL</code> pointing anywhere else — <code>/usr/local/share</code>,
+                <code>/opt</code>, a home directory — fails with
+                <code>(code: 14) unable to open database file</code>, which sounds like
+                a permissions problem on the file and is really a read-only mount.</p>
+                </div>
+
+                <h3>The account comes first</h3>
+
+                <div class="callout">
+                <p><strong>systemd will not create the user named in
+                <code>User=</code>.</strong> A missing one fails the unit
+                <em>before</em> the binary runs, so the journal holds
+                <code>Failed to determine user credentials: No such process</code> and
+                not one word from the server — which never started. That message names
+                neither the user nor the fact that it is absent.</p>
+                </div>
+
+<pre class="code">sudo cp ops/shopping-list.sysusers /usr/lib/sysusers.d/shopping-list.conf
+sudo systemd-sysusers
+
+<span class="comment"># or the same thing by hand</span>
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin shopping-list</pre>
+
+                <h3>Then the binary, the settings and the database</h3>
+
+<pre class="code">sudo install -o root -g root -m 0755 shopping-list-server /usr/local/bin/
+sudo install -d -o root -g root -m 0755 /etc/shopping-list
+sudo install -o root -g root -m 0600 /dev/null /etc/shopping-list/server.env
+sudoedit /etc/shopping-list/server.env
+
+<span class="comment"># The server opens the database but will not create it, so that a wrong
+# path fails loudly instead of quietly serving an empty list. An empty file
+# is enough -- the migrations fill it on the first start.</span>
+sudo install -d -o shopping-list -g shopping-list -m 0700 /var/lib/shopping-list
+sudo install -o shopping-list -g shopping-list -m 0600 /dev/null /var/lib/shopping-list/data.db
+
+sudo cp ops/shopping-list.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now shopping-list</pre>
+
+                <p>With <code>DATABASE_URL="sqlite:///var/lib/shopping-list/data.db"</code>
+                in the settings file. Mind the three slashes: two belong to the URL
+                scheme and the third is the root of an absolute path.</p>
+
+                <h3>The settings are read by systemd, not by the server</h3>
+
+                <p>The unit uses <code>EnvironmentFile=</code>, and that is worth
+                understanding rather than copying. systemd loads the file <strong>as
+                root, before it drops privileges</strong> — so the file holding your
+                Google client secret never has to be readable by the account the
+                server runs as.</p>
+
+                <p>A <code>.env</code> beside the binary is the opposite: the server
+                looks for one starting from its working directory, which puts the
+                secret somewhere anything running as that user can read. Under systemd,
+                keep the settings in <code>/etc</code> and let it hand them over.</p>
+
+                <p>The syntax is close to a <code>.env</code> but not identical — no
+                <code>export</code>, no <code>#</code> comment part-way along a line,
+                and quote any value containing spaces.</p>
+
+                <h3>Claiming it</h3>
+
+                <p>The claim code is printed once at startup, while nobody owns the
+                server:</p>
+
+<pre class="code">sudo journalctl -u shopping-list -n 40</pre>
+
+                <p>It is new on every restart and never stored, so one read out of last
+                month&rsquo;s journal is worth nothing.</p>
+
+                <h3>When it will not start</h3>
+
+                <p>First work out whether the binary ran at all. If the journal holds
+                systemd&rsquo;s own failure line and nothing from the server, it failed
+                before <code>exec</code> and the server never had a chance to
+                speak.</p>
+
+<pre class="code">systemctl status shopping-list -l --no-pager
+systemctl show shopping-list -p Result -p ExecMainStatus -p ExecMainCode</pre>
+
+                <div class="table-scroll">
+                <table class="settings">
+                  <thead>
+                    <tr><th scope="col">Status</th><th scope="col">Server reached?</th><th scope="col">What it means</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>217/USER</td><td>no</td><td>The <code>shopping-list</code> account does not exist.</td></tr>
+                    <tr><td>203/EXEC</td><td>no</td><td>The binary is missing, not executable, or built for another architecture.</td></tr>
+                    <tr><td>200/CHDIR</td><td>no</td><td><code>WorkingDirectory=</code> does not exist.</td></tr>
+                    <tr><td>226/NAMESPACE</td><td>no</td><td>A sandbox directive cannot be applied on this kernel.</td></tr>
+                    <tr><td>&ldquo;Failed to load environment files&rdquo;</td><td>no</td><td><code>/etc/shopping-list/server.env</code> is not there.</td></tr>
+                    <tr><td>1</td><td>yes</td><td>The server ran and refused. Its own reason is the line above in the journal.</td></tr>
+                  </tbody>
+                </table>
+                </div>
+
+                <p>Only the last means the server was reached. A wrong architecture is
+                worth ruling out early — <code>file /usr/local/bin/shopping-list-server</code>
+                should say <code>x86-64</code>, and <code>ldd --version</code> should be
+                <strong>2.28 or newer</strong>.</p>
+
+                <p>To take systemd out of it altogether and hear what the server itself
+                says:</p>
+
+<pre class="code">sudo -u shopping-list env $(sudo cat /etc/shopping-list/server.env | grep -v '^#' | xargs) \
+    /usr/local/bin/shopping-list-server</pre>
+
+                <p>That runs without the sandbox, so a path the service cannot write
+                but your shell can will <em>work</em> here and fail under systemd. If
+                it starts by hand and not as a service, suspect
+                <code>ProtectSystem=strict</code> and the note about
+                <code>/var/lib</code> above.</p>
+
+                <p>To check the unit parses, which catches a directive written into the
+                wrong section:</p>
+
+<pre class="code">systemd-analyze verify /etc/systemd/system/shopping-list.service</pre>
+
+                <p>Once the server is running it refuses to start rather than serve on
+                settings it cannot make sense of — a <code>TLS_MODE</code> it does not
+                recognise, a <code>METRICS_PORT</code> colliding with the
+                application&rsquo;s, a scrape endpoint on the network with no token, a
+                database path that is wrong. Each is one line in the journal. The unit
+                gives up after five attempts in two minutes rather than restarting for
+                ever, because a loop buries that line;
+                <code>systemctl reset-failed shopping-list</code> clears the count once
+                it is fixed.</p>
+
+                <h3>Checking on it</h3>
+
+<pre class="code">systemctl status shopping-list
+journalctl -u shopping-list -f
+curl http://localhost:8080/healthz</pre>
+
+                <p><code>/healthz</code> answers <code>ok</code> and a line saying what
+                TLS is doing, including the certificate authority&rsquo;s own words when
+                an order failed. The plain listener serves it too, so it answers even
+                while handshakes are failing.</p>
+
+                <h2 id="connect">Connecting an app</h2>
+
+                <p>
+                    Install the app and it opens straight onto a list of its
+                    own, with no server. When you have one, put its address in
+                    under <strong>Settings &rarr; Server</strong> — something
+                    like <code>https://lists.example.com</code> — and sign in.
+                    Everything the app was already holding is carried up to the
+                    server, keeping its own names for things, so running the
+                    move twice cannot make a second copy of your shopping.
+                </p>
+
+                <p>
+                    Changing to a <em>different</em> server later signs you out
+                    and clears the lists held on the device, because those
+                    belong to the old one.
+                </p>
+
+                <h3>Things that catch people out</h3>
+
+                <ul>
+                    <li>
+                        <strong
+                            ><code>localhost</code> on a phone means the
+                            phone.</strong
+                        >
+                        Use the address the server prints at startup, and make
+                        sure the phone is on the same network.
+                    </li>
+                    <li>
+                        <strong
+                            >Released apps refuse plain
+                            <code>http://</code>.</strong
+                        >
+                        Every client, not only Android. Development builds keep
+                        a cleartext exception for a server on the same desk; a
+                        shipped one does not, because the token in every request
+                        is a bearer credential and on plain HTTP it travels in
+                        the clear.
+                    </li>
+                    <li>
+                        <strong
+                            >A certificate from your own CA is not trusted just
+                            because you installed it.</strong
+                        >
+                        Android has not trusted user-added authorities for app
+                        traffic since Android 7 — a CA added through Settings is
+                        trusted by the browser and by nothing else. This reads
+                        as &ldquo;the certificate is wrong&rdquo; when what is
+                        wrong is that nobody asked the app to trust it.
+                    </li>
+                    <li>
+                        <strong
+                            >&ldquo;This account may not use this
+                            server&rdquo;</strong
+                        >
+                        means sign-in worked and the address is not admitted.
+                        Add it under Who may sign in and try again.
+                    </li>
+                    <li>
+                        <strong>The watch is set up by the phone.</strong> Open
+                        the app on the paired iPhone once; the watch takes the
+                        address and the sign-in from there. A watch that has
+                        never heard from its phone says so rather than asking
+                        you to type a URL on your wrist.
+                    </li>
+                </ul>
+
+                <h2 id="logs">When something is wrong</h2>
+
+                <p>
+                    Every app can write a log and hand it to you as a zip, under
+                    <strong>Settings &rarr; Diagnostics</strong>. The watch has
+                    no screen for this — its log comes out through the paired
+                    phone.
+                </p>
+
+                <p>There are four levels, and the choice matters:</p>
+
+                <ul>
+                    <li>
+                        <strong>Off</strong> still records failures. That is
+                        what makes a report useful, and it is the setting to
+                        leave it on.
+                    </li>
+                    <li>
+                        <strong>Basic</strong> adds what happened — which
+                        request, how long it took, how big the answer was, how
+                        deep the queue is. No names of lists and nothing on
+                        them.
+                    </li>
+                    <li>
+                        <strong>Detailed</strong> and
+                        <strong>Everything</strong> record the contents of your
+                        lists. The app asks you to confirm before turning either
+                        on, because the log is yours until you send it to
+                        somebody — and then it is theirs.
+                    </li>
+                </ul>
+
+                <p>
+                    The same rule holds on the server, and it is structural
+                    rather than a matter of care: at <code>info</code> and above
+                    the log physically cannot carry the contents of
+                    anybody&rsquo;s list. Turning the server up to
+                    <code>debug</code> prints a warning saying what that now
+                    means.
+                </p>
+
+                <p>
+                    The apps can also report their own timings to an
+                    OpenTelemetry collector you run —
+                    <strong>Settings &rarr; Metrics</strong>, and only when a
+                    server is configured, because a device answering for itself
+                    has nothing to measure and nobody to tell. Nothing about
+                    what is on your lists is included, and nothing is sent at
+                    all until you fill the field in.
+                </p>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <div class="wrap footer-grid">
+                <p class="footer-note">Shopping List · self-hosted</p>
+                <nav class="footer-links" aria-label="Footer">
+                    <a href="index.html">Home</a>
+                    <a href="install.html">Install</a>
+                    <a href="privacy.html">Privacy</a>
+                    <a href="support.html">Support</a>
+                    <!-- Replace with the repository address once it has one. -->
+                    <a href="#">Source</a>
+                </nav>
+            </div>
+        </footer>
+    </body>
 </html>

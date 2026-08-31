@@ -191,106 +191,124 @@ img, svg { max-width: 100%; }
 /* ---- the sheet: the one place paper appears in the hero ---- */
 
 .sheet {
-  background:
-    repeating-linear-gradient(
-      to bottom,
-      transparent 0,
-      transparent calc(var(--sheet-rule) - 1px),
-      var(--rule) calc(var(--sheet-rule) - 1px),
-      var(--rule) var(--sheet-rule)
-    ),
-    linear-gradient(160deg, var(--paper), var(--paper-shade));
-  color: var(--ink);
-  border-radius: 14px;
-  padding: 0 22px 20px;
-  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.28);
-  transform: rotate(-1.1deg);
+  /* The app's own light mode, not a paper metaphor: grouped grey behind white cards,
+     hairline separators, no rules and no rotation. It used to be a tilted cream note
+     with green tick-boxes, which is a nice drawing of a different product -- the app
+     has no checkboxes at all, and marks a category with an emoji beside the name. */
+  background: #F1F1F5;
+  color: #000;
+  border-radius: 22px;
+  padding: 0 0 20px;
+  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.34);
+  --sheet-inset: 12px;
 }
 
+/* The navigation bar: a centred title with the sync dot, between two control pills. */
 .sheet-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: calc(var(--sheet-rule) * 2);
-  border-bottom: 1px solid var(--rule);
-  /* the ruling would otherwise strike through the title */
-  background: var(--paper);
-  margin-inline: -22px;
-  padding-inline: 22px;
-  border-radius: 14px 14px 0 0;
+  gap: 10px;
+  padding: 14px var(--sheet-inset) 16px;
 }
 
 .sheet-title {
-  font-family: var(--mono);
-  font-weight: 700;
-  font-size: 16px;
-  letter-spacing: -0.02em;
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: -0.01em;
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
 
-.sheet-count {
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--ink-soft);
+/* Reachable, and green, exactly as in the app. */
+.sheet-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #34C759;
 }
 
+.sheet-pill {
+  height: 30px;
+  min-width: 42px;
+  border-radius: 15px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #1c1c1e;
+  font-size: 14px;
+}
+
+/* A section label above a card -- "3 items", and "3 done" with its Clear. */
 .sheet-group {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  line-height: var(--sheet-rule);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-family: var(--sans);
+  font-size: 14px;
+  color: #8A8A8E;
   margin: 0;
+  padding: 14px var(--sheet-inset) 7px;
+  text-transform: none;
+  letter-spacing: 0;
+  line-height: 1.3;
 }
 
-.sheet-items { list-style: none; margin: 0; padding: 0; }
+.sheet-clear { color: #FF3B30; }
+
+/* The white card the rows sit in. */
+.sheet-items {
+  list-style: none;
+  margin: 0 var(--sheet-inset);
+  padding: 0;
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+}
 
 .row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  line-height: var(--sheet-rule);
-  height: var(--sheet-rule);
+  gap: 10px;
+  padding: 0 16px;
+  height: 46px;
+  box-sizing: border-box;
 }
 
-.row-box {
-  flex: none;
-  width: 15px;
-  height: 15px;
-  border: 1.5px solid var(--ink-soft);
-  border-radius: 4px;
-  position: relative;
+/* Between rows only, which is what an inset-grouped list does. */
+.row + .row { box-shadow: inset 0 1px 0 rgba(60, 60, 67, 0.16); }
+
+.row-name {
+  flex: 1;
+  font-family: var(--sans);
+  font-size: 16px;
+  color: #000;
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
 
-.row-name { flex: 1; font-size: 16px; }
+/* The category, as the app shows it: an emoji, not a heading over a group. */
+.row-mark { font-size: 14px; }
 
 .row-measure {
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--ink-soft);
+  font-family: var(--sans);
+  font-size: 15px;
+  color: #8A8A8E;
 }
 
-.row.is-done .row-box { background: var(--bag); border-color: var(--bag); }
-
-.row.is-done .row-box::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 4px;
-  height: 8px;
-  border: solid var(--paper);
-  border-width: 0 1.6px 1.6px 0;
-  transform: translateY(-1px) rotate(43deg);
-}
+.row.is-done .row-name { color: #3C3C43; }
 
 .row.is-done .row-name,
 .row.is-done .row-measure {
-  color: var(--ink-soft);
   text-decoration: line-through;
-  text-decoration-color: var(--bag);
-  text-decoration-thickness: 1.5px;
+  text-decoration-color: #8A8A8E;
+  text-decoration-thickness: 1.2px;
 }
 
 /* the added row arrives from the typed line */
@@ -306,7 +324,7 @@ img, svg { max-width: 100%; }
 
 @keyframes arrive {
   from { opacity: 0; height: 0; transform: translateY(-6px); }
-  to   { opacity: 1; height: var(--sheet-rule); transform: none; }
+  to   { opacity: 1; height: 46px; transform: none; }
 }
 
 /* ---- the quick-add line under the sheet ---- */
@@ -539,7 +557,7 @@ img, svg { max-width: 100%; }
 
 @media (max-width: 880px) {
   .hero { grid-template-columns: 1fr; padding-block: 36px 56px; }
-  .sheet { transform: none; order: 2; }
+  .sheet { order: 2; }
   .server-grid { grid-template-columns: 1fr; }
 }
 

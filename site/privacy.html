@@ -27,24 +27,30 @@
 <div class="wrap doc-wrap">
 
 <h1 class="doc-title">Privacy</h1>
-<p class="doc-meta">Last updated 26 August 2026</p>
+<p class="doc-meta">Last updated 29 August 2026</p>
 
 <p>Shopping List is software you run, not a service we operate. That single fact
 decides almost everything below.</p>
 
 <div class="callout">
-<p><strong>The short version.</strong> The apps talk to one server: the one whose
-address you typed in. Nothing is sent to the makers of this app, there is no
-analytics of any kind, and this website makes no third-party requests and sets no
+<p><strong>The short version.</strong> Until you enter a server address the app sends
+nothing anywhere — your lists are a file on your device. Once you enter one, the apps
+talk to that server and nowhere else. Nothing is sent to the makers of this app, there
+is no analytics of any kind, and this website makes no third-party requests and sets no
 cookies.</p>
 </div>
 
 <h2>Who is responsible for your data</h2>
 
-<p>Your lists live on a server that somebody runs. Under UK and EU data protection
-law that person is the <strong>controller</strong> of everything on it.</p>
+<p>Your lists live on a server that somebody runs — unless you have not set one up, in
+which case they live only on your device and nobody else holds them at all. Where there
+is a server, under UK and EU data protection law the person running it is the
+<strong>controller</strong> of everything on it.</p>
 
 <ul>
+  <li><strong>If you use no server</strong>, there is no controller but you. The lists
+    are in a file inside the app on your device, they are not sent anywhere, and they go
+    when the app does.</li>
   <li><strong>If you run the server</strong>, you are the controller. The data is in a
     single SQLite file on your machine, and nobody else — including us — can reach it.</li>
   <li><strong>If somebody invited you onto their server</strong>, they are the
@@ -57,21 +63,37 @@ hold keys to anybody else's.</p>
 
 <h2>What the apps send, and where</h2>
 
-<p>Each app asks for a server address the first time it opens and stores it in the
-app's settings, where you can change it later. All requests go to that address and
-nowhere else. There is no fallback server, no telemetry endpoint and no
-&ldquo;phone home&rdquo; on launch.</p>
+<p>With no server configured, nothing leaves the device. The app runs the server's own
+code locally against a file of its own, which is why it is fully featured offline rather
+than a reduced version of itself.</p>
+
+<p>When you enter a server address it is stored in the app's settings, where you can
+change it later, and all requests go to that address and nowhere else. There is no
+fallback server, no default endpoint and no &ldquo;phone home&rdquo; on launch.</p>
+
+<p>There is one endpoint you can add yourself: under <strong>Settings &rarr;
+Metrics</strong> the app can report its own timings — how long requests take, how deep
+the queue is, how often syncing fails — to an OpenTelemetry collector <em>you</em>
+name. It is empty by default, nothing is sent until you fill it in, the field is offered
+only when a server is configured, and nothing about the contents of your lists is
+included.</p>
 
 <h2>Signing in</h2>
 
-<p>Sign-in uses <strong>Google Sign-In</strong>. Google verifies who you are and issues a
-token that the app passes to your server; the app never sees or stores a password. Your
-use of Google Sign-In is covered by
-<a href="https://policies.google.com/privacy" rel="noopener">Google's privacy policy</a>.</p>
+<p>Signing in happens only if you use a server. On iPhone, iPad, Mac and Apple Watch it
+is <strong>Sign in with Apple</strong>; on Android and in a web browser it is
+<strong>Google Sign-In</strong>. Either way the provider verifies who you are and issues
+a token that the app passes to your server, and the app never sees or stores a password.
+Your use of them is covered by
+<a href="https://www.apple.com/legal/privacy/" rel="noopener">Apple's privacy policy</a>
+and
+<a href="https://policies.google.com/privacy" rel="noopener">Google's privacy policy</a>
+respectively.</p>
 
-<p>From that token the server records the Google account identifier, and your email
-address and display name where Google supplies them. The email address is what a server
-operator uses to decide who may sign in.</p>
+<p>From that token the server records the account identifier the provider issued, and
+your email address and display name where the provider supplies them. The email address
+is what a server operator uses to decide who may sign in. Apple lets you hide your real
+address, and a relay address works here exactly like any other.</p>
 
 <h2>What the server stores</h2>
 
@@ -90,14 +112,28 @@ operator's business.</p>
 <h2>What stays on your device</h2>
 
 <ul>
-  <li>The server address you entered</li>
+  <li>With no server: your lists themselves, in a database file inside the app</li>
+  <li>The server address you entered, if you entered one</li>
   <li>Your sign-in credential, held by the operating system's keychain or credential
     manager — not by this app</li>
-  <li>A copy of the lists and items you last loaded, so the app still shows them with no
-    connection</li>
+  <li>A copy of the lists and items last loaded, so the app works with no connection,
+    together with any changes waiting to go up</li>
+  <li>A diagnostic log, only if you turn one on — see below</li>
 </ul>
 
 <p>Signing out or changing the server address clears the cached copy.</p>
+
+<h2>Diagnostic logs</h2>
+
+<p>Logging is off by default, and even off the app records its own failures so that a
+report is worth reading. At that setting, and at <strong>Basic</strong>, the log
+contains no list names and nothing on them.</p>
+
+<p><strong>Detailed</strong> and <strong>Everything</strong> do record the contents of
+your lists. The app warns you before it will turn either on. The log never leaves the
+device on its own — it is written to a file you can delete, and it goes somewhere else
+only when you export it and send it to somebody. If you do, you are sending them your
+shopping.</p>
 
 <h2>What we do not do</h2>
 
@@ -106,7 +142,8 @@ operator's business.</p>
   <li>No advertising, and no advertising identifiers</li>
   <li>No selling or sharing of personal data, and nothing that would count as
     &ldquo;sharing&rdquo; for targeted advertising under any privacy law</li>
-  <li>No third-party SDK other than Google Sign-In</li>
+  <li>No third-party SDK other than Google Sign-In on Android and in the browser.
+    Sign in with Apple is part of the operating system.</li>
 </ul>
 
 <h2>This website</h2>

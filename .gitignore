@@ -3,6 +3,7 @@ target/
 *.db-shm
 *.db-wal
 .env
+worktrees
 
 # Built releases. Signed artifacts, and large.
 release/out/

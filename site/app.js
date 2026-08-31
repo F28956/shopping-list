@@ -15,7 +15,7 @@
     arriving.classList.add("is-arrived");
     if (caret) caret.style.display = "none";
     var count = document.getElementById("count");
-    if (count) count.textContent = "7 items";
+    if (count) count.textContent = "4 items";
   }
 
   if (still) {

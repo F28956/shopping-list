@@ -1,255 +1,406 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shopping List — your list, your server</title>
-<meta name="description" content="A shopping list for iPhone, Android, Mac, Apple Watch and the browser that runs on a server you own. You decide who signs in, and the list never leaves it.">
-<meta name="color-scheme" content="dark">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon-180.png">
-<link rel="stylesheet" href="styles.css">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Shopping List — your list, your server</title>
+        <meta
+            name="description"
+            content="A shopping list for iPhone, Android, Mac, Apple Watch and the browser that runs on a server you own. You decide who signs in, and the list never leaves it."
+        />
+        <meta name="color-scheme" content="dark" />
+        <link rel="icon" href="icon.svg" type="image/svg+xml" />
+        <link rel="apple-touch-icon" href="icon-180.png" />
+        <link rel="stylesheet" href="styles.css" />
 
-<meta property="og:title" content="Shopping List — your list, your server">
-<meta property="og:description" content="A shopping list that runs on a server you own. iPhone, Android, Mac, Apple Watch and any browser.">
-<meta property="og:type" content="website">
-<meta property="og:image" content="social.png">
-<!-- Set og:url and the canonical link once the site has its address. -->
-</head>
-<body>
-<a class="skip" href="#main">Skip to content</a>
+        <meta
+            property="og:title"
+            content="Shopping List — your list, your server"
+        />
+        <meta
+            property="og:description"
+            content="A shopping list that runs on a server you own. iPhone, Android, Mac, Apple Watch and any browser."
+        />
+        <meta property="og:type" content="website" />
+        <meta property="og:image" content="social.png" />
+        <!-- Set og:url and the canonical link once the site has its address. -->
+    </head>
+    <body>
+        <a class="skip" href="#main">Skip to content</a>
 
-<header class="wrap masthead">
-  <img class="masthead-mark" src="icon.svg" alt="" width="38" height="38">
-  <p class="masthead-name">Shopping&nbsp;List</p>
-  <nav class="masthead-nav" aria-label="Site">
-    <a href="install.html">Install</a>
-    <a href="support.html">Support</a>
-    <a href="privacy.html">Privacy</a>
-  </nav>
-</header>
+        <header class="wrap masthead">
+            <img
+                class="masthead-mark"
+                src="icon.svg"
+                alt=""
+                width="38"
+                height="38"
+            />
+            <p class="masthead-name">Shopping&nbsp;List</p>
+            <nav class="masthead-nav" aria-label="Site">
+                <a href="install.html">Install</a>
+                <a href="support.html">Support</a>
+                <a href="privacy.html">Privacy</a>
+            </nav>
+        </header>
 
-<main id="main">
+        <main id="main">
+            <section class="wrap hero">
+                <div>
+                    <h1 class="hero-title">
+                        <span>Your list.</span>
+                        <span class="dim">Your server.</span>
+                    </h1>
+                    <p class="hero-lede">
+                        A shopping list for the phone in the shop, the laptop at
+                        the kitchen table and the watch on your wrist. It
+                        <strong>works the moment you open it</strong>, with no
+                        account and no server to set up. Run a server when you
+                        want the list on more than one device — a machine you
+                        own, where you decide who signs in and the list never
+                        leaves.
+                    </p>
 
-  <section class="wrap hero">
-    <div>
-      <h1 class="hero-title">
-        <span>Your list.</span>
-        <span class="dim">Your server.</span>
-      </h1>
-      <p class="hero-lede">
-        A shopping list for the phone in the shop, the laptop at the kitchen table
-        and the watch on your wrist. There is <strong>no account with us</strong>,
-        because there is no us — it runs on a machine you own, you decide who signs
-        in, and the list never leaves it.
-      </p>
+                    <ul class="stores">
+                        <!-- Replace href and drop is-pending once each listing is live. -->
+                        <li>
+                            <span class="store is-pending">
+                                <span class="store-kicker">Coming soon</span>
+                                <span class="store-name">App Store</span>
+                            </span>
+                        </li>
+                        <li>
+                            <span class="store is-pending">
+                                <span class="store-kicker">Coming soon</span>
+                                <span class="store-name">Google Play</span>
+                            </span>
+                        </li>
+                    </ul>
+                    <p class="stores-note">
+                        Or <a href="install.html">run the server</a> and open it
+                        in any browser. There is
+                        <strong>no account with us</strong>, because there is no
+                        us.
+                    </p>
+                </div>
 
-      <ul class="stores">
-        <!-- Replace href and drop is-pending once each listing is live. -->
-        <li>
-          <span class="store is-pending">
-            <span class="store-kicker">Coming soon</span>
-            <span class="store-name">App Store</span>
-          </span>
-        </li>
-        <li>
-          <span class="store is-pending">
-            <span class="store-kicker">Coming soon</span>
-            <span class="store-name">Google Play</span>
-          </span>
-        </li>
-      </ul>
-      <p class="stores-note">Or <a href="install.html">run the server</a> and open it in any browser.</p>
-    </div>
+                <div>
+                    <div class="sheet">
+                        <div class="sheet-head">
+                            <span class="sheet-pill" aria-hidden="true"
+                                >&lsaquo;</span
+                            >
+                            <h2 class="sheet-title">
+                                Shop
+                                <span
+                                    class="sheet-dot"
+                                    aria-hidden="true"
+                                ></span>
+                            </h2>
+                            <span class="sheet-pill" aria-hidden="true"
+                                >&#8593;&#8595;</span
+                            >
+                        </div>
 
-    <div>
-      <div class="sheet">
-        <div class="sheet-head">
-          <h2 class="sheet-title">Weekly shop</h2>
-          <span class="sheet-count" id="count">6 items</span>
-        </div>
+                        <p class="sheet-group">
+                            <span id="count">3 items</span>
+                        </p>
 
-        <p class="sheet-group">Produce</p>
-        <ul class="sheet-items">
-          <li class="row is-arriving" id="arriving">
-            <span class="row-box"></span>
-            <span class="row-name">apples</span>
-            <span class="row-measure">2 kg</span>
-          </li>
-          <li class="row">
-            <span class="row-box"></span>
-            <span class="row-name">potatoes</span>
-            <span class="row-measure">1 kg</span>
-          </li>
-        </ul>
+                        <ul class="sheet-items">
+                            <li class="row is-arriving" id="arriving">
+                                <span class="row-name"
+                                    >Apples
+                                    <span class="row-mark" aria-hidden="true"
+                                        >🍎</span
+                                    ></span
+                                >
+                                <span class="row-measure">2 kg</span>
+                            </li>
+                            <li class="row">
+                                <span class="row-name"
+                                    >Bag
+                                    <span class="row-mark" aria-hidden="true"
+                                        >🏠</span
+                                    ></span
+                                >
+                                <span class="row-measure">1 unit</span>
+                            </li>
+                            <li class="row">
+                                <span class="row-name"
+                                    >Onions
+                                    <span class="row-mark" aria-hidden="true"
+                                        >🏠</span
+                                    ></span
+                                >
+                                <span class="row-measure">3 unit</span>
+                            </li>
+                            <li class="row">
+                                <span class="row-name"
+                                    >Milk
+                                    <span class="row-mark" aria-hidden="true"
+                                        >🥛</span
+                                    ></span
+                                >
+                                <span class="row-measure">2 L</span>
+                            </li>
+                        </ul>
 
-        <p class="sheet-group">Bakery</p>
-        <ul class="sheet-items">
-          <li class="row is-done">
-            <span class="row-box"></span>
-            <span class="row-name">bread</span>
-            <span class="row-measure">800 g</span>
-          </li>
-        </ul>
+                        <p class="sheet-group">
+                            3 done <span class="sheet-clear">Clear</span>
+                        </p>
 
-        <p class="sheet-group">Chilled</p>
-        <ul class="sheet-items">
-          <li class="row">
-            <span class="row-box"></span>
-            <span class="row-name">milk</span>
-            <span class="row-measure">2 L</span>
-          </li>
-          <li class="row is-done">
-            <span class="row-box"></span>
-            <span class="row-name">butter</span>
-            <span class="row-measure">250 g</span>
-          </li>
-          <li class="row">
-            <span class="row-box"></span>
-            <span class="row-name">eggs</span>
-            <span class="row-measure">6</span>
-          </li>
-        </ul>
-      </div>
+                        <ul class="sheet-items">
+                            <li class="row is-done">
+                                <span class="row-name"
+                                    >Banana
+                                    <span class="row-mark" aria-hidden="true"
+                                        >🍎</span
+                                    ></span
+                                >
+                                <span class="row-measure">5 unit</span>
+                            </li>
+                            <li class="row is-done">
+                                <span class="row-name">Lemons</span>
+                                <span class="row-measure">2 unit</span>
+                            </li>
+                            <li class="row is-done">
+                                <span class="row-name"
+                                    >Potatoes
+                                    <span class="row-mark" aria-hidden="true"
+                                        >🥬</span
+                                    ></span
+                                >
+                                <span class="row-measure">2 kg</span>
+                            </li>
+                        </ul>
+                    </div>
 
-      <p class="quickadd" aria-hidden="true">
-        <span class="quickadd-prompt">+</span>
-        <span class="quickadd-typed" id="typed"></span><span class="quickadd-caret" id="caret"></span>
-      </p>
-      <p class="quickadd-hint">One typed line becomes a name, an amount and a unit.</p>
-    </div>
-  </section>
+                    <p class="quickadd" aria-hidden="true">
+                        <span class="quickadd-prompt">+</span>
+                        <span class="quickadd-typed" id="typed"></span
+                        ><span class="quickadd-caret" id="caret"></span>
+                    </p>
+                    <p class="quickadd-hint">
+                        One typed line becomes a name, an amount and a unit.
+                    </p>
+                </div>
+            </section>
 
-  <section class="band band-paper">
-    <div class="wrap">
-      <h2 class="band-title">What it actually does</h2>
-      <p class="band-lede">
-        A shopping list is a small idea. These are the parts worth building carefully.
-      </p>
-    </div>
-    <div class="features">
-      <article class="feature">
-        <h3 class="feature-title">Type the line, get the item</h3>
-        <p class="feature-body">
-          <code>2 kg apples</code> is one line, not three fields. The number, the unit
-          and the name are read apart on the server — so the browser, the phone and the
-          watch all agree on what you meant.
-        </p>
-      </article>
-      <article class="feature">
-        <h3 class="feature-title">It remembers what you buy</h3>
-        <p class="feature-body">
-          Add something once and it comes back measured and filed. Suggestions fade on a
-          thirty-day half-life, so December's mulled wine stops leading the list in June.
-        </p>
-      </article>
-      <article class="feature">
-        <h3 class="feature-title">Ordered like the shop</h3>
-        <p class="feature-body">
-          Categories carry the order you actually walk — perimeter first, frozen last.
-          Aisle numbers would be more precise and are deliberately not used: they differ
-          by branch and change without warning.
-        </p>
-      </article>
-      <article class="feature">
-        <h3 class="feature-title">The list you last saw</h3>
-        <p class="feature-body">
-          Open the app with no signal and the last list is still there, and says so.
-          Adding and ticking off still need the server to be reachable.
-        </p>
-      </article>
-      <article class="feature">
-        <h3 class="feature-title">A link that spends itself</h3>
-        <p class="feature-body">
-          Share a list with one link, good for one person and seven days. Only its hash
-          is stored, so a leaked backup hands out nothing.
-        </p>
-      </article>
-      <article class="feature">
-        <h3 class="feature-title">Your own units and aisles</h3>
-        <p class="feature-body">
-          Units and categories belong to the server, not to a list — renaming one renames
-          it everywhere, and nobody's kilogram is different from anybody else's.
-        </p>
-      </article>
-    </div>
-  </section>
+            <section class="band band-paper">
+                <div class="wrap">
+                    <h2 class="band-title">What it actually does</h2>
+                    <p class="band-lede">
+                        A shopping list is a small idea. These are the parts
+                        worth building carefully.
+                    </p>
+                </div>
+                <div class="features">
+                    <article class="feature">
+                        <h3 class="feature-title">
+                            Type the line, get the item
+                        </h3>
+                        <p class="feature-body">
+                            <code>2 kg apples</code> is one line, not three
+                            fields. The number, the unit and the name are read
+                            apart on the server — so the browser, the phone and
+                            the watch all agree on what you meant.
+                        </p>
+                    </article>
+                    <article class="feature">
+                        <h3 class="feature-title">It remembers what you buy</h3>
+                        <p class="feature-body">
+                            Add something once and it comes back measured and
+                            filed. Suggestions fade on a thirty-day half-life,
+                            so December's mulled wine stops leading the list in
+                            June.
+                        </p>
+                    </article>
+                    <article class="feature">
+                        <h3 class="feature-title">Ordered like the shop</h3>
+                        <p class="feature-body">
+                            Categories carry the order you actually walk —
+                            produce first, frozen last. Aisle numbers would be
+                            more precise and are deliberately not used: they
+                            differ by shopping center branch and change without
+                            warning.
+                        </p>
+                    </article>
+                    <article class="feature">
+                        <h3 class="feature-title">
+                            A shop is a basement with no signal
+                        </h3>
+                        <p class="feature-body">
+                            Add things and tick them off with no bars at all.
+                            The changes queue on the device and go up when you
+                            surface — and a tick you made offline is not undone
+                            by a stale answer from the server on the way back.
+                        </p>
+                    </article>
+                    <article class="feature">
+                        <h3 class="feature-title">
+                            Useful before you decide anything
+                        </h3>
+                        <p class="feature-body">
+                            With no server configured the app keeps its own list
+                            on the device — the same parsing, the same
+                            categories, the same history, because it is running
+                            the server's own code locally. Point it at a real
+                            server later and everything you already had goes
+                            with you.
+                        </p>
+                    </article>
+                    <article class="feature">
+                        <h3 class="feature-title">A link that spends itself</h3>
+                        <p class="feature-body">
+                            Share a list with one link, good for one person and
+                            seven days. Only its hash is stored, so a leaked
+                            backup hands out nothing.
+                        </p>
+                    </article>
+                    <article class="feature">
+                        <h3 class="feature-title">
+                            Your own units and categories
+                        </h3>
+                        <p class="feature-body">
+                            Units and categories belong to the server, not to a
+                            list — renaming one renames it everywhere, and
+                            nobody's kilogram is different from anybody else's.
+                        </p>
+                    </article>
+                </div>
+            </section>
 
-  <section class="band">
-    <div class="wrap server-grid">
-      <div>
-        <h2 class="band-title">Whose server?</h2>
-        <p class="band-lede">
-          Yours. One binary and one SQLite file, serving the browser and every app from
-          the same process. Sign-in is Google's, so there is no password here to lose —
-          but who may use the server is your decision, not Google's.
-        </p>
-        <ol class="steps">
-          <li class="step">
-            <span class="step-mark">01</span>
-            <div>
-              <p class="step-title">Run it somewhere you trust</p>
-              <p class="step-body">A spare machine, a home server, a small VPS. It binds
-                one port and keeps one file.</p>
+            <section class="band">
+                <div class="wrap server-grid">
+                    <div>
+                        <h2 class="band-title">Whose server?</h2>
+                        <p class="band-lede">
+                            Yours, if you want one. A server is what puts one
+                            list on several devices and in somebody else's hands
+                            — until then the app needs no server at all.
+                        </p>
+                        <p class="band-lede">
+                            It is one binary and one SQLite file, serving the
+                            browser and every app from the same process, and it
+                            can get its own HTTPS certificate. Sign-in is
+                            Apple's on Apple devices and Google's in the browser
+                            and on Android, so there is no password here to lose
+                            — but who may use the server is your decision, and
+                            neither of theirs.
+                        </p>
+                        <ol class="steps">
+                            <li class="step">
+                                <span class="step-mark">01</span>
+                                <div>
+                                    <p class="step-title">
+                                        Run it somewhere you trust
+                                    </p>
+                                    <p class="step-body">
+                                        A spare machine, a home server, a small
+                                        VPS. It binds one port and keeps one
+                                        file.
+                                    </p>
+                                </div>
+                            </li>
+                            <li class="step">
+                                <span class="step-mark">02</span>
+                                <div>
+                                    <p class="step-title">
+                                        Sign in and claim it
+                                    </p>
+                                    <p class="step-body">
+                                        It prints a claim code at startup, where
+                                        you are already looking. Whoever signs
+                                        in with that code owns the server — so a
+                                        port that is public for a minute does
+                                        not cost you the box.
+                                    </p>
+                                </div>
+                            </li>
+                            <li class="step">
+                                <span class="step-mark">03</span>
+                                <div>
+                                    <p class="step-title">
+                                        Say who else may in
+                                    </p>
+                                    <p class="step-body">
+                                        Everyone else is a stranger until you
+                                        name them. Take an address off the list
+                                        and the session ends on the next
+                                        request.
+                                    </p>
+                                </div>
+                            </li>
+                            <li class="step">
+                                <span class="step-mark">04</span>
+                                <div>
+                                    <p class="step-title">
+                                        Point the apps at it
+                                    </p>
+                                    <p class="step-body">
+                                        Enter the address under Settings &rarr;
+                                        Server. What the app already had is
+                                        carried over.
+                                        <a href="install.html"
+                                            >Full instructions</a
+                                        >.
+                                    </p>
+                                </div>
+                            </li>
+                        </ol>
+                    </div>
+
+                    <div>
+                        <h2 class="band-title">Everywhere you shop</h2>
+                        <p class="band-lede">
+                            One server, one list, six ways in.
+                        </p>
+                        <ul class="plainlist">
+                            <li>
+                                <span>iPhone</span>
+                                <span class="muted">iOS</span>
+                            </li>
+                            <li>
+                                <span>iPad</span>
+                                <span class="muted">iPadOS</span>
+                            </li>
+                            <li>
+                                <span>Mac</span>
+                                <span class="muted">native app</span>
+                            </li>
+                            <li>
+                                <span>Apple Watch</span>
+                                <span class="muted">asks the paired phone</span>
+                            </li>
+                            <li>
+                                <span>Android phone</span>
+                                <span class="muted">Kotlin and Compose</span>
+                            </li>
+                            <li>
+                                <span>Any browser</span>
+                                <span class="muted"
+                                    >works without JavaScript</span
+                                >
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <div class="wrap footer-grid">
+                <p class="footer-note">Shopping List · self-hosted</p>
+                <nav class="footer-links" aria-label="Footer">
+                    <a href="install.html">Install</a>
+                    <a href="privacy.html">Privacy</a>
+                    <a href="support.html">Support</a>
+                    <!-- Replace with the repository address once it has one. -->
+                    <a href="#">Source</a>
+                </nav>
             </div>
-          </li>
-          <li class="step">
-            <span class="step-mark">02</span>
-            <div>
-              <p class="step-title">Sign in and claim it</p>
-              <p class="step-body">The first person through the door owns the server.</p>
-            </div>
-          </li>
-          <li class="step">
-            <span class="step-mark">03</span>
-            <div>
-              <p class="step-title">Say who else may in</p>
-              <p class="step-body">Everyone else is a stranger until you name them.
-                Take an address off the list and the session ends on the next request.</p>
-            </div>
-          </li>
-          <li class="step">
-            <span class="step-mark">04</span>
-            <div>
-              <p class="step-title">Point the apps at it</p>
-              <p class="step-body">Each app asks for the server address the first time it
-                opens, and keeps it in settings where you can change it later.
-                <a href="install.html">Full instructions</a>.</p>
-            </div>
-          </li>
-        </ol>
-      </div>
+        </footer>
 
-      <div>
-        <h2 class="band-title">Everywhere you shop</h2>
-        <p class="band-lede">One server, one list, six ways in.</p>
-        <ul class="plainlist">
-          <li><span>iPhone</span> <span class="muted">iOS</span></li>
-          <li><span>iPad</span> <span class="muted">iPadOS</span></li>
-          <li><span>Mac</span> <span class="muted">native app</span></li>
-          <li><span>Apple Watch</span> <span class="muted">asks the paired phone</span></li>
-          <li><span>Android phone</span> <span class="muted">Kotlin and Compose</span></li>
-          <li><span>Any browser</span> <span class="muted">works without JavaScript</span></li>
-        </ul>
-      </div>
-    </div>
-  </section>
-
-</main>
-
-<footer class="footer">
-  <div class="wrap footer-grid">
-    <p class="footer-note">Shopping List · self-hosted</p>
-    <nav class="footer-links" aria-label="Footer">
-      <a href="install.html">Install</a>
-      <a href="privacy.html">Privacy</a>
-      <a href="support.html">Support</a>
-      <!-- Replace with the repository address once it has one. -->
-      <a href="#">Source</a>
-    </nav>
-  </div>
-</footer>
-
-<script src="app.js"></script>
-</body>
+        <script src="app.js"></script>
+    </body>
 </html>
