@@ -12,15 +12,22 @@
 # account is a machine where that is sometimes the wrong one. `GITHUB_TOKEN` belongs to
 # the repository and cannot be the wrong account.
 #
-# ## Why a container
+# ## Why two jobs
 #
-# `ubuntu-latest` is Ubuntu 24.04, whose glibc is 2.39 — and a binary built against a
-# glibc is refused by anything older. Building there would produce a server that will
-# not start on Debian 12 or Ubuntu 22.04, failing at exec with a message naming a
-# version, which is a miserable thing to hand somebody.
+# They need different machines, and trying to do both on one is what broke the first
+# version of this file.
 #
-# 22.04 has glibc 2.35 and covers everything current. It is a floor chosen on purpose;
-# raising it should be a decision rather than a side effect of a runner image moving.
+# The **build** runs in an `ubuntu:22.04` container. `ubuntu-latest` is Ubuntu 24.04,
+# whose glibc is 2.39, and a binary is refused by anything older than the glibc it was
+# built against — so building on the runner directly produces a server that will not
+# start on Debian 12 or Ubuntu 22.04, failing at exec with a message naming a version.
+# 22.04 gives 2.35, which covers everything current, and it is pinned so that the floor
+# is a decision rather than a side effect of a runner image moving.
+#
+# The **release** runs on the plain runner, because that is where `gh` is. The GitHub
+# CLI is part of the runner *image*, not of any container you ask it to run in, so a
+# `gh` call inside the container fails with "gh: not found" — after a full build, which
+# is the expensive place to find out.
 
 name: Release
 
@@ -39,19 +46,26 @@ permissions:
   contents: write
 
 jobs:
-  server:
+  build:
     runs-on: ubuntu-latest
     container: ubuntu:22.04
+    outputs:
+      floor: ${{ steps.package.outputs.floor }}
+      described: ${{ steps.package.outputs.described }}
 
     steps:
       - name: Tools the container does not have
         run: |
           apt-get update
-          # curl and git for the checkout, build-essential and cmake for the three
-          # dependencies here that compile C rather than Rust -- aws-lc-sys, ring and
-          # libsqlite3-sys, which builds SQLite itself rather than linking the box's.
+          # build-essential and cmake for the three dependencies here that compile C
+          # rather than Rust -- aws-lc-sys, ring, and libsqlite3-sys, which builds
+          # SQLite itself rather than linking the box's.
+          #
+          # `file` is its own package and is not pulled in by any of the others, which
+          # is what broke the first version of this workflow. `readelf` needs no line
+          # of its own: binutils comes with build-essential.
           apt-get install -y --no-install-recommends \
-            curl ca-certificates git build-essential cmake pkg-config
+            curl ca-certificates git build-essential cmake pkg-config file
 
       - uses: actions/checkout@v4
 
@@ -89,17 +103,42 @@ jobs:
           # Read out of the file rather than assumed. A binary that is quietly the wrong
           # architecture, or wants a newer glibc than intended, is caught here and not by
           # somebody's server refusing to exec it.
-          echo "### Server" >> "$GITHUB_STEP_SUMMARY"
-          file shopping-list-server >> "$GITHUB_STEP_SUMMARY"
+          described=$(file -b shopping-list-server)
           floor=$(readelf -V shopping-list-server | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)
-          echo "needs $floor or newer" >> "$GITHUB_STEP_SUMMARY"
+
+          {
+            echo "### Server"
+            echo "\`$described\`"
+            echo ""
+            echo "Needs **$floor** or newer."
+          } >> "$GITHUB_STEP_SUMMARY"
+
           echo "floor=$floor" >> "$GITHUB_OUTPUT"
+          echo "described=$described" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-x86_64-linux
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    # No container: `gh` lives on the runner image.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: server-x86_64-linux
+          path: dist
 
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
-          FLOOR: ${{ steps.package.outputs.floor }}
+          FLOOR: ${{ needs.build.outputs.floor }}
+          REPO: ${{ github.repository }}
         run: |
           notes=$(cat <<EOF
           The server, for x86_64 Linux.
@@ -111,14 +150,14 @@ jobs:
           scp shopping-list-server you@your-server:/tmp/
           \`\`\`
 
-          Then follow [running it as a service](https://github.com/F28956/shopping-list/blob/main/ops/README.md).
+          Then follow [running it as a service](https://github.com/$REPO/blob/main/ops/README.md).
           Nothing else is needed: SQLite is compiled in, and TLS does not use the system OpenSSL.
           EOF
           )
-          # `--clobber`, so re-running this for a tag replaces the file rather than
-          # failing halfway and leaving a release with no binary on it.
-          gh release create "$TAG" --title "$TAG" --notes "$notes" 2>/dev/null \
-            || echo "release $TAG already exists; uploading to it"
+          # Created only if it is not already there, so re-running this for a tag
+          # replaces the files rather than failing and leaving a release with none.
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "$TAG" --notes "$notes"
           gh release upload "$TAG" \
             dist/shopping-list-server \
             dist/shopping-list-server.sha256 \
