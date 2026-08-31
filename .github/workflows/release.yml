@@ -104,13 +104,16 @@ jobs:
           # architecture, or wants a newer glibc than intended, is caught here and not by
           # somebody's server refusing to exec it.
           described=$(file -b shopping-list-server)
-          floor=$(readelf -V shopping-list-server | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)
+          # The number alone. `readelf` says GLIBC_2.34, and "GLIBC_2.34 or newer" reads
+          # badly in a release note somebody is skimming.
+          floor=$(readelf -V shopping-list-server \
+            | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1 | sed 's/^GLIBC_//')
 
           {
             echo "### Server"
             echo "\`$described\`"
             echo ""
-            echo "Needs **$floor** or newer."
+            echo "Needs **glibc $floor** or newer."
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "floor=$floor" >> "$GITHUB_OUTPUT"
@@ -143,7 +146,7 @@ jobs:
           notes=$(cat <<EOF
           The server, for x86_64 Linux.
 
-          Needs **$FLOOR or newer** — Ubuntu 22.04, Debian 12, RHEL 9 and anything since.
+          Needs **glibc $FLOOR or newer** — Ubuntu 22.04, Debian 12, RHEL 9 and anything since.
           \`ldd --version\` on the box answers that before you copy anything.
 
           \`\`\`
@@ -156,9 +159,14 @@ jobs:
           )
           # Created only if it is not already there, so re-running this for a tag
           # replaces the files rather than failing and leaving a release with none.
-          gh release view "$TAG" >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "$TAG" --notes "$notes"
-          gh release upload "$TAG" \
+          # `--repo` on every call, because this job has no checkout: it downloads an
+          # artifact and nothing else. Without it `gh` looks for a git remote to work
+          # out which repository is meant, finds no repository at all, and fails with
+          # "not a git repository" -- which sounds like a checkout problem and is
+          # really a missing flag.
+          gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes "$notes"
+          gh release upload "$TAG" --repo "$REPO" \
             dist/shopping-list-server \
             dist/shopping-list-server.sha256 \
             --clobber
