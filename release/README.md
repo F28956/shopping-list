@@ -115,6 +115,57 @@ answers the question before you copy anything.
 Copying it over is `scp` and nothing else: it is one file, and the database, the
 `.env` and the certificate cache all live beside it wherever you put it.
 
+## Cutting a release on GitHub
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+That is the whole of it. `.github/workflows/release.yml` runs the workspace tests,
+builds the server, creates the release and attaches the binary with its `sha256`.
+Actions is free for public repositories on standard runners with no minute limit, and
+this uses nothing else.
+
+`workflow_dispatch` builds a release without cutting a tag, for when the workflow
+itself is what is being changed.
+
+### Why not from here
+
+`release/server-linux.sh` still exists and still works, and uploading its output by
+hand needs a `gh` logged in as somebody who can write to this repository. On a machine
+with more than one GitHub account that is a thing to check rather than assume:
+
+```bash
+gh api repos/F28956/shopping-list --jq .permissions
+```
+
+`"push": false` means the active account is the wrong one. `gh auth login` adds
+another, and `gh auth switch` moves between them. Then:
+
+```bash
+release/server-linux.sh
+gh release create v0.1.0 --generate-notes release/out/server/shopping-list-server
+```
+
+The workflow has neither problem: `GITHUB_TOKEN` belongs to the repository and cannot
+be the wrong account.
+
+### The glibc floor is a decision
+
+The workflow builds inside an `ubuntu:22.04` container rather than on the runner
+directly. `ubuntu-latest` is 24.04, whose glibc is 2.39, and a binary is refused by
+anything older than the glibc it was built against — so building on the runner would
+produce a server that will not start on Debian 12 or Ubuntu 22.04, failing at exec
+with a message naming a version.
+
+22.04 gives 2.35, which covers everything current. Raising that should be a decision
+somebody makes rather than a side effect of a runner image moving, which is why the
+container is pinned and the workflow prints the floor into the job summary.
+
+The Mac cross-build produces 2.28, which is broader still — that toolchain targets an
+older glibc than any Ubuntu ships.
+
 ## Build numbers
 
 `versionCode` on Android and `CURRENT_PROJECT_VERSION` on Apple both come from
