@@ -1,8 +1,76 @@
 # Shopping list, on a phone
 
-A SwiftUI app over the same API the web UI uses. It is a client and nothing more:
-every rule about who may see or change what lives in `domain::service`, and this app
-gets the same answers as the browser because it asks the same questions.
+Three SwiftUI apps — iPhone, Apple Watch and a native Mac app — over the same rules the
+web UI uses. Every decision about who may see or change what lives in `domain::service`,
+and these apps get the same answers as the browser because they ask the same questions:
+over HTTP when there is a server, and of `domain` compiled into the app itself when there
+is not.
+
+## Layout
+
+Seven source directories and a set of Rust libraries, and which targets compile what is
+the whole design. `project.yml` is the source of truth — the `.xcodeproj` is generated
+from it and not committed, because a `.pbxproj` reviews badly and conflicts worse.
+
+| Directory | Compiled into | Holds |
+|---|---|---|
+| `Shared/Sources` | phone, watch, Mac | Models, the `Backend` protocol, the HTTP client, quick-add, grouping, the server address, diagnostics |
+| `Store/Sources` | phone, Mac (**not** the watch) | The cache, the outbox, and the device's own server |
+| `Auth/Sources` | phone, watch, Mac | Sign in with Apple, and the keychain the token lives in |
+| `UI/Sources` | phone, Mac | The view models and every screen both platforms share |
+| `ShoppingList/Sources` | phone | The iOS app: its `App`, its list rows, and the link to the watch |
+| `Mac/Sources` | Mac | The Mac app: split view, context menus, an add field under the list |
+| `ShoppingListWatch/Sources` | watch | The watch app, which shares models and auth but not views |
+| `Parser` | all three | `include/` — committed C headers and the module map. `lib/<platform>/` — static libraries, built by the two scripts below and gitignored |
+
+`Scripts/build-parser.sh` and `Scripts/build-embedded.sh` run as build phases on all
+three targets, cross-compiling `web/quickadd-ffi` and `web/embedded` into `Parser/lib`.
+They are two scripts rather than one because they are different libraries with different
+reasons to be rebuilt. `reference/reference.json` is listed as a resource in
+`project.yml` and bundled from the repository root, unchanged.
+
+**`Store` is excluded from the watch on purpose, and by platform rather than by
+`canImport`.** A watch is not a server: it has no database of its own worth the name and
+gets everything from the phone it is paired to. The header *is* visible to the watch
+target — all three share `Parser/include` — and only the library is absent, so a
+`canImport` check would compile and then fail at the link, which is a worse way to learn
+this.
+
+**`UI/Sources` is where the phone and the Mac stopped diverging.** They used to hold the
+same logic in two `View` structs — nine functions byte-identical, and four behaviours
+that drifted in a single afternoon because each was fixed on the phone and not the Mac.
+`ItemsModel` and `ListsModel` hold it now, both views share them, and the only function
+left in both is `row`, which is the platform's own list row and the one thing that should
+differ. The full accounting is in [docs/review.md](../docs/review.md).
+
+## What answers the app's questions
+
+`Backend` is the protocol every screen talks to. It is split in three, and the split is
+the point:
+
+* **`Backend`** is shopping — a list, what is on it, what things are called, how they
+  group. A device on its own can answer every one of these from its own database.
+* **`Accounts`** is who may sign in to a server. There is no answer to that without one.
+* **`Sharing`** is who else is on a list. A share link names a server, so with none there
+  is no link to make.
+
+The second and third are not things a local conformer should implement badly; they are
+things that should be *absent*, which is what the screens already do by hiding them.
+Offering to share when there is nobody to share with is a worse app, not a more uniform
+one.
+
+There are three conformers today. `API` talks HTTP. `CachingBackend` wraps another one
+and keeps the last-loaded answer, so the app never claims an emptiness it has not
+verified, and queues writes made with no signal into a durable outbox. `LocalBackend`
+sits over `LocalServer` — `web/embedded`, which links the server's own `domain` crate —
+so a device with no server runs the same rules in its own process rather than being told
+every request failed.
+
+`ServerDirectory` decides which of those is in play. The address is stored rather than
+compiled in: a self-hosted app cannot be built pointed anywhere, because the answer is
+different for everybody, so the build setting is what a fresh install *starts from*
+rather than what it is stuck with. Absent means this device on its own, which is the
+default and not a failure.
 
 ## Building
 
@@ -67,10 +135,9 @@ the Mac's network, so `http://localhost:8080` works there as it is.
 
 ## What it does
 
-Lists, and the items on them: add by typing a line the same way the web quick-add
-does, tick off, and delete. Editing an item, tags, sharing and notes are deliberately
-not here — a phone in a shop is for the two things you actually do while standing in
-one.
+Lists and the items on them: add by typing a line the same way the web quick-add does,
+tick off, edit, tag, and share a list with somebody. Notes are deliberately not here —
+they are a thing you write at a desk, and the browser is where the desk is.
 
 ## The watch app
 
